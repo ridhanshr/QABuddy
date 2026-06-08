@@ -34,3 +34,8 @@ qa-buddy-config.json
 .opencode/
 .idea/
 .vscode/
+
+# Project specific resources and examples
+design-system/
+example-program/
+requirement/
