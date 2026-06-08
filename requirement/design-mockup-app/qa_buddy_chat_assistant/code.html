@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>QA Buddy - Chat Assistant</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed": "#dbe1ff",
+                        "on-tertiary-container": "#e9f0ff",
+                        "surface": "#f7f9fb",
+                        "tertiary-fixed-dim": "#b7c8e1",
+                        "on-error": "#ffffff",
+                        "surface-container-lowest": "#ffffff",
+                        "error-container": "#ffdad6",
+                        "surface-variant": "#e0e3e5",
+                        "surface-container-low": "#f2f4f6",
+                        "on-tertiary": "#ffffff",
+                        "on-surface": "#191c1e",
+                        "surface-bright": "#f7f9fb",
+                        "tertiary-fixed": "#d3e4fe",
+                        "on-tertiary-fixed": "#0b1c30",
+                        "surface-container-high": "#e6e8ea",
+                        "surface-container": "#eceef0",
+                        "on-secondary-container": "#5c647a",
+                        "on-primary-fixed": "#00174b",
+                        "error": "#ba1a1a",
+                        "surface-tint": "#0053db",
+                        "primary-container": "#2563eb",
+                        "secondary-container": "#dae2fd",
+                        "on-primary-fixed-variant": "#003ea8",
+                        "surface-dim": "#d8dadc",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed": "#dae2fd",
+                        "primary": "#004ac6",
+                        "on-secondary": "#ffffff",
+                        "on-primary": "#ffffff",
+                        "on-secondary-fixed-variant": "#3f465c",
+                        "inverse-on-surface": "#eff1f3",
+                        "primary-fixed-dim": "#b4c5ff",
+                        "outline-variant": "#c3c6d7",
+                        "on-surface-variant": "#434655",
+                        "secondary-fixed-dim": "#bec6e0",
+                        "surface-container-highest": "#e0e3e5",
+                        "tertiary": "#46566c",
+                        "background": "#f7f9fb",
+                        "inverse-primary": "#b4c5ff",
+                        "on-secondary-fixed": "#131b2e",
+                        "secondary": "#565e74",
+                        "on-tertiary-fixed-variant": "#38485d",
+                        "outline": "#737686",
+                        "on-primary-container": "#eeefff",
+                        "inverse-surface": "#2d3133",
+                        "tertiary-container": "#5e6e85",
+                        "on-background": "#191c1e"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "margin_sm": "12px",
+                        "margin_md": "24px",
+                        "base": "8px",
+                        "gutter": "24px",
+                        "sidebar_width": "260px",
+                        "margin_lg": "48px",
+                        "container_max_width": "1440px"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "label-sm": ["Inter"],
+                        "display": ["Inter"],
+                        "h1": ["Inter"],
+                        "code": ["monospace"],
+                        "h2": ["Inter"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500" }],
+                        "display": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "h1": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "code": ["13px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "h2": ["20px", { "lineHeight": "28px", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-background font-body-md h-screen flex overflow-hidden">
+<!-- SideNavBar -->
+<nav class="bg-surface-container-low dark:bg-surface-dim w-sidebar_width h-screen fixed left-0 top-0 border-r border-outline-variant dark:border-outline flex flex-col h-full py-base z-50">
+<div class="px-gutter pb-margin_md border-b border-outline-variant dark:border-outline mb-margin_sm">
+<h1 class="font-h1 text-h1 text-primary dark:text-primary-fixed">QA Buddy</h1>
+<p class="font-label-sm text-label-sm text-on-surface-variant mt-1">v1.2.0-stable</p>
+</div>
+<div class="px-base mb-margin_md">
+<button class="w-full bg-primary text-on-primary font-label-sm text-label-sm py-2 px-4 rounded hover:bg-surface-tint transition-colors flex items-center justify-center gap-2">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">add</span>
+                New Automated Test
+            </button>
+</div>
+<ul class="flex-1 overflow-y-auto px-base space-y-1">
+<li class="flex items-center gap-3 px-3 py-2 rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors cursor-pointer active:scale-95">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">dashboard</span>
+<span class="font-body-md text-body-md">Dashboard</span>
+</li>
+<li class="flex items-center gap-3 px-3 py-2 rounded text-primary dark:text-primary-fixed font-bold border-r-2 border-primary bg-primary-fixed/20 cursor-pointer active:scale-95">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">chat_spark</span>
+<span class="font-body-md text-body-md">Chat Assistant</span>
+</li>
+<li class="flex items-center gap-3 px-3 py-2 rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors cursor-pointer active:scale-95">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">bug_report</span>
+<span class="font-body-md text-body-md">Bug Report</span>
+</li>
+<li class="flex items-center gap-3 px-3 py-2 rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors cursor-pointer active:scale-95">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">terminal</span>
+<span class="font-body-md text-body-md">Test Case Extractor</span>
+</li>
+</ul>
+<div class="mt-auto px-base pt-margin_sm border-t border-outline-variant dark:border-outline space-y-1">
+<li class="flex items-center gap-3 px-3 py-2 rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors cursor-pointer active:scale-95 list-none">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
+<span class="font-body-md text-body-md">Settings</span>
+</li>
+<li class="flex items-center gap-3 px-3 py-2 rounded text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors cursor-pointer active:scale-95 list-none">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">menu_book</span>
+<span class="font-body-md text-body-md">Documentation</span>
+</li>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="ml-sidebar_width flex-1 flex flex-col h-screen">
+<!-- TopAppBar -->
+<header class="bg-surface dark:bg-background h-16 fixed top-0 right-0 left-sidebar_width z-40 border-b border-outline-variant dark:border-outline flex justify-between items-center px-gutter w-[calc(100%-260px)]">
+<div class="flex-1 flex items-center">
+<div class="relative w-96">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+<input class="w-full bg-surface-container-low border border-outline-variant rounded-full py-1.5 pl-10 pr-4 font-body-md text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="Search logs, bugs, runs..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-gutter">
+<div class="flex items-center gap-4 text-on-surface-variant">
+<span class="material-symbols-outlined hover:text-primary dark:hover:text-primary-fixed transition-colors cursor-pointer">cloud_done</span>
+<span class="material-symbols-outlined hover:text-primary dark:hover:text-primary-fixed transition-colors cursor-pointer">description</span>
+<span class="material-symbols-outlined hover:text-primary dark:hover:text-primary-fixed transition-colors cursor-pointer">memory</span>
+</div>
+<div class="h-8 w-8 rounded-full bg-primary-container flex items-center justify-center overflow-hidden border border-outline-variant">
+<img alt="QA Lead Profile" class="h-full w-full object-cover" data-alt="A professional headshot of a software QA engineer in a bright, modern corporate office environment. The lighting is clean and balanced, suitable for a corporate light-mode UI profile picture. The individual looks confident and approachable." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD8dxof9dIqR05uP-vMmdjWyRLwdnZbFsQ5sNfRH2q8OhkttD-0eBcgoklfHzjYnl3niy8nWLo3WI9SNd2aRKrX5EXrmW4XqKlrwCqpOYbooBwgpIk0PGFXGE_vwOzfFLqQoRQ4ws0lGdxUBBcPonJXYj08UEp6eewFBuZqjT6NI4L6h6WAJjVrYinr3hkZsEjS5WObeGF7ejPsumD1Ukjnvl4WYWXpGuN6-yQVfGuUJVeMKbe75Uv2c9EUa7pelZoCfv5ltFM1NVux"/>
+</div>
+</div>
+</header>
+<!-- Workspace Canvas -->
+<main class="mt-16 flex-1 flex overflow-hidden bg-background">
+<!-- Chat Area (Center) -->
+<div class="flex-1 flex flex-col min-w-0 border-r border-outline-variant bg-surface">
+<!-- Chat History -->
+<div class="flex-1 overflow-y-auto p-gutter space-y-6">
+<!-- System Greeting -->
+<div class="flex justify-center">
+<div class="bg-surface-container px-4 py-2 rounded-full font-label-sm text-label-sm text-on-surface-variant border border-outline-variant">
+                            Chat session started • Jira &amp; Confluence Connected
+                        </div>
+</div>
+<!-- User Message -->
+<div class="flex justify-end">
+<div class="bg-primary-container text-on-primary-container max-w-[80%] rounded-xl rounded-tr-sm px-4 py-3 shadow-sm border border-primary/20">
+<p class="font-body-md text-body-md">Cari tiket bug yang assign ke saya dan statusnya masih Open</p>
+</div>
+</div>
+<!-- AI Response -->
+<div class="flex justify-start gap-3 max-w-[85%]">
+<div class="h-8 w-8 rounded bg-primary text-on-primary flex items-center justify-center shrink-0 mt-1">
+<span class="material-symbols-outlined text-sm">robot_2</span>
+</div>
+<div class="bg-surface-container-lowest text-on-surface border border-outline-variant rounded-xl rounded-tl-sm px-4 py-3 shadow-sm">
+<p class="font-body-md text-body-md mb-3">Tentu, ini adalah JQL (Jira Query Language) untuk mencari tiket bug yang di-assign ke Anda dengan status Open:</p>
+<div class="bg-surface-container-low rounded border border-outline-variant p-3 font-code text-code text-on-surface mb-3 flex items-start justify-between">
+<code>project = QA AND assignee = currentUser() AND issuetype = Bug AND status = Open ORDER BY created DESC</code>
+<button class="text-on-surface-variant hover:text-primary transition-colors ml-4" title="Copy to clipboard">
+<span class="material-symbols-outlined text-sm">content_copy</span>
+</button>
+</div>
+<p class="font-body-md text-body-md mb-2">Saya menemukan 3 tiket yang sesuai dengan kriteria tersebut:</p>
+<div class="space-y-2">
+<div class="flex items-center justify-between p-2 rounded hover:bg-surface-container-low border border-transparent hover:border-outline-variant cursor-pointer transition-all">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-error"></span>
+<span class="font-label-sm text-label-sm font-semibold text-primary">QA-1042</span>
+<span class="font-body-md text-body-md text-on-surface truncate max-w-sm">Login timeout on production environment</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">High</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded hover:bg-surface-container-low border border-transparent hover:border-outline-variant cursor-pointer transition-all">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-error"></span>
+<span class="font-label-sm text-label-sm font-semibold text-primary">QA-1038</span>
+<span class="font-body-md text-body-md text-on-surface truncate max-w-sm">Dashboard widgets failing to load intermittently</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">Medium</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded hover:bg-surface-container-low border border-transparent hover:border-outline-variant cursor-pointer transition-all">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-error"></span>
+<span class="font-label-sm text-label-sm font-semibold text-primary">QA-1021</span>
+<span class="font-body-md text-body-md text-on-surface truncate max-w-sm">Export to CSV formatting incorrect on Windows</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">Low</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Follow up chips -->
+<div class="flex justify-start gap-2 ml-11">
+<button class="bg-surface-container-low hover:bg-surface-container border border-outline-variant rounded-full px-3 py-1 font-label-sm text-label-sm text-on-surface transition-colors">
+                            Buatkan report untuk tiket ini
+                        </button>
+<button class="bg-surface-container-low hover:bg-surface-container border border-outline-variant rounded-full px-3 py-1 font-label-sm text-label-sm text-on-surface transition-colors">
+                            Cari yang statusnya In Progress
+                        </button>
+</div>
+</div>
+<!-- Input Area -->
+<div class="p-gutter border-t border-outline-variant bg-surface-container-lowest">
+<div class="relative flex items-center">
+<button class="absolute left-3 text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined">add_circle</span>
+</button>
+<input class="w-full bg-surface border border-outline-variant rounded-xl py-3 pl-12 pr-12 font-body-md text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm" placeholder="Tanya apa saja tentang Jira atau Confluence..." type="text"/>
+<button class="absolute right-3 text-primary hover:text-on-primary-fixed-variant transition-colors">
+<span class="material-symbols-outlined">send</span>
+</button>
+</div>
+<div class="flex items-center justify-between mt-2 px-2">
+<p class="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">info</span>
+                            AI can make mistakes. Verify important queries.
+                        </p>
+<div class="flex items-center gap-3">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Integrations:</span>
+<span class="material-symbols-outlined text-primary text-[16px]" title="Jira Connected">check_circle</span>
+<span class="material-symbols-outlined text-primary text-[16px]" title="Confluence Connected">check_circle</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Panel: Recent Summaries -->
+<aside class="w-80 bg-surface-container-lowest flex flex-col shrink-0">
+<div class="p-4 border-b border-outline-variant flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary">article</span>
+<h2 class="font-h2 text-h2 text-on-surface">Recent Summaries</h2>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-4">
+<!-- Summary Card 1 -->
+<div class="bg-surface rounded-lg border border-outline-variant p-3 hover:border-primary transition-colors cursor-pointer group">
+<div class="flex items-start justify-between mb-2">
+<span class="font-label-sm text-label-sm text-primary font-semibold">Release Notes v1.2</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">2h ago</span>
+</div>
+<h3 class="font-body-md text-body-md text-on-surface font-medium mb-1 line-clamp-1">Q3 Backend Architecture Updates</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant line-clamp-2">Summarized technical changes for the upcoming v1.2 release, focusing on database migration scripts and new API rate limiting rules.</p>
+<div class="mt-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="material-symbols-outlined text-sm text-primary">arrow_forward</span>
+<span class="font-label-sm text-label-sm text-primary">View Full Doc</span>
+</div>
+</div>
+<!-- Summary Card 2 -->
+<div class="bg-surface rounded-lg border border-outline-variant p-3 hover:border-primary transition-colors cursor-pointer group">
+<div class="flex items-start justify-between mb-2">
+<span class="font-label-sm text-label-sm text-tertiary font-semibold">Test Plan</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Yesterday</span>
+</div>
+<h3 class="font-body-md text-body-md text-on-surface font-medium mb-1 line-clamp-1">Payment Gateway Integration</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant line-clamp-2">Extracted test cases for Stripe integration, covering happy paths, network failures, and invalid card scenarios.</p>
+<div class="mt-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="material-symbols-outlined text-sm text-primary">arrow_forward</span>
+<span class="font-label-sm text-label-sm text-primary">View Full Doc</span>
+</div>
+</div>
+<!-- Summary Card 3 -->
+<div class="bg-surface rounded-lg border border-outline-variant p-3 hover:border-primary transition-colors cursor-pointer group">
+<div class="flex items-start justify-between mb-2">
+<span class="font-label-sm text-label-sm text-tertiary font-semibold">Incident Report</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Mon</span>
+</div>
+<h3 class="font-body-md text-body-md text-on-surface font-medium mb-1 line-clamp-1">Prod Outage RCA - DB Lock</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant line-clamp-2">Root cause analysis summary regarding the deadlocks observed during peak load testing last weekend.</p>
+<div class="mt-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="material-symbols-outlined text-sm text-primary">arrow_forward</span>
+<span class="font-label-sm text-label-sm text-primary">View Full Doc</span>
+</div>
+</div>
+</div>
+</aside>
+</main>
+</div>
+</body></html>

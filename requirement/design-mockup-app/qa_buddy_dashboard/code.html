@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>QA Buddy - Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed": "#dbe1ff",
+                        "on-tertiary-container": "#e9f0ff",
+                        "surface": "#f7f9fb",
+                        "tertiary-fixed-dim": "#b7c8e1",
+                        "on-error": "#ffffff",
+                        "surface-container-lowest": "#ffffff",
+                        "error-container": "#ffdad6",
+                        "surface-variant": "#e0e3e5",
+                        "surface-container-low": "#f2f4f6",
+                        "on-tertiary": "#ffffff",
+                        "on-surface": "#191c1e",
+                        "surface-bright": "#f7f9fb",
+                        "tertiary-fixed": "#d3e4fe",
+                        "on-tertiary-fixed": "#0b1c30",
+                        "surface-container-high": "#e6e8ea",
+                        "surface-container": "#eceef0",
+                        "on-secondary-container": "#5c647a",
+                        "on-primary-fixed": "#00174b",
+                        "error": "#ba1a1a",
+                        "surface-tint": "#0053db",
+                        "primary-container": "#2563eb",
+                        "secondary-container": "#dae2fd",
+                        "on-primary-fixed-variant": "#003ea8",
+                        "surface-dim": "#d8dadc",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed": "#dae2fd",
+                        "primary": "#004ac6",
+                        "on-secondary": "#ffffff",
+                        "on-primary": "#ffffff",
+                        "on-secondary-fixed-variant": "#3f465c",
+                        "inverse-on-surface": "#eff1f3",
+                        "primary-fixed-dim": "#b4c5ff",
+                        "outline-variant": "#c3c6d7",
+                        "on-surface-variant": "#434655",
+                        "secondary-fixed-dim": "#bec6e0",
+                        "surface-container-highest": "#e0e3e5",
+                        "tertiary": "#46566c",
+                        "background": "#f7f9fb",
+                        "inverse-primary": "#b4c5ff",
+                        "on-secondary-fixed": "#131b2e",
+                        "secondary": "#565e74",
+                        "on-tertiary-fixed-variant": "#38485d",
+                        "outline": "#737686",
+                        "on-primary-container": "#eeefff",
+                        "inverse-surface": "#2d3133",
+                        "tertiary-container": "#5e6e85",
+                        "on-background": "#191c1e"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "margin_sm": "12px",
+                        "margin_md": "24px",
+                        "base": "8px",
+                        "gutter": "24px",
+                        "sidebar_width": "260px",
+                        "margin_lg": "48px",
+                        "container_max_width": "1440px"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "label-sm": ["Inter"],
+                        "display": ["Inter"],
+                        "h1": ["Inter"],
+                        "code": ["monospace"],
+                        "h2": ["Inter"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "body-md": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "label-sm": ["12px", {"lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                        "display": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "h1": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "code": ["13px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "h2": ["20px", {"lineHeight": "28px", "fontWeight": "600"}]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-background font-body-md min-h-screen flex">
+<!-- SideNavBar -->
+<aside class="w-sidebar_width h-screen fixed left-0 top-0 bg-surface-container-low dark:bg-surface-dim border-r border-outline-variant dark:border-outline flex flex-col h-full py-base z-50">
+<div class="px-gutter mb-margin_lg mt-margin_md">
+<h1 class="font-h1 text-h1 text-primary dark:text-primary-fixed">QA Buddy</h1>
+<p class="font-label-sm text-label-sm text-on-surface-variant">v1.2.0-stable</p>
+</div>
+<nav class="flex-1 overflow-y-auto px-base">
+<ul class="flex flex-col gap-1"><li class="mb-margin_sm px-margin_sm">
+<button class="w-full py-2 bg-primary text-on-primary font-body-md rounded-DEFAULT hover:bg-on-primary-fixed-variant transition-colors">
+                New Automated Test
+            </button>
+</li>
+<li>
+<a class="flex items-center gap-margin_sm px-margin_sm py-2 rounded-DEFAULT cursor-pointer active:scale-95 text-primary dark:text-primary-fixed font-bold border-r-2 border-primary bg-surface-container-highest" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">dashboard</span>
+<span class="font-body-md text-body-md">Dashboard</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-margin_sm px-margin_sm py-2 rounded-DEFAULT cursor-pointer active:scale-95 text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined">chat_spark</span>
+<span class="font-body-md text-body-md">Chat Assistant</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-margin_sm px-margin_sm py-2 rounded-DEFAULT cursor-pointer active:scale-95 text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined">bug_report</span>
+<span class="font-body-md text-body-md">Bug Report</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-margin_sm px-margin_sm py-2 rounded-DEFAULT cursor-pointer active:scale-95 text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined">terminal</span>
+<span class="font-body-md text-body-md">Test Case Extractor</span>
+</a>
+</li>
+</ul>
+</nav>
+<div class="border-t border-outline-variant dark:border-outline pt-margin_md px-base pb-margin_md">
+<ul class="flex flex-col gap-1">
+<li>
+<a class="flex items-center gap-margin_sm px-margin_sm py-2 rounded-DEFAULT cursor-pointer active:scale-95 text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-body-md text-body-md">Settings</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-margin_sm px-margin_sm py-2 rounded-DEFAULT cursor-pointer active:scale-95 text-on-surface-variant dark:text-on-surface-variant hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined">menu_book</span>
+<span class="font-body-md text-body-md">Documentation</span>
+</a>
+</li>
+</ul>
+</div>
+</aside>
+<!-- Main Content Wrapper -->
+<main class="ml-sidebar_width flex-1 flex flex-col min-h-screen">
+<!-- TopAppBar -->
+<header class="h-16 fixed top-0 right-0 left-sidebar_width z-40 bg-surface dark:bg-background border-b border-outline-variant dark:border-outline flex justify-between items-center px-gutter w-full">
+<div class="flex items-center gap-gutter flex-1">
+<h2 class="font-h2 text-h2 text-on-surface dark:text-on-surface">Daily Digest</h2>
+<!-- Connection Status Pills -->
+</div>
+<div class="flex items-center gap-gutter ml-gutter"><div class="flex items-center gap-4 border-r border-outline-variant pr-4 mr-4">
+<button class="text-on-surface-variant hover:text-primary dark:hover:text-primary-fixed transition-colors">
+<span class="material-symbols-outlined">cloud_done</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary dark:hover:text-primary-fixed transition-colors">
+<span class="material-symbols-outlined">description</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary dark:hover:text-primary-fixed transition-colors">
+<span class="material-symbols-outlined">memory</span>
+</button>
+</div>
+<div class="flex items-center gap-margin_sm">
+<img alt="User profile" class="w-8 h-8 rounded-full border border-outline-variant" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCTv8MVYV84yT_NpeN_qgrD_cWa-5OYzQHP4KRF9gzwG59ogrq1nE_VrmRm7rhHORTIqRS6icIa9GP25SjOMc4YMa9ILTDqIYINPGShcXqJeUh7bXGb4fo0Ub5a-k7htwEeBWCYsOPyYAZcGy-k4U9dRgyNu2LjSkgc7wzIYZSWiwUivj5PAJZqmPU5oAgmnNmpk5QuUbHHdr13Lo7GTCFcEUQdmbqdkoJGru_OYPPAzR_3kDBhy8fAZmSN-g1PrRvMyNi8q8b2ed99"/>
+<span class="font-label-sm text-label-sm text-on-surface-variant">QA Lead</span>
+</div></div>
+</header>
+<!-- Page Content -->
+<div class="mt-16 p-gutter flex-1 max-w-container_max_width mx-auto w-full">
+<!-- AI Analysis Card -->
+<section class="mb-margin_lg bg-surface-container-lowest border border-outline-variant rounded-xl p-margin_md relative overflow-hidden">
+<div class="absolute top-0 right-0 w-32 h-32 bg-primary opacity-5 rounded-bl-full pointer-events-none"></div>
+<div class="flex items-start gap-margin_md relative z-10">
+<div class="bg-primary-container text-on-primary-container p-2 rounded-lg flex-shrink-0">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">insights</span>
+</div>
+<div class="flex-1">
+<h3 class="font-h2 text-h2 text-on-surface mb-1">AI Daily Insight</h3>
+<p class="font-body-lg text-body-lg text-on-surface-variant">Hari ini ada peningkatan bug di modul Payment sebesar 20%.</p>
+<div class="mt-margin_sm flex gap-2">
+<button class="font-label-sm text-label-sm text-primary hover:text-on-primary-fixed-variant transition-colors flex items-center gap-1 border border-primary px-2 py-1 rounded">
+<span class="material-symbols-outlined text-[16px]">summarize</span> View Details
+                            </button>
+<button class="font-label-sm text-label-sm text-secondary hover:text-on-surface transition-colors flex items-center gap-1 border border-outline-variant px-2 py-1 rounded">
+<span class="material-symbols-outlined text-[16px]">share</span> Share Report
+                            </button>
+</div>
+</div>
+</div>
+</section>
+<!-- Data Table Section -->
+<section>
+<div class="flex justify-between items-end mb-margin_sm">
+<div>
+<h3 class="font-h1 text-h1 text-on-surface">Ready for QA</h3>
+<p class="font-body-md text-body-md text-on-surface-variant">Tickets awaiting verification in the current sprint.</p>
+</div>
+<div class="flex gap-2">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+<input class="pl-8 pr-3 py-1.5 bg-surface border border-outline-variant rounded font-body-md text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent w-64" placeholder="Search tickets..." type="text"/>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden">
+<table class="w-full text-left border-collapse">
+<thead class="bg-surface-container-low border-b border-outline-variant">
+<tr>
+<th class="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider">Key</th>
+<th class="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider">Summary</th>
+<th class="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider w-32">Priority</th>
+<th class="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider w-40">Assignee</th>
+<th class="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider w-20 text-right">Actions</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-outline-variant">
+<tr class="hover:bg-surface transition-colors group">
+<td class="py-3 px-4">
+<a class="font-code text-code text-primary hover:underline" href="#">PAY-1042</a>
+</td>
+<td class="py-3 px-4">
+<span class="font-body-md text-body-md text-on-surface">Webhook timeout during Stripe 3D Secure verification</span>
+</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[#ef4444] text-[16px]" style="font-variation-settings: 'FILL' 1;">keyboard_double_arrow_up</span>
+<span class="font-body-md text-body-md text-on-surface">Highest</span>
+</div>
+</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center font-label-sm text-[10px] font-bold">AS</div>
+<span class="font-body-md text-body-md text-on-surface-variant">Alice Smith</span>
+</div>
+</td>
+<td class="py-3 px-4 text-right">
+<button class="text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+<span class="material-symbols-outlined text-[20px]">open_in_new</span>
+</button>
+</td>
+</tr>
+<tr class="hover:bg-surface transition-colors group">
+<td class="py-3 px-4">
+<a class="font-code text-code text-primary hover:underline" href="#">PAY-1045</a>
+</td>
+<td class="py-3 px-4">
+<span class="font-body-md text-body-md text-on-surface">Currency conversion rounding error in invoice PDF</span>
+</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[#f97316] text-[16px]" style="font-variation-settings: 'FILL' 1;">keyboard_arrow_up</span>
+<span class="font-body-md text-body-md text-on-surface">High</span>
+</div>
+</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-tertiary-container text-on-tertiary-container flex items-center justify-center font-label-sm text-[10px] font-bold">JD</div>
+<span class="font-body-md text-body-md text-on-surface-variant">John Doe</span>
+</div>
+</td>
+<td class="py-3 px-4 text-right">
+<button class="text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+<span class="material-symbols-outlined text-[20px]">open_in_new</span>
+</button>
+</td>
+</tr>
+<tr class="hover:bg-surface transition-colors group">
+<td class="py-3 px-4">
+<a class="font-code text-code text-primary hover:underline" href="#">AUTH-892</a>
+</td>
+<td class="py-3 px-4">
+<span class="font-body-md text-body-md text-on-surface">Session expires prematurely on mobile devices</span>
+</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[#eab308] text-[16px]" style="font-variation-settings: 'FILL' 1;">drag_handle</span>
+<span class="font-body-md text-body-md text-on-surface">Medium</span>
+</div>
+</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center font-label-sm text-[10px] font-bold">ER</div>
+<span class="font-body-md text-body-md text-on-surface-variant">Emma Ray</span>
+</div>
+</td>
+<td class="py-3 px-4 text-right">
+<button class="text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+<span class="material-symbols-outlined text-[20px]">open_in_new</span>
+</button>
+</td>
+</tr>
+<tr class="hover:bg-surface transition-colors group">
+<td class="py-3 px-4">
+<a class="font-code text-code text-primary hover:underline" href="#">UI-210</a>
+</td>
+<td class="py-3 px-4">
+<span class="font-body-md text-body-md text-on-surface">Button text overflow on narrow viewports</span>
+</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[#3b82f6] text-[16px]" style="font-variation-settings: 'FILL' 1;">keyboard_arrow_down</span>
+<span class="font-body-md text-body-md text-on-surface">Low</span>
+</div>
+</td>
+<td class="py-3 px-4">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center font-label-sm text-[10px] font-bold">AS</div>
+<span class="font-body-md text-body-md text-on-surface-variant">Alice Smith</span>
+</div>
+</td>
+<td class="py-3 px-4 text-right">
+<button class="text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+<span class="material-symbols-outlined text-[20px]">open_in_new</span>
+</button>
+</td>
+</tr>
+</tbody>
+</table>
+<div class="bg-surface-container-low border-t border-outline-variant p-3 flex justify-between items-center">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Showing 4 of 12 issues</span>
+<div class="flex gap-1">
+<button class="p-1 text-outline hover:text-on-surface transition-colors disabled:opacity-50" disabled="">
+<span class="material-symbols-outlined text-[20px]">chevron_left</span>
+</button>
+<button class="p-1 text-outline hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined text-[20px]">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+</body></html>
