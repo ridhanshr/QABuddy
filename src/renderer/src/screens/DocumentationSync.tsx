@@ -34,7 +34,9 @@ export default function DocumentationSync() {
     confPreviewLoading,
     confPagePreview,
     confSyncPreview,
-    saveSettings
+    saveSettings,
+    fetchConfSteps,
+    confFetchingSteps,
   } = useApp();
 
   if (loading || activeView !== "documentation-sync") {
@@ -248,6 +250,33 @@ export default function DocumentationSync() {
                       onChange={(e) => updateConfEntry(item.id, "inputData", e.target.value)}
                       style={{ boxSizing: 'border-box', minHeight: 80, resize: 'vertical' }}
                     />
+                  </div>
+                </div>
+
+                {/* Issue Key row */}
+                <div style={{ marginTop: 24 }}>
+                  <div className="field-group">
+                    <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Issue Key</label>
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        placeholder="TRABRZ-123"
+                        value={item.issueKey || ''}
+                        onChange={(e) => updateConfEntry(item.id, "issueKey", e.target.value)}
+                        style={{ fontFamily: 'monospace', flex: 1, boxSizing: 'border-box', padding: '6px 10px', fontSize: 13 }}
+                      />
+                      <button
+                        className="icon-button"
+                        onClick={() => fetchConfSteps(item.id, item.issueKey || '')}
+                        disabled={confFetchingSteps.has(item.id)}
+                        title="Fetch steps dari Xray"
+                        style={{ padding: 4, fontSize: 18, lineHeight: 1 }}
+                      >
+                        <span className={`material-symbols ${confFetchingSteps.has(item.id) ? 'spin' : ''}`} style={{ fontSize: 18 }}>
+                          {confFetchingSteps.has(item.id) ? 'progress_activity' : 'download'}
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 

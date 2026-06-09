@@ -17,6 +17,7 @@ import type {
   UpdateProgress,
   UpdateTestCasesFromConfluenceResult,
   XrayFolder,
+  FetchTestStepsResult,
 } from "@shared/types";
 import { JiraClient } from "./jira/jira-client";
 import { logger } from "./logger";
@@ -438,12 +439,12 @@ export class JiraService {
   ): Promise<{ key: string; url: string }[]> {
     this.assertConfigured();
     const created: { key: string; url: string }[] = [];
-    const projectKey = this.config.projectKey;
 
-    // Lazy-load Xray folders only if at least one test has an xrayFolder
+    // Use per-item projectKey if provided, otherwise fall back to config
     let allFolders: any[] | null = null;
 
     for (const item of cases) {
+      const projectKey = item.projectKey || this.config.projectKey;
       const fullDescription = [
         item.description,
         "",
@@ -647,6 +648,18 @@ export class JiraService {
   // -------------------------------------------------------------------------
   // Confluence → Jira Test update
   // -------------------------------------------------------------------------
+
+  async fetchTestSteps(
+    issueKey: string
+  ): Promise<FetchTestStepsResult | null> {
+    const raw = await this.client.fetchTestSteps(issueKey);
+    if (!raw) return null;
+    return {
+      issueKey,
+      steps: raw.steps.join("\n"),
+      expectedResult: raw.results.join("\n"),
+    };
+  }
 
   async checkTestSteps(
     entries: ConfluenceTestImportEntry[]

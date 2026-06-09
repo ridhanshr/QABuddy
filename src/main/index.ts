@@ -20,6 +20,7 @@ import type {
   TestCaseExecution,
   UpdateProgress,
   XrayFolder,
+  FetchTestStepsResult,
 } from "@shared/types";
 import { testCaseExecutionSchema } from "@shared/types";
 
@@ -187,6 +188,9 @@ app.whenReady().then(() => {
   );
   ipcMain.handle("checkTestSteps", async (_, entries: ConfluenceTestImportEntry[]): Promise<StepConflictCheck> =>
     qaService.checkTestSteps(await getConfig(), entries)
+  );
+  ipcMain.handle("fetchTestSteps", async (_, issueKey: string): Promise<FetchTestStepsResult | null> =>
+    qaService.fetchTestSteps(await getConfig(), issueKey)
   );
   ipcMain.handle("updateTestCasesFromConfluence", async (event, entries: ConfluenceTestImportEntry[], mode?: StepConflictMode) => {
     const win = BrowserWindow.fromWebContents(event.sender);

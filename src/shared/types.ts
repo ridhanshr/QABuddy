@@ -170,6 +170,7 @@ export interface ManualTestCase {
   expectedResult: string;
   xrayFolder: string;
   labels: string;
+  projectKey?: string;
 }
 
 export interface AppBootstrap {
@@ -307,6 +308,7 @@ export interface DesktopApi {
   organizeTestsIntoXray: (source: string, folderPath: string, projectKey: string) => Promise<{ count: number }>;
   getXrayFolders: (projectKey: string) => Promise<XrayFolder[]>;
   checkTestSteps: (entries: ConfluenceTestImportEntry[]) => Promise<StepConflictCheck>;
+  fetchTestSteps: (issueKey: string) => Promise<FetchTestStepsResult | null>;
   updateTestCasesFromConfluence: (entries: ConfluenceTestImportEntry[], mode?: StepConflictMode) => Promise<UpdateTestCasesFromConfluenceResult>;
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => () => void;
   findTestCasesByJql: (jql: string, maxResults: number) => Promise<JiraIssueSummary[]>;
@@ -397,6 +399,12 @@ export interface TestCaseExecution {
 }
 
 export type ConfluenceImportMode = "auto" | "jql-match";
+
+export interface FetchTestStepsResult {
+  issueKey: string;
+  steps: string;
+  expectedResult: string;
+}
 
 export interface ConfluenceTestImportEntry {
   id: string;

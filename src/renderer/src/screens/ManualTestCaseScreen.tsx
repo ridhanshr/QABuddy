@@ -44,6 +44,8 @@ export default function ManualTestCaseScreen() {
     confImportJqlMatchedIds,
     setConfImportJqlMatchedIds,
     updateConfImportEntryKey,
+    fetchAndSetStepsForEntry,
+    confImportFetchingSteps,
     confImportProjectKey,
     setConfImportProjectKey,
     confImportXrayFolders,
@@ -63,6 +65,17 @@ export default function ManualTestCaseScreen() {
     updateProgress,
     showUpdateProgress,
     setShowUpdateProgress,
+    manualProjectKey,
+    setManualProjectKey,
+    manualXrayFolders,
+    manualFolderLoading,
+    manualDuplicateResults,
+    manualPendingDuplicates,
+    setManualPendingDuplicates,
+    showManualDuplicateModal,
+    setShowManualDuplicateModal,
+    checkManualDuplicate,
+    confirmManualSubmitWithDuplicates,
   } = useApp();
 
   const flattenFolderOptions = useMemo(() => {
@@ -90,6 +103,19 @@ export default function ManualTestCaseScreen() {
     };
     return flatten(confImportXrayFolders);
   }, [confImportXrayFolders]);
+
+  const manualFlattenFolderOptions = useMemo(() => {
+    const flatten = (folders: typeof manualXrayFolders, pfx = ""): { value: string; label: string }[] => {
+      const result: { value: string; label: string }[] = [];
+      for (const f of folders) {
+        const path = pfx ? `${pfx}/${f.name}` : `/${f.name}`;
+        result.push({ value: path, label: path });
+        if (f.children) result.push(...flatten(f.children, path));
+      }
+      return result;
+    };
+    return flatten(manualXrayFolders);
+  }, [manualXrayFolders]);
 
   if (loading || activeView !== "manual-test-case") {
     return null;
@@ -200,6 +226,51 @@ export default function ManualTestCaseScreen() {
             </div>
           </div>
 
+          <div style={{
+            background: 'var(--surface-container-low)',
+            border: '1px solid var(--outline-variant)',
+            borderRadius: 12,
+            padding: '14px 20px',
+            marginBottom: 24,
+            borderLeft: '4px solid var(--primary)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            flexWrap: 'wrap',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
+            }}>
+              <span className="material-symbols" style={{ fontSize: 22, color: 'var(--primary)' }}>developer_board</span>
+              <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--on-surface-variant)' }}>Project</span>
+            </div>
+            <div style={{ flex: 1, minWidth: 240, maxWidth: 400 }}>
+              <SearchableSelect
+                options={jiraProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
+                value={manualProjectKey}
+                onChange={setManualProjectKey}
+                placeholder="-- Select Jira Project --"
+              />
+            </div>
+            {manualProjectKey && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'rgba(var(--primary-rgb), 0.1)',
+                padding: '5px 14px', borderRadius: 20,
+                border: '1px solid rgba(var(--primary-rgb), 0.25)',
+                flexShrink: 0,
+              }}>
+                <span className="material-symbols" style={{ fontSize: 16, color: 'var(--primary)' }}>check_circle</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--primary)' }}>{manualProjectKey}</span>
+              </div>
+            )}
+            {!manualProjectKey && (
+              <span style={{ fontSize: 12, color: 'var(--on-surface-variant)', flexShrink: 0 }}>
+                {jiraProjects.length === 0 ? 'Memuat project...' : 'Pilih project untuk melanjutkan'}
+              </span>
+            )}
+          </div>
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
             {manualCases.map((item, index) => (
               <div className="card" key={item.id} style={{ padding: 32, borderLeft: '4px solid var(--primary)' }}>
@@ -216,6 +287,11 @@ export default function ManualTestCaseScreen() {
                       <span className="material-symbols" style={{ fontSize: 16 }}>auto_awesome</span>
                       AI Assist
                     </button>
+                    {manualDuplicateResults[item.id]?.checked && (
+                      manualDuplicateResults[item.id].matches.length > 0
+                        ? <span className="material-symbols" style={{ fontSize: 18, color: 'var(--warning)' }} title={`Similar: ${manualDuplicateResults[item.id].matches.map(m => m.key).join(', ')}`}>warning</span>
+                        : <span className="material-symbols" style={{ fontSize: 18, color: 'var(--success)' }}>check_circle</span>
+                    )}
                   </div>
                   {manualCases.length > 1 && (
                     <button 
@@ -237,19 +313,18 @@ export default function ManualTestCaseScreen() {
                         placeholder="e.g. Validasi Login dengan data benar" 
                         value={item.title}
                         onChange={(e) => updateManualCase(item.id, "title", e.target.value)}
+                        onBlur={() => checkManualDuplicate(item.id, item.title)}
                       />
                     </div>
                     <div className="field-group">
                       <label>Xray Folder Path</label>
-                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                        <span className="material-symbols" style={{ position: 'absolute', left: 12, fontSize: 18, color: 'var(--on-surface-variant)' }}>folder</span>
-                        <input 
-                          placeholder="/Sprint 1/Modules/Login" 
-                          value={item.xrayFolder}
-                          onChange={(e) => updateManualCase(item.id, "xrayFolder", e.target.value)}
-                          style={{ paddingLeft: 40 }}
-                        />
-                      </div>
+                      <SearchableSelect
+                        options={manualFlattenFolderOptions}
+                        value={item.xrayFolder}
+                        onChange={(v) => updateManualCase(item.id, "xrayFolder", v)}
+                        placeholder={manualFolderLoading ? 'Loading folders...' : !manualProjectKey ? '-- Select Project First --' : '-- Select Folder --'}
+                        disabled={manualFolderLoading || !manualProjectKey}
+                      />
                     </div>
                     <div className="field-group">
                       <label>Labels / Tags</label>
@@ -637,18 +712,30 @@ export default function ManualTestCaseScreen() {
                                 type="text"
                                 value={entry.issueKey}
                                 onChange={(e) => updateConfImportEntryKey(entry.id, e.target.value)}
-                                style={{
-                                  width: 130,
-                                  padding: '2px 6px',
-                                  fontSize: 13,
-                                  fontWeight: 600,
-                                  fontFamily: 'monospace',
-                                  border: '1px solid var(--outline-variant)',
-                                  borderRadius: 4,
-                                  background: 'transparent',
-                                  color: 'inherit',
-                                }}
-                              />
+                                onBlur={() => fetchAndSetStepsForEntry(entry.id, entry.issueKey)}
+                                  style={{
+                                    width: 130,
+                                    padding: '2px 6px',
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    fontFamily: 'monospace',
+                                    border: '1px solid var(--outline-variant)',
+                                    borderRadius: 4,
+                                    background: 'transparent',
+                                    color: 'inherit',
+                                  }}
+                                />
+                                <button
+                                  className="icon-button"
+                                  onClick={() => fetchAndSetStepsForEntry(entry.id, entry.issueKey)}
+                                  disabled={confImportFetchingSteps.has(entry.id)}
+                                  title="Fetch steps dari Xray"
+                                  style={{ padding: 2, fontSize: 16, lineHeight: 1, opacity: confImportFetchingSteps.has(entry.id) ? 0.6 : 0.7 }}
+                                >
+                                  <span className={`material-symbols ${confImportFetchingSteps.has(entry.id) ? 'spin' : ''}`} style={{ fontSize: 16 }}>
+                                    {confImportFetchingSteps.has(entry.id) ? 'progress_activity' : 'download'}
+                                  </span>
+                                </button>
                               {confImportJqlMatched && !confImportJqlMatchedIds.has(entry.id) && (
                                 <span className="material-symbols" style={{ fontSize: 14, color: 'var(--warning)' }}>warning</span>
                               )}
@@ -854,6 +941,68 @@ export default function ManualTestCaseScreen() {
             >
               Cancel
             </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Duplicate confirmation modal */}
+      {showManualDuplicateModal && manualPendingDuplicates && ReactDOM.createPortal(
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', zIndex: 1000,
+          }}
+          onClick={() => setShowManualDuplicateModal(false)}
+        >
+          <div
+            className="card"
+            style={{ maxWidth: 520, width: '90%', padding: 32 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="material-symbols" style={{ color: 'var(--warning, #f59e0b)' }}>warning</span>
+              Duplicate Test Cases Detected
+            </h3>
+            <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 16 }}>
+              Test case berikut memiliki judul yang mirip dengan issue yang sudah ada di Jira:
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
+              {Object.entries(manualPendingDuplicates)
+                .filter(([, matches]) => matches.length > 0)
+                .map(([id, matches]) => {
+                  const c = manualCases.find(c => c.id === id);
+                  return (
+                    <div key={id} style={{ fontSize: 13, background: 'var(--surface-container)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--outline-variant)' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>{c?.title || 'Unknown'}</div>
+                      <div style={{ color: 'var(--warning)', fontSize: 12 }}>
+                        {matches.map(m => `${m.key}: ${m.summary}`).join(', ')}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+            <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 24 }}>
+              Tetap buat test case baru meskipun ada kemiripan?
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                className="primary-button"
+                onClick={confirmManualSubmitWithDuplicates}
+                style={{ width: '100%', padding: '12px', borderRadius: 8, fontSize: 14 }}
+              >
+                <span className="material-symbols" style={{ fontSize: 20 }}>check_circle</span>
+                Create All (including duplicates)
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => setShowManualDuplicateModal(false)}
+                style={{ width: '100%', padding: '12px', borderRadius: 8, fontSize: 14 }}
+              >
+                Cancel — Edit Titles
+              </button>
+            </div>
           </div>
         </div>,
         document.body

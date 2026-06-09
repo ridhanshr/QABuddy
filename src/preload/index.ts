@@ -35,6 +35,7 @@ import type {
   ParseConfluenceEntriesOptions,
   ParseConfluenceEntriesResult,
   XrayFolder,
+  FetchTestStepsResult,
 } from "@shared/types";
 
 const api: DesktopApi = {
@@ -61,6 +62,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("getXrayFolders", projectKey) as Promise<XrayFolder[]>,
   checkTestSteps: (entries: ConfluenceTestImportEntry[]) =>
     ipcRenderer.invoke("checkTestSteps", entries) as Promise<StepConflictCheck>,
+  fetchTestSteps: (issueKey: string) =>
+    ipcRenderer.invoke("fetchTestSteps", issueKey) as Promise<FetchTestStepsResult | null>,
   updateTestCasesFromConfluence: (entries: ConfluenceTestImportEntry[], mode?: StepConflictMode) =>
     ipcRenderer.invoke("updateTestCasesFromConfluence", entries, mode) as Promise<UpdateTestCasesFromConfluenceResult>,
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => {

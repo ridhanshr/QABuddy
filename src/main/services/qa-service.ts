@@ -24,6 +24,7 @@ import type {
   UpdateProgress,
   UpdateTestCasesFromConfluenceResult,
   XrayFolder,
+  FetchTestStepsResult,
 } from "@shared/types";
 import { defaultConfig } from "@shared/types";
 import { ConfluenceService } from "./confluence-service";
@@ -614,6 +615,17 @@ export class QaService {
     }
     const jira = new JiraService(config.jira);
     return jira.getXrayFolders(projectKey);
+  }
+
+  async fetchTestSteps(
+    config: AppConfig,
+    issueKey: string
+  ): Promise<FetchTestStepsResult | null> {
+    if (!config.jira.baseUrl || !config.jira.token) {
+      throw new Error("Jira belum dikonfigurasi.");
+    }
+    const jira = new JiraService(config.jira);
+    return jira.fetchTestSteps(issueKey);
   }
 
   async checkTestSteps(

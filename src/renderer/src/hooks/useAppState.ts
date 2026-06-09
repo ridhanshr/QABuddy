@@ -119,6 +119,7 @@ function createEmptyConfEntry(isDirty = true) {
     expectedResult: "",
     result: "PASS",
     images: [] as ConfAttachment[],
+    issueKey: "",
     isDirty,
   };
 }
@@ -256,6 +257,12 @@ export function useAppState() {
   const [organizeProjectKey, setOrganizeProjectKey] = useState("");
   const [organizeXrayFolders, setOrganizeXrayFolders] = useState<XrayFolder[]>([]);
   const [organizeFolderLoading, setOrganizeFolderLoading] = useState(false);
+  const [manualProjectKey, setManualProjectKey] = useState("");
+  const [manualXrayFolders, setManualXrayFolders] = useState<XrayFolder[]>([]);
+  const [manualFolderLoading, setManualFolderLoading] = useState(false);
+  const [manualDuplicateResults, setManualDuplicateResults] = useState<Record<string, { matches: { key: string; summary: string; score: number }[]; checked: boolean }>>({});
+  const [manualPendingDuplicates, setManualPendingDuplicates] = useState<Record<string, { key: string; summary: string; score: number }[]> | null>(null);
+  const [showManualDuplicateModal, setShowManualDuplicateModal] = useState(false);
 
   // Update from Confluence state
   const [confImportMode, setConfImportMode] = useState<"auto" | "jql-match" | "xray-folder">("auto");
@@ -269,6 +276,7 @@ export function useAppState() {
   const [confImportProjectKey, setConfImportProjectKey] = useState("");
   const [confImportXrayFolders, setConfImportXrayFolders] = useState<XrayFolder[]>([]);
   const [confImportFolderLoading, setConfImportFolderLoading] = useState(false);
+  const [confImportFetchingSteps, setConfImportFetchingSteps] = useState<Set<string>>(new Set());
   const [confImportSelectedFolder, setConfImportSelectedFolder] = useState("");
   const [stepConflictCheck, setStepConflictCheck] = useState<{ hasSteps: string[]; noSteps: string[] } | null>(null);
   const [stepConflictMode, setStepConflictMode] = useState<StepConflictMode>("replace");
@@ -333,6 +341,7 @@ export function useAppState() {
   const [confPreviewLoading, setConfPreviewLoading] = useState(false);
   const [confParseStatus, setConfParseStatus] = useState<ParseConfluenceEntriesResult | null>(null);
   const [confEntries, setConfEntries] = useState<any[]>([createEmptyConfEntry()]);
+  const [confFetchingSteps, setConfFetchingSteps] = useState<Set<string>>(new Set());
   const [deletedConfTableIndices, setDeletedConfTableIndices] = useState<number[]>([]);
   const [draggedAttachment, setDraggedAttachment] = useState<{ entryId: string; attachmentId: string } | null>(null);
 
@@ -694,6 +703,19 @@ export function useAppState() {
       .finally(() => setConfImportFolderLoading(false));
   }, [confImportProjectKey]);
 
+  // Fetch Xray folders for Manual Test Case Creator when project changes
+  useEffect(() => {
+    if (!manualProjectKey) {
+      setManualXrayFolders([]);
+      return;
+    }
+    setManualFolderLoading(true);
+    window.qaBuddy.getXrayFolders(manualProjectKey)
+      .then(setManualXrayFolders)
+      .catch(() => setManualXrayFolders([]))
+      .finally(() => setManualFolderLoading(false));
+  }, [manualProjectKey]);
+
   const connectionPills = useMemo(
     () => [
       { label: "Jira", item: status.jira, icon: jiraIcon },
@@ -908,28 +930,79 @@ export function useAppState() {
     }
   }
 
-  const submitManualCases = async () => {
-    if (manualCases.some(c => !c.title.trim())) {
-      setBanner({ tone: "error", text: "Semua skenario harus memiliki judul." });
-      return;
-    }
-
+  const doSubmitManualCases = async () => {
     setManualLoading(true);
     setProgressHidden(false);
     try {
-      const result = await window.qaBuddy.createManualTestCases(manualCases);
+      const casesToSubmit = manualCases.map(c => ({
+        ...c,
+        projectKey: manualProjectKey || config.jira.projectKey,
+      }));
+      const result = await window.qaBuddy.createManualTestCases(casesToSubmit);
       setBanner({
         tone: "success",
         text: `Berhasil membuat ${result.created.length} test case di Jira.`
       });
       addLog("Submit to Jira", "success", `Berhasil membuat ${result.created.length} test case di Jira`, result.created.map(c => c.key).join(", "));
       setManualCases([{ id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "" }]);
+      setManualDuplicateResults({});
     } catch (error: any) {
       setBanner({ tone: "error", text: `Gagal membuat test case: ${error.message}` });
       addLog("Submit to Jira", "error", "Gagal membuat test case", error.message);
     } finally {
       setManualLoading(false);
     }
+  };
+
+  const submitManualCases = async () => {
+    if (manualCases.some(c => !c.title.trim())) {
+      setBanner({ tone: "error", text: "Semua skenario harus memiliki judul." });
+      return;
+    }
+    if (!manualProjectKey) {
+      setBanner({ tone: "error", text: "Pilih project terlebih dahulu." });
+      return;
+    }
+
+    // Check duplicates before submit
+    try {
+      const allIssues = await window.qaBuddy.findTestCasesByJql(
+        `project = "${manualProjectKey}" AND issuetype = Test`,
+        500
+      );
+
+      const duplicates: Record<string, { key: string; summary: string; score: number }[]> = {};
+      for (const c of manualCases) {
+        if (!c.title.trim()) continue;
+        const match = findBestMatch(c.title, allIssues);
+        duplicates[c.id] = match ? [{ key: match.key, summary: match.summary, score: 1 }] : [];
+      }
+
+      const newResults: typeof manualDuplicateResults = {};
+      for (const [id, matches] of Object.entries(duplicates)) {
+        newResults[id] = { matches, checked: true };
+      }
+      setManualDuplicateResults(prev => ({ ...prev, ...newResults }));
+
+      const hasDuplicates = Object.values(duplicates).some(arr => arr.length > 0);
+      if (hasDuplicates) {
+        setManualPendingDuplicates(duplicates);
+        setShowManualDuplicateModal(true);
+        return;
+      }
+
+      await doSubmitManualCases();
+    } catch {
+      // If duplicate check fails, allow direct submit
+      setBanner({ tone: "info", text: "Pemeriksaan duplikat gagal — melanjutkan submit." });
+      await doSubmitManualCases();
+    }
+  };
+
+  const confirmManualSubmitWithDuplicates = async () => {
+    setShowManualDuplicateModal(false);
+    setManualPendingDuplicates(null);
+    await doSubmitManualCases();
   };
 
   const addManualCase = () => {
@@ -976,6 +1049,30 @@ export function useAppState() {
       setBanner({ tone: "error", text: "AI gagal memproses permintaan." });
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const checkManualDuplicate = async (id: string, title: string) => {
+    if (!title.trim() || !manualProjectKey) {
+      setManualDuplicateResults(prev => ({ ...prev, [id]: { matches: [], checked: true } }));
+      return;
+    }
+    try {
+      const escaped = title.replace(/["']/g, "").trim();
+      const issues = await window.qaBuddy.findTestCasesByJql(
+        `project = "${manualProjectKey}" AND issuetype = Test AND summary ~ "${escaped}"`,
+        5
+      );
+      const match = findBestMatch(title, issues);
+      setManualDuplicateResults(prev => ({
+        ...prev,
+        [id]: {
+          matches: match ? [{ key: match.key, summary: match.summary, score: 1 }] : [],
+          checked: true,
+        }
+      }));
+    } catch {
+      setManualDuplicateResults(prev => ({ ...prev, [id]: { matches: [], checked: true } }));
     }
   };
 
@@ -1278,6 +1375,35 @@ export function useAppState() {
     );
   };
 
+  const fetchAndSetStepsForEntry = async (id: string, issueKey: string) => {
+    if (!issueKey) return;
+    setConfImportFetchingSteps(prev => new Set(prev).add(id));
+    try {
+      const result = await window.qaBuddy.fetchTestSteps(issueKey);
+      if (result) {
+        setConfImportEntries(prev =>
+          prev.map(e =>
+            e.id === id
+              ? { ...e, steps: result.steps, expectedResult: result.expectedResult }
+              : e
+          )
+        );
+        const stepsCount = result.steps.split("\n").filter(Boolean).length;
+        const resultCount = result.expectedResult.split("\n").filter(Boolean).length;
+        addLog("Update from Confluence", "info", `${issueKey}: ${stepsCount} steps, ${resultCount} expected result berhasil di-fetch dari Xray.`);
+        setBanner({ tone: "success", text: `${issueKey}: ${stepsCount} steps, ${resultCount} expected result berhasil di-fetch.` });
+      } else {
+        addLog("Update from Confluence", "info", `${issueKey}: Tidak ada test steps di Xray.`);
+        setBanner({ tone: "info", text: `${issueKey}: Tidak ada test steps di Xray.` });
+      }
+    } catch {
+      addLog("Update from Confluence", "error", `${issueKey}: Gagal fetch steps dari Xray.`);
+      setBanner({ tone: "error", text: `${issueKey}: Gagal fetch steps dari Xray.` });
+    } finally {
+      setConfImportFetchingSteps(prev => { const next = new Set(prev); next.delete(id); return next; });
+    }
+  };
+
   const confirmStepConflictUpdate = async (mode: StepConflictMode) => {
     setStepConflictCheck(null);
     setConfImportLoading(true);
@@ -1401,6 +1527,7 @@ export function useAppState() {
       entriesList.forEach((e: any) => {
         e.id = crypto.randomUUID();
         e.isDirty = false;
+        e.issueKey = e.issueKey || "";
         e.images = normalizeConfAttachments(
           (e.images || []).map((image: any, index: number) => ({
             id: image.id || crypto.randomUUID(),
@@ -1624,6 +1751,33 @@ export function useAppState() {
       }
       return current.filter((e) => e.id !== id);
     });
+  };
+
+  const fetchConfSteps = async (id: string, issueKey: string) => {
+    if (!issueKey) return;
+    setConfFetchingSteps(prev => new Set(prev).add(id));
+    try {
+      const result = await window.qaBuddy.fetchTestSteps(issueKey);
+      if (result) {
+        setConfEntries((current) =>
+          current.map((e) =>
+            e.id === id ? { ...e, steps: result.steps, expectedResult: result.expectedResult, isDirty: true } : e
+          )
+        );
+        const stepsCount = result.steps.split("\n").filter(Boolean).length;
+        const resultCount = result.expectedResult.split("\n").filter(Boolean).length;
+        addLog("Sync to Confluence", "info", `${issueKey}: ${stepsCount} steps, ${resultCount} expected result berhasil di-fetch dari Xray.`);
+        setBanner({ tone: "success", text: `${issueKey}: ${stepsCount} steps, ${resultCount} expected result berhasil di-fetch.` });
+      } else {
+        addLog("Sync to Confluence", "info", `${issueKey}: Tidak ada test steps di Xray.`);
+        setBanner({ tone: "info", text: `${issueKey}: Tidak ada test steps di Xray.` });
+      }
+    } catch {
+      addLog("Sync to Confluence", "error", `${issueKey}: Gagal fetch steps dari Xray.`);
+      setBanner({ tone: "error", text: `${issueKey}: Gagal fetch steps dari Xray.` });
+    } finally {
+      setConfFetchingSteps(prev => { const n = new Set(prev); n.delete(id); return n; });
+    }
   };
 
   const updateConfEntryImages = (entryId: string, updater: (images: ConfAttachment[]) => ConfAttachment[]) => {
@@ -1997,6 +2151,17 @@ export function useAppState() {
     setOrganizeProjectKey,
     organizeXrayFolders,
     organizeFolderLoading,
+    manualProjectKey,
+    setManualProjectKey,
+    manualXrayFolders,
+    manualFolderLoading,
+    manualDuplicateResults,
+    manualPendingDuplicates,
+    setManualPendingDuplicates,
+    showManualDuplicateModal,
+    setShowManualDuplicateModal,
+    checkManualDuplicate,
+    confirmManualSubmitWithDuplicates,
     confImportMode,
     setConfImportMode,
     confImportUrl,
@@ -2014,6 +2179,8 @@ export function useAppState() {
     confImportJqlMatchedIds,
     setConfImportJqlMatchedIds,
     updateConfImportEntryKey,
+    fetchAndSetStepsForEntry,
+    confImportFetchingSteps,
     confImportProjectKey,
     setConfImportProjectKey,
     confImportXrayFolders,
@@ -2143,6 +2310,8 @@ export function useAppState() {
     addConfEntry,
     updateConfEntry,
     removeConfEntry,
+    fetchConfSteps,
+    confFetchingSteps,
     updateConfEntryImages,
     handleImagePaste,
     handleConfFileAttachment,

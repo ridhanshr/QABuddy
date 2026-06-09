@@ -122,6 +122,27 @@ export class JiraClient {
   }
 
   /**
+   * Fetch test steps + expected results for a given test issue key.
+   * Returns null if the issue has no steps or doesn't exist.
+   */
+  async fetchTestSteps(
+    issueKey: string
+  ): Promise<{ steps: string[]; results: string[] } | null> {
+    try {
+      const res = await this.xray.get<any>(`/test/${issueKey}/step`);
+      const data = res.data;
+      if (Array.isArray(data) && data.length > 0) {
+        const steps = data.map((s: any) => (s.step || "").trim()).filter(Boolean);
+        const results = data.map((s: any) => (s.result || "").trim()).filter(Boolean);
+        return steps.length > 0 || results.length > 0 ? { steps, results } : null;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Get all test issue keys + summaries in a given Xray folder.
    * Tries the Xray API first, falls back to JQL search on the project.
    */
