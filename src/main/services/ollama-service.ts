@@ -76,7 +76,7 @@ export class OllamaService {
         const jqlKeys = ["jql", "query", "search_query", "jql_query", "filter", "result", "search", "response"];
         for (const key of jqlKeys) {
           if (typeof parsed[key] === "string" && /(?:project|status|issuetype|issue_type|priority|assignee)\s*[=~]/i.test(parsed[key])) {
-            const fixed = this.fixJqlQuery(parsed[key].trim(), projectKey);
+            const fixed = this.fixJqlQuery(parsed[key].trim(), projectKey, prompt);
             logger.info("JQL Gen", `Extracted from '${key}' key:`, fixed);
             return fixed;
           }
@@ -84,7 +84,7 @@ export class OllamaService {
 
         for (const [key, value] of Object.entries(parsed)) {
           if (typeof value === "string" && /(?:project|status|issuetype|issue_type|priority|assignee)\s*[=~]/i.test(value)) {
-            const fixed = this.fixJqlQuery(value.trim(), projectKey);
+            const fixed = this.fixJqlQuery(value.trim(), projectKey, prompt);
             logger.info("JQL Gen", `Found JQL-like string in '${key}' key:`, fixed);
             return fixed;
           }
@@ -103,9 +103,14 @@ export class OllamaService {
           summary: "summary",
         };
 
-        const clauses: string[] = [`project = "${projectKey}"`];
+        const clauses: string[] = [];
+        let projectFromPayload = "";
         for (const [key, value] of Object.entries(parsed)) {
-          if (key === "jql" || key === "query" || key === "project" || key === "reasoning" || key === "explanation" || key === "response") continue;
+          if (key === "jql" || key === "query" || key === "reasoning" || key === "explanation" || key === "response") continue;
+          if (key === "project" && typeof value === "string") {
+            projectFromPayload = value.trim();
+            continue;
+          }
           const jqlField = fieldMap[key.toLowerCase()] || fieldMap[key];
           if (jqlField && typeof value === "string" && value.trim().length > 0) {
             if (jqlField === "summary") {
@@ -115,6 +120,16 @@ export class OllamaService {
             }
           }
         }
+
+        // Determine correct project key
+        let targetProject = projectKey;
+        const projectMatch = prompt.match(/project\s*['"]?([A-Z0-9]+)['"]?/i);
+        if (projectMatch) {
+          targetProject = projectMatch[1].toUpperCase();
+        } else if (projectFromPayload) {
+          targetProject = projectFromPayload.toUpperCase();
+        }
+        clauses.unshift(`project = "${targetProject}"`);
 
         if (clauses.length > 1) {
           const builtJql = clauses.join(" AND ") + " ORDER BY updated DESC";
@@ -129,23 +144,54 @@ export class OllamaService {
       potentialJql = potentialJql.replace(/^(jql|query|search|result|answer):\s*/i, "");
 
       if (/(?:project|status|issuetype|issue_type|priority|assignee)\s*[=~]/i.test(potentialJql)) {
-        const fixed = this.fixJqlQuery(potentialJql, projectKey);
+        const fixed = this.fixJqlQuery(potentialJql, projectKey, prompt);
         logger.info("JQL Gen", "Extracted raw JQL from text:", fixed);
         return fixed;
       }
     }
 
-    const deterministicJql = this.buildJqlFromUserInput(prompt, projectKey);
+    const deterministicJql = this.buildJqlFromUserInput(prompt, projectKey, context);
     logger.warn("JQL Gen", "AI failed, built JQL deterministically:", deterministicJql);
     return deterministicJql;
   }
 
-  private buildJqlFromUserInput(prompt: string, projectKey: string): string {
-    const clauses: string[] = [`project = "${projectKey}"`];
+  private buildJqlFromUserInput(prompt: string, projectKey: string, context?: ProjectContext): string {
+    let targetProject = projectKey;
+    const projectMatch = prompt.match(/project\s*['"]?([A-Z0-9]+)['"]?/i);
+    if (projectMatch) {
+      targetProject = projectMatch[1].toUpperCase();
+    }
+    const clauses: string[] = [`project = "${targetProject}"`];
 
-    const statusMatch = prompt.match(/status\s*[=:]?\s*(?:=\s*)?["']?([A-Za-z][A-Za-z ]+?)["']?\s*(?:,|$|pada|dengan|dan|yang|untuk|di|type|tipe|priority|assign)/i);
-    if (statusMatch) {
-      clauses.push(`status = "${statusMatch[1].trim()}"`);
+    // Smarter status matching
+    let statusFound = "";
+    if (context?.statuses && context.statuses.length > 0) {
+      for (const st of context.statuses) {
+        const escaped = st.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const reg = new RegExp(`\\b${escaped}\\b`, 'i');
+        if (reg.test(prompt)) {
+          statusFound = st;
+          break;
+        }
+      }
+    }
+    if (!statusFound) {
+      const commonStatuses = ["Open", "In Progress", "Resolved", "Closed", "Reopened", "Done", "To Do", "Ready for QA"];
+      for (const st of commonStatuses) {
+        const reg = new RegExp(`\\b${st}\\b`, 'i');
+        if (reg.test(prompt)) {
+          statusFound = st;
+          break;
+        }
+      }
+    }
+    if (statusFound) {
+      clauses.push(`status = "${statusFound}"`);
+    } else {
+      const statusMatch = prompt.match(/status\s*[=:]?\s*(?:=\s*)?["']?([A-Za-z][A-Za-z ]+?)["']?\s*(?:,|$|pada|dengan|dan|yang|untuk|di|type|tipe|priority|assign)/i);
+      if (statusMatch) {
+        clauses.push(`status = "${statusMatch[1].trim()}"`);
+      }
     }
 
     const typeMatch = prompt.match(/(?:type|tipe|issuetype)\s*[=:]?\s*(?:=\s*)?["']?([A-Za-z][A-Za-z ]*?)["']?\s*(?:,|$|dengan|dan|yang|untuk|di|status|priority|assign|pada)/i);
@@ -153,13 +199,31 @@ export class OllamaService {
       clauses.push(`issuetype = "${typeMatch[1].trim()}"`);
     }
 
-    const priorityMatch = prompt.match(/(?:priority|prioritas)\s*[=:]?\s*(?:=\s*)?["']?([A-Za-z]+)["']?/i);
-    if (priorityMatch) {
-      const priorityMap: Record<string, string> = {
-        tinggi: "High", sedang: "Medium", rendah: "Low", tertinggi: "Highest", terendah: "Lowest",
-      };
-      const val = priorityMatch[1].trim();
-      clauses.push(`priority = "${priorityMap[val.toLowerCase()] || val}"`);
+    // Smarter priority matching
+    let priorityFound = "";
+    const priorityMap: Record<string, string> = {
+      tinggi: "High", high: "High",
+      sedang: "Medium", medium: "Medium",
+      rendah: "Low", low: "Low",
+      kritis: "Critical", critical: "Critical",
+      tertinggi: "Highest", highest: "Highest",
+      terendah: "Lowest", lowest: "Lowest"
+    };
+    for (const [key, val] of Object.entries(priorityMap)) {
+      const reg = new RegExp(`\\b${key}\\b`, 'i');
+      if (reg.test(prompt)) {
+        priorityFound = val;
+        break;
+      }
+    }
+    if (priorityFound) {
+      clauses.push(`priority = "${priorityFound}"`);
+    } else {
+      const priorityMatch = prompt.match(/(?:priority|prioritas)\s*[=:]?\s*(?:=\s*)?["']?([A-Za-z]+)["']?/i);
+      if (priorityMatch) {
+        const val = priorityMatch[1].trim();
+        clauses.push(`priority = "${priorityMap[val.toLowerCase()] || val}"`);
+      }
     }
 
     const assigneeMatch = prompt.match(/(?:assign(?:ee)?|ditugaskan)\s*(?:ke|=|:)?\s*(?:=\s*)?["']?([A-Za-z][A-Za-z._ ]+?)["']?\s*(?:,|$|dengan|dan|yang|untuk|di|status|type|priority|pada)/i);
@@ -175,17 +239,33 @@ export class OllamaService {
     return clauses.join(" AND ") + " ORDER BY updated DESC";
   }
 
-  private fixJqlQuery(jql: string, correctProjectKey: string): string {
+  private fixJqlQuery(jql: string, correctProjectKey: string, userPrompt?: string): string {
     let fixed = jql;
     fixed = fixed.replace(/\bissue_type\b/gi, "issuetype");
 
-    fixed = fixed.replace(
-      /project\s*=\s*['"]([^'"]+)['"]/i,
-      `project = "${correctProjectKey}"`
-    );
+    let projectKeyToUse = correctProjectKey;
+    if (userPrompt) {
+      const projectMatch = userPrompt.match(/project\s*['"]?([A-Z0-9]+)['"]?/i);
+      if (projectMatch) {
+        projectKeyToUse = projectMatch[1].toUpperCase();
+      }
+    }
 
-    if (!/project\s*=/i.test(fixed)) {
-      fixed = `project = "${correctProjectKey}" AND ${fixed}`;
+    const existingProjectMatch = fixed.match(/project\s*=\s*['"]([^'"]+)['"]/i);
+    if (existingProjectMatch) {
+      const existingProject = existingProjectMatch[1].toUpperCase();
+      if (existingProject !== correctProjectKey.toUpperCase() && userPrompt) {
+        const reg = new RegExp(`\\b${existingProject}\\b`, 'i');
+        if (reg.test(userPrompt)) {
+          projectKeyToUse = existingProject;
+        }
+      }
+      fixed = fixed.replace(
+        /project\s*=\s*['"]([^'"]+)['"]/i,
+        `project = "${projectKeyToUse}"`
+      );
+    } else {
+      fixed = `project = "${projectKeyToUse}" AND ${fixed}`;
     }
 
     if (!/ORDER\s+BY/i.test(fixed)) {

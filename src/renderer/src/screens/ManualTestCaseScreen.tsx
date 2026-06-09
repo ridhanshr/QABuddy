@@ -44,6 +44,12 @@ export default function ManualTestCaseScreen() {
     confImportJqlMatchedIds,
     setConfImportJqlMatchedIds,
     updateConfImportEntryKey,
+    confImportProjectKey,
+    setConfImportProjectKey,
+    confImportXrayFolders,
+    confImportFolderLoading,
+    confImportSelectedFolder,
+    setConfImportSelectedFolder,
     fetchConfImportEntries,
     searchJiraForImport,
     toggleConfImportEntry,
@@ -71,6 +77,19 @@ export default function ManualTestCaseScreen() {
     };
     return flatten(organizeXrayFolders);
   }, [organizeXrayFolders]);
+
+  const confImportFlattenFolderOptions = useMemo(() => {
+    const flatten = (folders: typeof confImportXrayFolders, pfx = ""): { value: string; label: string }[] => {
+      const result: { value: string; label: string }[] = [];
+      for (const f of folders) {
+        const path = pfx ? `${pfx}/${f.name}` : `/${f.name}`;
+        result.push({ value: path, label: path });
+        if (f.children) result.push(...flatten(f.children, path));
+      }
+      return result;
+    };
+    return flatten(confImportXrayFolders);
+  }, [confImportXrayFolders]);
 
   if (loading || activeView !== "manual-test-case") {
     return null;
@@ -389,7 +408,9 @@ export default function ManualTestCaseScreen() {
                 <p style={{ fontSize: 13, color: 'var(--on-surface-variant)' }}>
                   {confImportMode === "auto" 
                     ? "Auto: Ekstrak Issue Key otomatis dari field Scenario di Confluence"
-                    : "JQL Match: Cocokkan dengan hasil query JQL"}
+                    : confImportMode === "jql-match"
+                    ? "JQL Match: Cocokkan dengan hasil query JQL"
+                    : "Xray Folder: Cocokkan dengan issue di folder Xray terpilih"}
                 </p>
               </div>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
@@ -406,6 +427,13 @@ export default function ManualTestCaseScreen() {
                   style={{ padding: '6px 16px', fontSize: 13, borderRadius: 20 }}
                 >
                   JQL Match
+                </button>
+                <button
+                  className={confImportMode === "xray-folder" ? "primary-button" : "secondary-button"}
+                  onClick={() => setConfImportMode("xray-folder")}
+                  style={{ padding: '6px 16px', fontSize: 13, borderRadius: 20 }}
+                >
+                  Xray Folder
                 </button>
               </div>
             </div>
@@ -470,6 +498,59 @@ export default function ManualTestCaseScreen() {
                     <span className="material-symbols" style={{ fontSize: 18 }}>clear</span>
                     Clear
                   </button>
+                </div>
+              </div>
+            )}
+
+            {/* Xray Folder selector (only in Xray Folder mode) */}
+            {confImportMode === "xray-folder" && (
+              <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div className="field-group">
+                  <label>Project</label>
+                  <SearchableSelect
+                    options={jiraProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
+                    value={confImportProjectKey}
+                    onChange={setConfImportProjectKey}
+                    placeholder="-- Select Project --"
+                  />
+                </div>
+                <div className="field-group">
+                  <label>Xray Folder</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <SearchableSelect
+                        options={confImportFlattenFolderOptions}
+                        value={confImportSelectedFolder}
+                        onChange={setConfImportSelectedFolder}
+                        placeholder={confImportFolderLoading ? 'Loading folders...' : !confImportProjectKey ? '-- Select Project First --' : '-- Select Folder --'}
+                        disabled={confImportFolderLoading || !confImportProjectKey}
+                      />
+                    </div>
+                    <button
+                      className="secondary-button"
+                      onClick={searchJiraForImport}
+                      disabled={confImportLoading || confImportEntries.length === 0 || !confImportProjectKey || !confImportSelectedFolder}
+                      style={{ padding: '8px 20px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}
+                    >
+                      <span className="material-symbols" style={{ fontSize: 18 }}>folder_match</span>
+                      Match from Folder
+                    </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() => {
+                        setConfImportJqlMatched(false);
+                        setConfImportJqlMatchedIds(new Set());
+                        setConfImportEntries(prev =>
+                          prev.map(e => ({ ...e, selected: !!e.issueKey }))
+                        );
+                      }}
+                      disabled={!confImportJqlMatched}
+                      style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}
+                    >
+                      <span className="material-symbols" style={{ fontSize: 18 }}>clear</span>
+                      Clear
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -632,6 +713,7 @@ export default function ManualTestCaseScreen() {
                 <div style={{ fontSize: 13, color: 'var(--on-surface-variant)', lineHeight: 1.6 }}>
                   <p><strong>Mode Auto:</strong> Cukup masukkan URL Confluence. System akan auto-extract Issue Key dari field Scenario dan siapkan entries untuk diupdate.</p>
                   <p><strong>Mode JQL Match:</strong> Masukkan URL Confluence + JQL query. System akan parse entries, lalu cocokkan <strong>scenario</strong> dengan <strong>summary</strong> hasil JQL, perbarui Issue Key, dan tampilkan hanya entry yang cocok. Kosongkan JQL untuk melihat semua entry.</p>
+                  <p><strong>Mode Xray Folder:</strong> Pilih Project + Folder Xray. System akan fetch semua issue di folder tersebut, lalu cocokkan dengan scenario Confluence (otomatis strip prefix project). Tidak perlu JQL atau edit manual.</p>
                   <p>Pastikan tabel Confluence memiliki format: <strong>No. Test Case</strong>, <strong>Scenario</strong> (mengandung link Jira issue), <strong>Steps</strong>, <strong>Expected Result</strong>.</p>
                 </div>
               </div>

@@ -275,9 +275,23 @@ export interface SyncToConfluencePayload {
   deletedTableIndices?: number[];
 }
 
+export interface UpdateInfo {
+  updateAvailable: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  releaseNotes: string;
+  url: string;
+  publishedAt: string;
+  checkedAt: string;
+  error?: string;
+}
+
 export interface DesktopApi {
   bootstrap: () => Promise<AppBootstrap>;
   saveConfig: (config: AppConfig) => Promise<AppConfig>;
+  checkForUpdates: () => Promise<UpdateInfo>;
+  getUpdateStatus: () => Promise<UpdateInfo | null>;
+  onUpdateStatusPushed: (callback: (info: UpdateInfo) => void) => () => void;
   testConnections: () => Promise<ConnectionStatus>;
   healthcheck: () => Promise<any>;
   getDashboard: () => Promise<DashboardDigest>;
@@ -296,6 +310,7 @@ export interface DesktopApi {
   updateTestCasesFromConfluence: (entries: ConfluenceTestImportEntry[], mode?: StepConflictMode) => Promise<UpdateTestCasesFromConfluenceResult>;
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => () => void;
   findTestCasesByJql: (jql: string, maxResults: number) => Promise<JiraIssueSummary[]>;
+  getXrayFolderIssues: (projectKey: string, folderId: number) => Promise<{ key: string; summary: string }[]>;
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) => Promise<SyncToConfluenceResult>;
   previewConfluenceSync: (pageId: string, payload: { entries: any[] }) => Promise<ConfluencePreviewResult>;
   openExternal: (url: string) => Promise<void>;
@@ -328,6 +343,8 @@ export interface DesktopApi {
   getExecutionStats: () => Promise<{ totalExecutions: number; totalPassed: number; totalFailed: number; passRate: number }>;
   readLocalFile: (filePath: string, baseDir?: string) => Promise<{ name: string; data: string }>;
   getDirectoryName: (filePath: string) => Promise<string>;
+  downloadAndInstallUpdate: () => Promise<void>;
+  onDownloadProgress: (callback: (progress: { progress: number; downloaded: number; total: number }) => void) => () => void;
 }
 
 export interface JiraProject {

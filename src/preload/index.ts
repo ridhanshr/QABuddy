@@ -27,6 +27,7 @@ import type {
   StepConflictMode,
   TestCaseExecution,
   UpdateProgress,
+  UpdateInfo,
   UpdateTestCasesFromConfluenceResult,
   SyncToConfluencePayload,
   SyncToConfluenceResult,
@@ -69,6 +70,8 @@ const api: DesktopApi = {
   },
   findTestCasesByJql: (jql: string, maxResults: number) =>
     ipcRenderer.invoke("findTestCasesByJql", jql, maxResults) as Promise<JiraIssueSummary[]>,
+  getXrayFolderIssues: (projectKey: string, folderId: number) =>
+    ipcRenderer.invoke("getXrayFolderIssues", projectKey, folderId) as Promise<{ key: string; summary: string }[]>,
   openExternal: (url: string) => ipcRenderer.invoke("openExternal", url) as Promise<void>,
   getOllamaModels: (endpoint: string) => ipcRenderer.invoke("getOllamaModels", endpoint) as Promise<string[]>,
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) =>
@@ -114,6 +117,19 @@ const api: DesktopApi = {
   getExecutionStats: () => ipcRenderer.invoke("getExecutionStats") as Promise<{ totalExecutions: number; totalPassed: number; totalFailed: number; passRate: number }>,
   readLocalFile: (filePath: string, baseDir?: string) => ipcRenderer.invoke("readLocalFile", filePath, baseDir) as Promise<{ name: string; data: string }>,
   getDirectoryName: (filePath: string) => ipcRenderer.invoke("getDirectoryName", filePath) as Promise<string>,
+  checkForUpdates: () => ipcRenderer.invoke("checkForUpdates") as Promise<UpdateInfo>,
+  getUpdateStatus: () => ipcRenderer.invoke("getUpdateStatus") as Promise<UpdateInfo | null>,
+  onUpdateStatusPushed: (callback: (info: UpdateInfo) => void) => {
+    const handler = (_: any, info: UpdateInfo) => callback(info);
+    ipcRenderer.on("update-status-pushed", handler);
+    return () => ipcRenderer.removeListener("update-status-pushed", handler);
+  },
+  downloadAndInstallUpdate: () => ipcRenderer.invoke("downloadAndInstallUpdate") as Promise<void>,
+  onDownloadProgress: (callback: (progress: { progress: number; downloaded: number; total: number }) => void) => {
+    const handler = (_: any, p: { progress: number; downloaded: number; total: number }) => callback(p);
+    ipcRenderer.on("download-progress", handler);
+    return () => ipcRenderer.removeListener("download-progress", handler);
+  },
 };
 
 contextBridge.exposeInMainWorld("qaBuddy", api);

@@ -16,6 +16,7 @@ QA Buddy adalah aplikasi desktop modern yang dirancang khusus untuk membantu tim
    * **Visual JQL Builder**: Penyusun filter Jira visual tingkat lanjut (Project, Board, Sprint, Status, Tipe, Key, dan Filter Multi-Label dinamis).
    * **Bulk Operations Dashboard**: Melakukan aksi massal terhadap tiket hasil filter (Bulk Transition, Bulk Assign, Bulk Add Labels, dan Bulk Xray folder movement).
 8. **RAG Knowledge Base**: Melakukan pengindeksan lokal dokumen Confluence & Jira secara offline ke dalam vector database lokal menggunakan model embeddings dari Ollama.
+9. **Update from Confluence**: Memperbarui langkah pengujian (*test steps*) dan hasil yang diharapkan (*expected result*) pada tiket Jira (Xray) secara massal langsung dari tabel pengujian di halaman Confluence, dengan opsi resolusi konflik langkah (*Overwrite/Replace*, *Skip*, atau *Append*).
 
 ---
 
@@ -26,6 +27,14 @@ QA Buddy adalah aplikasi desktop modern yang dirancang khusus untuk membantu tim
 * **Language**: TypeScript
 * **State Management & UI**: Vanilla CSS dengan token variabel CSS, Material Design 3, Google Material Symbols, & Searchable Select Components.
 * **Security & Storage**: Credential API tokens Jira/Confluence dienkripsi secara lokal di disk pengguna menggunakan API **Electron safeStorage** (berbasis DPAPI Windows / macOS Keychain).
+
+## 📥 Instalasi Cepat (Windows)
+
+Anda dapat mengunduh dan menginstal QA Buddy secara otomatis melalui PowerShell dengan menjalankan perintah berikut:
+
+```powershell
+irm https://raw.githubusercontent.com/ridhanshr/QABuddy/main/install.ps1 | iex
+```
 
 ---
 

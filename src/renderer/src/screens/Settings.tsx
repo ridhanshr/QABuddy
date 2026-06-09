@@ -37,6 +37,14 @@ export default function Settings() {
     handleRagIndexConfluence,
     handleRagIndexJira,
     handleRagClear,
+    updateInfo,
+    updateChecking,
+    handleCheckForUpdates,
+    downloadingUpdate,
+    downloadProgress,
+    showDetailedProgress,
+    setShowDetailedProgress,
+    handleDownloadAndInstall,
   } = useApp();
 
   if (loading || activeView !== "settings") {
@@ -72,6 +80,29 @@ export default function Settings() {
         >
           <span className="material-symbols" style={{ fontSize: 18 }}>neurology</span>
           Knowledge Base
+        </button>
+        <button 
+          className={`tab-btn ${settingsTab === "updates" ? "active" : ""}`}
+          onClick={() => setSettingsTab("updates")}
+          type="button"
+          style={{ position: "relative" }}
+        >
+          <span className="material-symbols" style={{ fontSize: 18 }}>system_update</span>
+          Updates
+          {updateInfo?.updateAvailable && (
+            <span 
+              className="update-badge-dot animate-pulse" 
+              style={{ 
+                position: "absolute", 
+                top: 4, 
+                right: 4, 
+                width: 8, 
+                height: 8, 
+                borderRadius: "50%", 
+                background: "var(--error, #dc2626)" 
+              }} 
+            />
+          )}
         </button>
       </div>
 
@@ -818,6 +849,219 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      {settingsTab === "updates" && (
+        <div className="updates-stack" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          <div className="card" style={{ padding: 24 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+              <div 
+                style={{ 
+                  width: 48, 
+                  height: 48, 
+                  borderRadius: 12, 
+                  background: updateInfo?.updateAvailable ? "rgba(249, 115, 22, 0.1)" : "rgba(16, 185, 129, 0.1)", 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "center",
+                  color: updateInfo?.updateAvailable ? "var(--warning, #f97316)" : "#10b981"
+                }}
+              >
+                <span className="material-symbols" style={{ fontSize: 28 }}>
+                  {updateInfo?.updateAvailable ? "system_update" : "check_circle"}
+                </span>
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>
+                  {updateInfo?.updateAvailable ? "Update Aplikasi Tersedia!" : "Aplikasi Sudah Up-to-Date"}
+                </h3>
+                <p style={{ fontSize: 14, color: "var(--on-surface-variant)", margin: "4px 0 0" }}>
+                  {updateInfo?.updateAvailable 
+                    ? `Versi baru v${updateInfo.latestVersion} tersedia untuk diunduh.` 
+                    : `Anda menggunakan versi terbaru QA Buddy (v${updateInfo?.currentVersion || "0.1.0"}).`
+                  }
+                </p>
+              </div>
+            </div>
+
+            <div 
+              style={{ 
+                marginTop: 24, 
+                padding: 16, 
+                background: "var(--surface-container-low)", 
+                borderRadius: 8, 
+                border: "1px solid var(--outline-variant)",
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 16,
+                fontSize: 13
+              }}
+            >
+              <div>
+                <span style={{ color: "var(--on-surface-variant)" }}>Versi Saat Ini:</span>
+                <div style={{ fontWeight: 600, marginTop: 2, fontSize: 14 }}>v{updateInfo?.currentVersion || "0.1.0"}</div>
+              </div>
+              <div>
+                <span style={{ color: "var(--on-surface-variant)" }}>Versi Terbaru:</span>
+                <div style={{ fontWeight: 600, marginTop: 2, fontSize: 14 }}>v{updateInfo?.latestVersion || "0.1.0"}</div>
+              </div>
+              <div style={{ gridColumn: "span 2", borderTop: "1px solid var(--outline-variant)", paddingTop: 12 }}>
+                <span style={{ color: "var(--on-surface-variant)" }}>Pengecekan Terakhir:</span>
+                <div style={{ fontWeight: 500, marginTop: 2 }}>
+                  {updateInfo?.checkedAt 
+                    ? new Date(updateInfo.checkedAt).toLocaleString("id-ID") 
+                    : "Belum pernah diperiksa"
+                  }
+                </div>
+              </div>
+            </div>
+
+            {downloadingUpdate && showDetailedProgress && (
+              <div 
+                style={{ 
+                  marginTop: 24, 
+                  padding: 16, 
+                  background: "var(--surface-container-low)", 
+                  borderRadius: 8, 
+                  border: "1px solid var(--outline-variant)" 
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="material-symbols rotating" style={{ color: "var(--tertiary)", fontSize: 20 }}>sync</span>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>Mengunduh Update...</span>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    onClick={() => setShowDetailedProgress(false)}
+                    style={{ padding: "4px 12px", fontSize: 12, height: "auto" }}
+                    type="button"
+                  >
+                    Sembunyikan
+                  </button>
+                </div>
+                <div style={{ width: "100%", height: 8, background: "var(--surface-container-high)", borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
+                  <div style={{ width: `${downloadProgress || 0}%`, height: "100%", background: "var(--tertiary)", transition: "width 0.1s ease" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--on-surface-variant)" }}>
+                  <span>{downloadProgress !== null ? `${Math.round(downloadProgress)}%` : "0%"}</span>
+                  <span>Menyiapkan instalasi...</span>
+                </div>
+              </div>
+            )}
+
+            {downloadingUpdate && !showDetailedProgress && (
+              <div 
+                style={{ 
+                  marginTop: 24, 
+                  padding: 12, 
+                  background: "rgba(8, 87, 195, 0.08)", 
+                  borderRadius: 8, 
+                  border: "1px dashed var(--tertiary)", 
+                  display: "flex", 
+                  justifyContent: "space-between", 
+                  alignItems: "center", 
+                  fontSize: 13 
+                }}
+              >
+                <span style={{ color: "var(--on-surface-variant)" }}>Unduhan sedang berjalan di background...</span>
+                <button
+                  className="link-button"
+                  onClick={() => setShowDetailedProgress(true)}
+                  style={{ color: "var(--tertiary)", fontWeight: 600 }}
+                  type="button"
+                >
+                  [Tampilkan Detail]
+                </button>
+              </div>
+            )}
+
+            <div style={{ marginTop: 24, display: "flex", gap: 12 }}>
+              {!downloadingUpdate && updateInfo?.updateAvailable && (
+                <>
+                  <button
+                    className="primary-button"
+                    onClick={() => void handleDownloadAndInstall()}
+                    type="button"
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px" }}
+                  >
+                    <span className="material-symbols" style={{ fontSize: 18 }}>download</span>
+                    Unduh & Pasang Update
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => {
+                      if (updateInfo.url) {
+                        window.qaBuddy.openExternal(updateInfo.url).catch(() => {});
+                      }
+                    }}
+                    type="button"
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px" }}
+                  >
+                    <span className="material-symbols" style={{ fontSize: 18 }}>open_in_new</span>
+                    GitHub Releases
+                  </button>
+                </>
+              )}
+              {!downloadingUpdate && (
+                <button
+                  className="secondary-button"
+                  onClick={() => void handleCheckForUpdates()}
+                  disabled={updateChecking}
+                  type="button"
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px" }}
+                >
+                  {updateChecking ? (
+                    <span className="material-symbols rotating" style={{ fontSize: 18 }}>sync</span>
+                  ) : (
+                    <span className="material-symbols" style={{ fontSize: 18 }}>refresh</span>
+                  )}
+                  {updateChecking ? "Memeriksa..." : "Periksa Update"}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {updateInfo?.releaseNotes && (
+            <div className="card" style={{ padding: 24 }}>
+              <h4 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 16px" }}>Catatan Rilis (Release Notes)</h4>
+              <div 
+                className="release-notes-content"
+                style={{ 
+                  fontSize: 14, 
+                  lineHeight: 1.6, 
+                  color: "var(--on-surface-variant)",
+                  maxHeight: 400,
+                  overflowY: "auto",
+                  paddingRight: 8
+                }}
+                dangerouslySetInnerHTML={{ __html: formatReleaseNotes(updateInfo.releaseNotes) }}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
+}
+
+function formatReleaseNotes(markdown: string): string {
+  if (!markdown) return "Tidak ada catatan rilis.";
+  
+  let html = markdown
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+    .replace(/^### (.*$)/gim, '<h4 style="margin: 16px 0 8px; font-weight: 600; font-size: 15px; color: var(--primary);">$1</h4>')
+    .replace(/^## (.*$)/gim, '<h3 style="margin: 20px 0 10px; font-weight: 600; font-size: 16px; border-bottom: 1px solid var(--outline-variant); padding-bottom: 4px;">$1</h3>')
+    .replace(/^# (.*$)/gim, '<h2 style="margin: 24px 0 12px; font-weight: 700; font-size: 18px;">$1</h2>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`(.*?)`/g, '<code style="background: var(--surface-container-high); padding: 2px 6px; borderRadius: 4px; font-family: monospace; font-size: 13px;">$1</code>')
+    .replace(/^\s*[-*]\s+(.*$)/gim, '<li style="margin-left: 16px; margin-bottom: 6px; list-style-type: disc;">$1</li>')
+    .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="#" onClick="window.qaBuddy.openExternal(\'$2\'); return false;" style="color: var(--primary); text-decoration: underline;">$1</a>')
+    .replace(/\n/g, '<br />');
+
+  return html;
 }

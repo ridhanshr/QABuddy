@@ -786,6 +786,14 @@ export class JiraService {
     }
   }
 
+  async getIssuesInXrayFolder(
+    projectKey: string,
+    folderId: number
+  ): Promise<{ key: string; summary: string }[]> {
+    this.assertConfigured();
+    return this.client.getIssuesInXrayFolder(projectKey, folderId);
+  }
+
   async resolveIssueKey(issueKey: string): Promise<string | null> {
     try {
       const response = await this.client.api.get(`/issue/${issueKey}`, {

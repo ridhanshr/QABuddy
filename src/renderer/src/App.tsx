@@ -44,6 +44,10 @@ function AppContent() {
     banner,
     setBanner,
     connectionPills,
+    downloadingUpdate,
+    downloadProgress,
+    setSettingsTab,
+    setShowDetailedProgress,
   } = useApp();
 
   const currentNav = allNavigation.find((item) => item.key === activeView);
@@ -70,6 +74,40 @@ function AppContent() {
             />
           ))}
         </nav>
+
+        {downloadingUpdate && (
+          <div 
+            onClick={() => {
+              setActiveView("settings");
+              setSettingsTab("updates");
+              setShowDetailedProgress(true);
+            }}
+            style={{
+              margin: "8px 12px",
+              padding: "10px 12px",
+              background: "rgba(8, 87, 195, 0.08)",
+              borderRadius: "8px",
+              border: "1px solid var(--tertiary)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              transition: "all 0.2s ease"
+            }}
+            title="Klik untuk membuka detail unduhan"
+          >
+            <span className="material-symbols rotating" style={{ color: "var(--tertiary)", fontSize: 18 }}>sync</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--tertiary)" }}>Downloading update...</div>
+              <div style={{ width: "100%", height: 4, background: "var(--surface-container-high)", borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
+                <div style={{ width: `${downloadProgress || 0}%`, height: "100%", background: "var(--tertiary)" }} />
+              </div>
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--tertiary)" }}>
+              {downloadProgress !== null ? `${Math.round(downloadProgress)}%` : "0%"}
+            </span>
+          </div>
+        )}
 
         <div className="sidebar-footer">
           {footerNavigation.map((item) => (

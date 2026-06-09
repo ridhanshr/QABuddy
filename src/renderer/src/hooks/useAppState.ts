@@ -26,6 +26,7 @@ import type {
   StepConflictMode,
   TestCaseExecution,
   UpdateProgress,
+  UpdateInfo,
   UpdateTestCasesFromConfluenceResult,
   ViewKey,
   ChatHistoryMessage,
@@ -190,7 +191,12 @@ function findBestMatch(scenario: string, issues: JiraIssueSummary[]): JiraIssueS
 
 export function useAppState() {
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
-  const [settingsTab, setSettingsTab] = useState<"general" | "knowledge-base">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "knowledge-base" | "updates">("general");
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  const [showDetailedProgress, setShowDetailedProgress] = useState(true);
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [status, setStatus] = useState<ConnectionStatus>(emptyStatus);
@@ -252,7 +258,7 @@ export function useAppState() {
   const [organizeFolderLoading, setOrganizeFolderLoading] = useState(false);
 
   // Update from Confluence state
-  const [confImportMode, setConfImportMode] = useState<"auto" | "jql-match">("auto");
+  const [confImportMode, setConfImportMode] = useState<"auto" | "jql-match" | "xray-folder">("auto");
   const [confImportUrl, setConfImportUrl] = useState("");
   const [confImportJql, setConfImportJql] = useState("");
   const [confImportEntries, setConfImportEntries] = useState<ConfluenceTestImportEntry[]>([]);
@@ -260,6 +266,10 @@ export function useAppState() {
   const [confImportResult, setConfImportResult] = useState<UpdateTestCasesFromConfluenceResult | null>(null);
   const [confImportJqlMatched, setConfImportJqlMatched] = useState(false);
   const [confImportJqlMatchedIds, setConfImportJqlMatchedIds] = useState<Set<string>>(new Set());
+  const [confImportProjectKey, setConfImportProjectKey] = useState("");
+  const [confImportXrayFolders, setConfImportXrayFolders] = useState<XrayFolder[]>([]);
+  const [confImportFolderLoading, setConfImportFolderLoading] = useState(false);
+  const [confImportSelectedFolder, setConfImportSelectedFolder] = useState("");
   const [stepConflictCheck, setStepConflictCheck] = useState<{ hasSteps: string[]; noSteps: string[] } | null>(null);
   const [stepConflictMode, setStepConflictMode] = useState<StepConflictMode>("replace");
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
@@ -406,6 +416,8 @@ export function useAppState() {
       applyBootstrap(bootstrap);
       const loadedLogs = await window.qaBuddy.getLogs();
       setLogs(loadedLogs || []);
+      const info = await window.qaBuddy.getUpdateStatus().catch(() => null);
+      if (info) setUpdateInfo(info);
     } catch (error) {
       setBanner({
         tone: "error",
@@ -419,6 +431,13 @@ export function useAppState() {
   useEffect(() => {
     void loadBootstrap();
   }, [loadBootstrap]);
+
+  useEffect(() => {
+    const cleanup = window.qaBuddy.onUpdateStatusPushed((info) => {
+      setUpdateInfo(info);
+    });
+    return cleanup;
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -435,6 +454,30 @@ export function useAppState() {
         void window.qaBuddy.getOllamaModels(config.ollama.endpoint)
           .then((models) => {
             setOllamaModels(models);
+
+            // Auto-correct model if the saved value doesn't exist in the fetched list.
+            // This prevents a silent mismatch where the dropdown shows one model
+            // but the config still holds a stale/non-existent model name.
+            if (models.length > 0) {
+              const updates: Partial<typeof config.ollama> = {};
+              if (!models.includes(config.ollama.model)) {
+                updates.model = models[0];
+              }
+              // Also fix specialized models if they reference a non-existent model
+              for (const key of ["jqlModel", "chatModel", "extractionModel", "insightModel"] as const) {
+                const val = config.ollama[key];
+                if (val && !models.includes(val)) {
+                  updates[key] = "";
+                }
+              }
+              if (Object.keys(updates).length > 0) {
+                setConfig((prev) => ({
+                  ...prev,
+                  ollama: { ...prev.ollama, ...updates },
+                }));
+              }
+            }
+
             setModelsLoading(false);
           })
           .catch(() => {
@@ -635,6 +678,21 @@ export function useAppState() {
       .catch(() => setOrganizeXrayFolders([]))
       .finally(() => setOrganizeFolderLoading(false));
   }, [organizeProjectKey]);
+
+  // Fetch folders for Xray Folder mode when project changes
+  useEffect(() => {
+    if (!confImportProjectKey) {
+      setConfImportXrayFolders([]);
+      setConfImportSelectedFolder("");
+      return;
+    }
+    setConfImportFolderLoading(true);
+    setConfImportSelectedFolder("");
+    window.qaBuddy.getXrayFolders(confImportProjectKey)
+      .then(setConfImportXrayFolders)
+      .catch(() => setConfImportXrayFolders([]))
+      .finally(() => setConfImportFolderLoading(false));
+  }, [confImportProjectKey]);
 
   const connectionPills = useMemo(
     () => [
@@ -1106,6 +1164,63 @@ export function useAppState() {
   };
 
   const searchJiraForImport = async () => {
+    if (confImportMode === "xray-folder") {
+      if (!confImportProjectKey || !confImportSelectedFolder) {
+        setBanner({ tone: "error", text: "Pilih Project dan Folder Xray terlebih dahulu." });
+        return;
+      }
+      setConfImportLoading(true);
+      try {
+        const collectChildIds = (folders: XrayFolder[]): number[] =>
+          folders.flatMap(f => [f.id, ...(f.children ? collectChildIds(f.children) : [])]);
+        const folders = confImportXrayFolders;
+        const pathParts = confImportSelectedFolder.split("/").filter(Boolean);
+        let currentLevel: XrayFolder[] = folders;
+        let foundFolder: XrayFolder | null = null;
+        for (const part of pathParts) {
+          const m = currentLevel.find(f => f.name.toLowerCase() === part.toLowerCase());
+          if (m) { foundFolder = m; currentLevel = m.children || []; }
+          else { foundFolder = null; break; }
+        }
+        if (!foundFolder) throw new Error("Folder tidak ditemukan.");
+        const allFolderIds = [foundFolder.id, ...collectChildIds(foundFolder.children || [])];
+        const rawIssuesList = await Promise.all(
+          allFolderIds.map(id => window.qaBuddy.getXrayFolderIssues(confImportProjectKey, id))
+        );
+        const seen = new Set<string>();
+        const rawIssues = rawIssuesList.flat().filter(i => { const dup = seen.has(i.key); seen.add(i.key); return !dup; });
+        const issues: JiraIssueSummary[] = rawIssues.map(i => ({
+          id: "", key: i.key, summary: i.summary, status: "", priority: "", assignee: "", type: "", url: "",
+        }));
+        const matchedIds = new Set<string>();
+        const cleanScenario = (s: string) =>
+          s.replace(/^[A-Z]+-\d+\s*[-–:—]?\s*/i, "").trim();
+        const updated = confImportEntries.map(entry => {
+          const cleaned = cleanScenario(entry.scenario);
+          const match = findBestMatch(cleaned, issues);
+          if (match) {
+            matchedIds.add(entry.id);
+            return { ...entry, issueKey: match.key, selected: true };
+          }
+          return { ...entry, selected: false };
+        });
+        setConfImportEntries(updated);
+        setConfImportJqlMatched(true);
+        setConfImportJqlMatchedIds(matchedIds);
+        setBanner({
+          tone: matchedIds.size > 0 ? "success" : "info",
+          text: matchedIds.size > 0
+            ? `Folder: ${issues.length} issues. ${matchedIds.size} entry cocok — Issue key diperbarui.`
+            : `Folder memiliki ${issues.length} issues, tapi tidak ada entry yang cocok.`,
+        });
+      } catch (error: any) {
+        setBanner({ tone: "error", text: `Gagal fetch folder: ${error.message}` });
+      } finally {
+        setConfImportLoading(false);
+      }
+      return;
+    }
+
     const jql = confImportJql.trim();
     if (!jql) {
       setConfImportJqlMatched(false);
@@ -1121,7 +1236,8 @@ export function useAppState() {
       const issues = await window.qaBuddy.findTestCasesByJql(jql, 500);
       const matchedIds = new Set<string>();
       const updated = confImportEntries.map(entry => {
-        const match = findBestMatch(entry.scenario, issues);
+        const cleaned = entry.scenario.replace(/^[A-Z]+-\d+\s*[-–:—]?\s*/i, "").trim();
+        const match = findBestMatch(cleaned, issues);
         if (match) {
           matchedIds.add(entry.id);
           return { ...entry, issueKey: match.key, selected: true };
@@ -1728,9 +1844,12 @@ export function useAppState() {
     try {
       const saved = await window.qaBuddy.saveConfig(config);
       setConfig(saved);
-      const nextDashboard = await window.qaBuddy.getDashboard();
-      setDashboard(nextDashboard);
       setBanner({ tone: "success", text: "Konfigurasi berhasil disimpan." });
+
+      // Refresh dashboard in background — don't block the save
+      window.qaBuddy.getDashboard()
+        .then((nextDashboard) => setDashboard(nextDashboard))
+        .catch(() => { /* dashboard refresh is best-effort */ });
     } catch (error) {
       setBanner({
         tone: "error",
@@ -1741,11 +1860,57 @@ export function useAppState() {
     }
   }
 
+  const handleCheckForUpdates = useCallback(async () => {
+    setUpdateChecking(true);
+    try {
+      const info = await window.qaBuddy.checkForUpdates();
+      setUpdateInfo(info);
+      if (info.updateAvailable) {
+        setBanner({ tone: "success", text: `Update baru tersedia: versi ${info.latestVersion}.` });
+      } else if (info.error) {
+        setBanner({ tone: "error", text: info.error });
+      } else {
+        setBanner({ tone: "success", text: "Aplikasi sudah menggunakan versi terbaru." });
+      }
+    } catch (error) {
+      setBanner({ tone: "error", text: toErrorMessage(error, "Gagal memeriksa update.") });
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, []);
+
+  const handleDownloadAndInstall = useCallback(async () => {
+    setDownloadingUpdate(true);
+    setDownloadProgress(0);
+    setShowDetailedProgress(true);
+
+    const cleanup = window.qaBuddy.onDownloadProgress((p) => {
+      setDownloadProgress(p.progress);
+    });
+
+    try {
+      await window.qaBuddy.downloadAndInstallUpdate();
+    } catch (error) {
+      setBanner({
+        tone: "error",
+        text: toErrorMessage(error, "Gagal mengunduh dan memasang update."),
+      });
+      setDownloadingUpdate(false);
+      setDownloadProgress(null);
+    } finally {
+      cleanup();
+    }
+  }, []);
+
   return {
     activeView,
     setActiveView,
     settingsTab,
     setSettingsTab,
+    updateInfo,
+    setUpdateInfo,
+    updateChecking,
+    handleCheckForUpdates,
     loading,
     setLoading,
     config,
@@ -1849,6 +2014,12 @@ export function useAppState() {
     confImportJqlMatchedIds,
     setConfImportJqlMatchedIds,
     updateConfImportEntryKey,
+    confImportProjectKey,
+    setConfImportProjectKey,
+    confImportXrayFolders,
+    confImportFolderLoading,
+    confImportSelectedFolder,
+    setConfImportSelectedFolder,
     jiraProjects,
     setJiraProjects,
     jiraBoards,
@@ -1988,5 +2159,12 @@ export function useAppState() {
     toggleSelectAllIssues,
     toggleSelectIssue,
     saveSettings,
+    downloadProgress,
+    setDownloadProgress,
+    downloadingUpdate,
+    setDownloadingUpdate,
+    showDetailedProgress,
+    setShowDetailedProgress,
+    handleDownloadAndInstall,
   };
 }

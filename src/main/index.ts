@@ -5,6 +5,7 @@ import { ConfigStore } from "./config-store";
 import { QaService } from "./services/qa-service";
 import { RagService } from "./services/rag-service";
 import { logger } from "./services/logger";
+import { UpdateService } from "./services/update-service";
 import type {
   AppConfig,
   BugFormDraft,
@@ -25,6 +26,7 @@ import { testCaseExecutionSchema } from "@shared/types";
 const store = new ConfigStore();
 const ragService = new RagService();
 const qaService = new QaService(ragService);
+const updateService = new UpdateService();
 
 const logsFilePath = path.join(app.getPath("userData"), "qa-buddy-logs.json");
 const execFilePath = path.join(app.getPath("userData"), "qa-buddy-executions.json");
@@ -108,6 +110,23 @@ app.whenReady().then(() => {
     return qaService.bootstrap(config);
   });
 
+  ipcMain.handle("checkForUpdates", async () => {
+    return updateService.checkForUpdates(app.getVersion(), false);
+  });
+
+  ipcMain.handle("getUpdateStatus", async () => {
+    return updateService.getCachedStatus();
+  });
+
+  ipcMain.handle("downloadAndInstallUpdate", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return updateService.downloadAndInstallUpdate((progress) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("download-progress", progress);
+      }
+    });
+  });
+
   ipcMain.handle("saveConfig", async (_, config: AppConfig) => store.save(config));
   ipcMain.handle("testConnections", async () => qaService.testConnections(await getConfig()));
   ipcMain.handle("healthcheck", async () => qaService.healthcheck(await getConfig()));
@@ -176,6 +195,9 @@ app.whenReady().then(() => {
   });
   ipcMain.handle("findTestCasesByJql", async (_, jql: string, maxResults: number) =>
     qaService.findTestCasesByJql(await getConfig(), jql, maxResults)
+  );
+  ipcMain.handle("getXrayFolderIssues", async (_, projectKey: string, folderId: number) =>
+    qaService.getXrayFolderIssues(await getConfig(), projectKey, folderId)
   );
   ipcMain.handle("openExternal", async (_, url: string) => {
     try {
@@ -280,6 +302,18 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+
+  // Check for updates automatically 5 seconds after launch
+  setTimeout(async () => {
+    try {
+      const info = await updateService.checkForUpdates(app.getVersion(), true);
+      if (info.updateAvailable && mainWindow && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send("update-status-pushed", info);
+      }
+    } catch (err) {
+      logger.error("Failed to run automatic update check:", err);
+    }
+  }, 5000);
 });
 
 app.on("window-all-closed", () => {

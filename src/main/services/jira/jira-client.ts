@@ -122,6 +122,57 @@ export class JiraClient {
   }
 
   /**
+   * Get all test issue keys + summaries in a given Xray folder.
+   * Tries the Xray API first, falls back to JQL search on the project.
+   */
+  async getIssuesInXrayFolder(
+    projectKey: string,
+    folderId: number
+  ): Promise<{ key: string; summary: string }[]> {
+    try {
+      const res = await this.xray.get<any>(
+        `/testrepository/${projectKey}/folders/${folderId}/tests`
+      );
+      const data = res.data;
+      let keys: string[] = [];
+      if (Array.isArray(data)) {
+        keys = data;
+      } else if (data?.keys && Array.isArray(data.keys)) {
+        keys = data.keys;
+      } else if (data?.issues && Array.isArray(data.issues)) {
+        keys = data.issues.map((i: any) => (typeof i === "string" ? i : i.key));
+      } else if (data?.results && Array.isArray(data.results)) {
+        keys = data.results;
+      }
+      if (keys.length > 0) {
+        return await this.fetchIssueSummaries(keys);
+      }
+    } catch {
+      // Xray API endpoint not available — fall through to JQL
+    }
+    const jql = `project = "${projectKey}" ORDER BY key`;
+    const res = await this.api.get<JiraSearchResponse>("/search", {
+      params: { jql, maxResults: 500, fields: "summary" },
+    });
+    return (res.data.issues || []).map((i) => ({
+      key: i.key,
+      summary: i.fields.summary,
+    }));
+  }
+
+  private async fetchIssueSummaries(keys: string[]): Promise<{ key: string; summary: string }[]> {
+    if (keys.length === 0) return [];
+    const jql = `key in (${keys.map((k) => `"${k}"`).join(",")})`;
+    const res = await this.api.get<JiraSearchResponse>("/search", {
+      params: { jql, maxResults: keys.length, fields: "summary" },
+    });
+    return (res.data.issues || []).map((i) => ({
+      key: i.key,
+      summary: i.fields.summary,
+    }));
+  }
+
+  /**
    * Move a set of test issue keys into an Xray folder.
    * Throws if the folder cannot be found.
    */

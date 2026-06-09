@@ -26,7 +26,9 @@ export default function Dashboard() {
     totalPages,
     logs,
     status,
-    ragStats
+    ragStats,
+    updateInfo,
+    setSettingsTab,
   } = useApp();
 
   if (loading || activeView !== "dashboard" || !dashboard) {
@@ -35,6 +37,59 @@ export default function Dashboard() {
 
   return (
     <section className="dashboard-layout">
+      {updateInfo?.updateAvailable && (
+        <div 
+          className="card" 
+          style={{ 
+            background: "linear-gradient(135deg, rgba(249, 115, 22, 0.1) 0%, rgba(239, 68, 68, 0.1) 100%)", 
+            border: "1px solid rgba(249, 115, 22, 0.25)", 
+            padding: "16px 20px", 
+            display: "flex", 
+            alignItems: "center", 
+            justifyContent: "space-between", 
+            marginBottom: 20, 
+            borderRadius: 12,
+            boxShadow: "0 4px 20px -2px rgba(249, 115, 22, 0.08)",
+            animation: "fadeIn 0.3s ease-in-out"
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span className="material-symbols filled" style={{ color: "var(--warning, #f97316)", fontSize: 24 }}>system_update</span>
+            <div>
+              <strong style={{ fontSize: 14, color: "var(--on-surface)" }}>Update Baru Tersedia!</strong>
+              <div style={{ fontSize: 13, color: "var(--on-surface-variant)", marginTop: 2 }}>
+                Versi <strong>v{updateInfo.latestVersion}</strong> sekarang tersedia di GitHub. Unduh sekarang untuk mendapatkan fitur terbaru dan perbaikan bug.
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button 
+              className="insight-btn primary" 
+              onClick={() => {
+                if (updateInfo.url) {
+                  window.qaBuddy.openExternal(updateInfo.url).catch(() => {});
+                }
+              }}
+              style={{ background: "var(--warning, #f97316)", color: "#fff", borderColor: "transparent", fontSize: 12, fontWeight: 600, padding: "8px 16px", cursor: "pointer" }}
+              type="button"
+            >
+              <span className="material-symbols" style={{ fontSize: 16 }}>download</span>
+              Unduh
+            </button>
+            <button 
+              className="insight-btn secondary" 
+              onClick={() => {
+                setSettingsTab("updates");
+                setActiveView("settings");
+              }}
+              style={{ fontSize: 12, padding: "8px 16px", cursor: "pointer" }}
+              type="button"
+            >
+              Lihat Detail
+            </button>
+          </div>
+        </div>
+      )}
       {/* AI Daily Insight Card */}
       <div className="hero-insight-card">
         <div className="insight-bg-graphic" />

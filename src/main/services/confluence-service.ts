@@ -772,7 +772,7 @@ export class ConfluenceService {
           const summary = summaryMatch ? stripHtml(summaryMatch[1]).trim() : "";
 
           if (summary && !/Getting issue details/i.test(summary)) {
-            entry.scenario = `${issueKey} - ${summary}`;
+            entry.scenario = summary;
           } else {
             entry.scenario = issueKey;
           }

@@ -717,6 +717,16 @@ export class QaService {
     return jira.getStatuses();
   }
 
+  async getXrayFolderIssues(
+    config: AppConfig,
+    projectKey: string,
+    folderId: number
+  ): Promise<{ key: string; summary: string }[]> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    return jira.getIssuesInXrayFolder(projectKey, folderId);
+  }
+
   async getJiraIssueTypes(config: AppConfig) {
     this.assertJiraConfigured(config);
     const jira = new JiraService(config.jira);
