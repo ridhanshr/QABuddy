@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, Notification } from "electron";
+import { app, BrowserWindow, ipcMain, shell, Notification, Menu } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { ConfigStore } from "./config-store";
@@ -118,6 +118,8 @@ async function getConfig(): Promise<AppConfig> {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
+
   ipcMain.handle("bootstrap", async () => {
     const config = await getConfig();
     return qaService.bootstrap(config);

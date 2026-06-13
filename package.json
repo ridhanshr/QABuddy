@@ -9,6 +9,8 @@
     "build": "electron-vite build",
     "dist": "npm run build && electron-builder --win portable",
     "dist:setup": "npm run build && electron-builder --win nsis",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:all": "npm run build && electron-builder --win --mac --publish never",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run"
@@ -71,6 +73,17 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "QA Buddy"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "minimumSystemVersion": "12.0",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     }
   }
 }
