@@ -10,11 +10,30 @@ export type ViewKey =
   | "manual-test-case"
   | "documentation-sync"
   | "advanced-jira-organizer"
+  | "daily-uqa"
   | "knowledge-base"
   | "logs"
   | "settings"
-  | "documentation";
+  | "documentation"
+  | "defect-repository";
 export type ExtractionDepth = "comprehensive" | "happy-path" | "edge-case";
+export type IntentRoute = "jira" | "confluence" | "mixed" | "clarify";
+
+export interface OcrResult {
+  text: string;
+  confidence: number;
+  sourceAttachment: string;
+  sourcePageId: string;
+}
+
+export interface IntentClassification {
+  route: IntentRoute;
+  confidence: number;
+  reason: string;
+  detectedKeywords: string[];
+  projectKey?: string;
+  statusHint?: string;
+}
 
 export interface AtlassianConnectionConfig {
   baseUrl: string;
@@ -43,6 +62,52 @@ export interface OllamaConfig {
   chatModel?: string;
   extractionModel?: string;
   insightModel?: string;
+  defectEmbeddingModel?: string;
+  defectExplanationModel?: string;
+}
+
+export interface UqaEntry {
+  date: string;
+  activity: string;
+  notes?: string;
+}
+
+export interface UqaTransition {
+  id: string;
+  name: string;
+  toStatus: string;
+}
+
+export interface UqaIssue {
+  projectKey: string;
+  projectName: string;
+  issueKey: string;
+  summary: string;
+  entries: UqaEntry[];
+  lastUpdated: string | null;
+  needsUpdate: boolean;
+  status: string;
+  statusCategory: string;
+  availableTransitions: UqaTransition[];
+  lastUpdateAuthor: string;
+  lastUpdateDate: string;
+}
+
+export interface PerIssueReminder {
+  enabled: boolean;
+  remindTime?: string;
+  remindDays?: number[];
+}
+
+export interface UqaConfig {
+  enabled: boolean;
+  remindTime: string;
+  remindDays: number[];
+  productTesterFieldId: string | null;
+  lastNotifiedDate: Record<string, string>;
+  perIssueReminders: Record<string, PerIssueReminder>;
+  searchMode: "productTester" | "assignee" | "both";
+  projectKeys: string[];
 }
 
 export interface AppConfig {
@@ -53,6 +118,7 @@ export interface AppConfig {
     theme: ThemePreference;
     language: string;
   };
+  uqa: UqaConfig;
 }
 
 export interface ConnectionStatusItem {
@@ -145,6 +211,22 @@ export interface BugPreview {
   description: string;
   priority: string;
   labels: string[];
+}
+
+export interface DefectCreateDraft {
+  projectKey: string;
+  issueType: string;
+  summary: string;
+  description: string;
+  stepsToReproduce: string;
+  expectedResult: string;
+  actualResult: string;
+  environment: string;
+  priority: string;
+  labels: string;
+  component: string;
+  version: string;
+  severity: string;
 }
 
 export interface ExtractedTestCase {
@@ -295,10 +377,11 @@ export interface DesktopApi {
   onUpdateStatusPushed: (callback: (info: UpdateInfo) => void) => () => void;
   testConnections: () => Promise<ConnectionStatus>;
   healthcheck: () => Promise<any>;
-  getDashboard: () => Promise<DashboardDigest>;
+  getDashboard: (options?: { skipInsight?: boolean }) => Promise<DashboardDigest>;
   askAssistant: (prompt: string, history?: ChatHistoryMessage[]) => Promise<ChatResponse>;
   polishBugReport: (draft: BugFormDraft) => Promise<BugPreview>;
   createBug: (draft: BugFormDraft, preview: BugPreview) => Promise<{ key: string; url: string }>;
+  createDefectIssue: (draft: DefectCreateDraft) => Promise<{ key: string; url: string }>;
   extractTestCases: (
     url: string,
     depth: ExtractionDepth
@@ -347,6 +430,35 @@ export interface DesktopApi {
   getDirectoryName: (filePath: string) => Promise<string>;
   downloadAndInstallUpdate: () => Promise<void>;
   onDownloadProgress: (callback: (progress: { progress: number; downloaded: number; total: number }) => void) => () => void;
+  // UQA
+  getUqaIssues: () => Promise<UqaIssue[]>;
+  getUqaTransitions: (issueKey: string) => Promise<UqaTransition[]>;
+  appendUqaEntry: (issueKey: string, date: string, activity: string) => Promise<void>;
+  appendUqaEntryWithNotes: (issueKey: string, date: string, activity: string, notes: string) => Promise<void>;
+  transitionUqaIssue: (issueKey: string, transitionId: string) => Promise<void>;
+  onUqaReminder: (callback: (issueKey: string, summary: string) => void) => () => void;
+  checkUqaOnStartup: () => Promise<UqaIssue[]>;
+  getUqaField: () => Promise<{ id: string; name: string; type: string; isCustom: boolean } | null>;
+  updateUqaSchedule: (config: UqaConfig) => Promise<void>;
+  getUqaSchedule: () => Promise<UqaConfig>;
+  autoGenerateUqaNotes: (issueKey: string) => Promise<AutoUqaGeneratedPayload>;
+  getPerUqaReminder: (issueKey: string) => Promise<PerIssueReminder | null>;
+  updatePerUqaReminder: (issueKey: string, reminder: PerIssueReminder) => Promise<void>;
+  // Defect Repository
+  getDefectSources: () => Promise<JiraProjectSource[]>;
+  saveDefectSource: (source: JiraProjectSource) => Promise<JiraProjectSource[]>;
+  deleteDefectSource: (id: string) => Promise<JiraProjectSource[]>;
+  syncDefectSource: (projectKey: string) => Promise<{ indexed: number; skipped: number }>;
+  findDefectDuplicateCandidates: (filters: SearchFilters) => Promise<DuplicateCandidate[]>;
+  searchDefects: (filters: SearchFilters) => Promise<{ candidates: DuplicateCandidate[]; defects: DefectRecord[] }>;
+  getDefect: (id: string) => Promise<DefectRecord | null>;
+  getDefectDuplicateRelations: (defectId: string) => Promise<DuplicateRelation[]>;
+  markDuplicateDefect: (relation: Omit<DuplicateRelation, "id" | "createdAt">) => Promise<DuplicateRelation>;
+  removeDuplicateDefectLink: (id: string) => Promise<void>;
+  getDefectStats: () => Promise<DefectRepositoryStats>;
+  reindexAllDefects: () => Promise<void>;
+  // OCR
+  ocrExtractFromFile: (filePath: string) => Promise<OcrResult | null>;
 }
 
 export interface JiraProject {
@@ -450,6 +562,165 @@ export interface BulkOperationResult {
   errors: string[];
 }
 
+export type XrayTestStatus = "TODO" | "EXECUTING" | "PASS" | "FAIL" | "ABORTED";
+
+export interface XrayTestRun {
+  id: number;
+  key: string;
+  status: XrayTestStatus;
+  defects?: Array<{ key: string; summary: string }>;
+}
+
+export interface PhaseTestSummary {
+  phase: string;
+  testExecKey: string;
+  testExecName: string;
+  todo: number;
+  inProgress: number;
+  done: number;
+  failed: number;
+  aborted: number;
+  failedDetails: Array<{ testKey: string; defects: string[] }>;
+}
+
+export interface AutoUqaGeneratedPayload {
+  date: string;
+  activity: string[];
+  phases: PhaseTestSummary[];
+  generatedNotes: string;
+}
+
+export interface UqaIssueLink {
+  issueKey: string;
+  issueTypeName: string;
+  summary: string;
+}
+
+// ── Defect Repository Types ──────────────────────────────────────────
+
+export type DefectSyncMode = "initial" | "incremental";
+export type DefectSyncStatus = "idle" | "syncing" | "success" | "error";
+
+export interface JiraProjectSource {
+  id: string;
+  projectKey: string;
+  projectName: string;
+  isActive: boolean;
+  lastSyncedAt: string | null;
+  autoSyncEnabled?: boolean;
+  autoSyncDays?: number[];
+  autoSyncTime?: string;
+  issueTypes?: string[];
+  lastAutoSyncAt?: string | null;
+  syncMode: DefectSyncMode;
+  syncStatus: DefectSyncStatus;
+  errorMessage?: string;
+}
+
+export interface JiraIssueSource {
+  id: string;
+  jiraIssueKey: string;
+  projectKey: string;
+  issueType: string;
+  summary: string;
+  description: string;
+  stepsToReproduce: string;
+  expectedResult: string;
+  actualResult: string;
+  status: string;
+  priority: string;
+  severity: string;
+  component: string;
+  version: string;
+  reporter: string;
+  assignee: string;
+  labels: string[];
+  resolution: string;
+  createdAt: string;
+  updatedAt: string;
+  comments: string;
+  attachmentsMetadata: string;
+}
+
+export interface DefectRecord {
+  id: string;
+  sourceIssueKey: string;
+  sourceProjectKey: string;
+  issueType: string;
+  normalizedTitle: string;
+  normalizedDescription: string;
+  searchText: string;
+  status: string;
+  component: string;
+  version: string;
+  severity: string;
+  priority: string;
+  similarityFingerprint: string;
+  embedding?: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DuplicateRelation {
+  id: string;
+  primaryDefectId: string;
+  duplicateDefectId: string;
+  reason: string;
+  confidenceScore: number;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface SyncState {
+  id: string;
+  projectKey: string;
+  lastCursor: string;
+  lastSyncAt: string;
+  lastSyncStatus: string;
+  errorMessage: string;
+}
+
+export interface DuplicateCandidate {
+  defect: DefectRecord;
+  score: number;
+  reasons: string[];
+}
+
+export interface SearchFilters {
+  query: string;
+  projectKeys?: string[];
+  issueTypes?: string[];
+  statuses?: string[];
+  components?: string[];
+  versions?: string[];
+  severities?: string[];
+  useAI?: boolean;
+}
+
+export interface DefectRepositoryStats {
+  totalDefects: number;
+  totalDuplicates: number;
+  defectsPerProject: { projectKey: string; count: number }[];
+  duplicatesPerProject: { projectKey: string; count: number }[];
+  topComponents: { component: string; count: number }[];
+  topIssueTypes: { issueType: string; count: number }[];
+}
+
+export interface DefectRepositoryApi {
+  getSources: () => Promise<JiraProjectSource[]>;
+  saveSource: (source: JiraProjectSource) => Promise<JiraProjectSource[]>;
+  deleteSource: (id: string) => Promise<JiraProjectSource[]>;
+  syncSource: (projectKey: string) => Promise<{ indexed: number; skipped: number }>;
+  findDuplicateCandidates: (filters: SearchFilters) => Promise<DuplicateCandidate[]>;
+  searchDefects: (filters: SearchFilters) => Promise<{ candidates: DuplicateCandidate[]; defects: DefectRecord[] }>;
+  getDefect: (id: string) => Promise<DefectRecord | null>;
+  getDuplicateRelations: (defectId: string) => Promise<DuplicateRelation[]>;
+  markDuplicate: (relation: Omit<DuplicateRelation, "id" | "createdAt">) => Promise<DuplicateRelation>;
+  removeDuplicateLink: (id: string) => Promise<void>;
+  getStats: () => Promise<DefectRepositoryStats>;
+  reindexAll: () => Promise<void>;
+}
+
 // ── Zod validation schemas ───────────────────────────────────────────
 
 export const authModeSchema = z.enum(["bearer", "basic"]);
@@ -482,6 +753,8 @@ export const ollamaConfigSchema = z.object({
   chatModel: z.string().optional(),
   extractionModel: z.string().optional(),
   insightModel: z.string().optional(),
+  defectEmbeddingModel: z.string().optional(),
+  defectExplanationModel: z.string().optional(),
 });
 
 export const appConfigSchema = z.object({
@@ -533,9 +806,21 @@ export const defaultConfig: AppConfig = {
     chatModel: "",
     extractionModel: "",
     insightModel: "",
+    defectEmbeddingModel: "embeddinggemma",
+    defectExplanationModel: "",
   },
   preferences: {
     theme: "light",
     language: "id-ID",
+  },
+  uqa: {
+    enabled: false,
+    remindTime: "16:00",
+    remindDays: [1, 2, 3, 4, 5],
+    productTesterFieldId: null,
+    lastNotifiedDate: {},
+    perIssueReminders: {},
+    searchMode: "both",
+    projectKeys: [],
   },
 };

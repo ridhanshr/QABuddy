@@ -36,6 +36,15 @@ import type {
   ParseConfluenceEntriesResult,
   XrayFolder,
   FetchTestStepsResult,
+  UqaIssue,
+  UqaConfig,
+  JiraProjectSource,
+  DefectRecord,
+  DuplicateRelation,
+  SearchFilters,
+  DefectRepositoryStats,
+  DuplicateCandidate,
+  DefectCreateDraft,
 } from "@shared/types";
 
 const api: DesktopApi = {
@@ -43,13 +52,15 @@ const api: DesktopApi = {
   saveConfig: (config: AppConfig) => ipcRenderer.invoke("saveConfig", config) as Promise<AppConfig>,
   testConnections: () => ipcRenderer.invoke("testConnections") as Promise<ConnectionStatus>,
   healthcheck: () => ipcRenderer.invoke("healthcheck") as Promise<any>,
-  getDashboard: () => ipcRenderer.invoke("getDashboard") as Promise<DashboardDigest>,
+  getDashboard: (options?: { skipInsight?: boolean }) => ipcRenderer.invoke("getDashboard", options) as Promise<DashboardDigest>,
   askAssistant: (prompt: string, history?: ChatHistoryMessage[]) =>
     ipcRenderer.invoke("askAssistant", prompt, history) as Promise<ChatResponse>,
   polishBugReport: (draft: BugFormDraft) =>
     ipcRenderer.invoke("polishBugReport", draft) as Promise<BugPreview>,
   createBug: (draft: BugFormDraft, preview: BugPreview) =>
     ipcRenderer.invoke("createBug", draft, preview) as Promise<{ key: string; url: string }>,
+  createDefectIssue: (draft: DefectCreateDraft) =>
+    ipcRenderer.invoke("createDefectIssue", draft) as Promise<{ key: string; url: string }>,
   extractTestCases: (url: string, depth: ExtractionDepth) =>
     ipcRenderer.invoke("extractTestCases", url, depth) as Promise<ExtractedTestCaseResult>,
   createTestCases: (cases: ExtractedTestCase[]) =>
@@ -133,6 +144,51 @@ const api: DesktopApi = {
     ipcRenderer.on("download-progress", handler);
     return () => ipcRenderer.removeListener("download-progress", handler);
   },
+  // UQA
+  getUqaIssues: () => ipcRenderer.invoke("getUqaIssues") as Promise<UqaIssue[]>,
+  getUqaTransitions: (issueKey: string) =>
+    ipcRenderer.invoke("getUqaTransitions", issueKey) as Promise<import("@shared/types").UqaTransition[]>,
+  appendUqaEntry: (issueKey: string, date: string, activity: string) =>
+    ipcRenderer.invoke("appendUqaEntry", issueKey, date, activity) as Promise<void>,
+  appendUqaEntryWithNotes: (issueKey: string, date: string, activity: string, notes: string) =>
+    ipcRenderer.invoke("appendUqaEntryWithNotes", issueKey, date, activity, notes) as Promise<void>,
+  transitionUqaIssue: (issueKey: string, transitionId: string) =>
+    ipcRenderer.invoke("transitionUqaIssue", issueKey, transitionId) as Promise<void>,
+  autoGenerateUqaNotes: (issueKey: string) =>
+    ipcRenderer.invoke("autoGenerateUqaNotes", issueKey) as Promise<import("@shared/types").AutoUqaGeneratedPayload>,
+  onUqaReminder: (callback: (issueKey: string, summary: string) => void) => {
+    const handler = (_: any, issueKey: string, summary: string) => callback(issueKey, summary);
+    ipcRenderer.on("uqa-reminder-pushed", handler);
+    return () => ipcRenderer.removeListener("uqa-reminder-pushed", handler);
+  },
+  checkUqaOnStartup: () => ipcRenderer.invoke("checkUqaOnStartup") as Promise<UqaIssue[]>,
+  getUqaField: () =>
+    ipcRenderer.invoke("getUqaField") as Promise<{ id: string; name: string; type: string; isCustom: boolean } | null>,
+  updateUqaSchedule: (config: UqaConfig) =>
+    ipcRenderer.invoke("updateUqaSchedule", config) as Promise<void>,
+  getUqaSchedule: () =>
+    ipcRenderer.invoke("getUqaSchedule") as Promise<UqaConfig>,
+  getPerUqaReminder: (issueKey: string) =>
+    ipcRenderer.invoke("getPerUqaReminder", issueKey) as Promise<import("@shared/types").PerIssueReminder | null>,
+  updatePerUqaReminder: (issueKey: string, reminder: import("@shared/types").PerIssueReminder) =>
+    ipcRenderer.invoke("updatePerUqaReminder", issueKey, reminder) as Promise<void>,
+  // Defect Repository
+  getDefectSources: () => ipcRenderer.invoke("getDefectSources") as Promise<JiraProjectSource[]>,
+  saveDefectSource: (source: JiraProjectSource) => ipcRenderer.invoke("saveDefectSource", source) as Promise<JiraProjectSource[]>,
+  deleteDefectSource: (id: string) => ipcRenderer.invoke("deleteDefectSource", id) as Promise<JiraProjectSource[]>,
+  syncDefectSource: (projectKey: string) => ipcRenderer.invoke("syncDefectSource", projectKey) as Promise<{ indexed: number; skipped: number }>,
+  findDefectDuplicateCandidates: (filters: SearchFilters) =>
+    ipcRenderer.invoke("findDefectDuplicateCandidates", filters) as Promise<DuplicateCandidate[]>,
+  searchDefects: (filters: SearchFilters) => ipcRenderer.invoke("searchDefects", filters) as Promise<{ candidates: DuplicateCandidate[]; defects: DefectRecord[] }>,
+  getDefect: (id: string) => ipcRenderer.invoke("getDefect", id) as Promise<DefectRecord | null>,
+  getDefectDuplicateRelations: (defectId: string) => ipcRenderer.invoke("getDefectDuplicateRelations", defectId) as Promise<DuplicateRelation[]>,
+  markDuplicateDefect: (relation: Omit<DuplicateRelation, "id" | "createdAt">) => ipcRenderer.invoke("markDuplicateDefect", relation) as Promise<DuplicateRelation>,
+  removeDuplicateDefectLink: (id: string) => ipcRenderer.invoke("removeDuplicateDefectLink", id) as Promise<void>,
+  getDefectStats: () => ipcRenderer.invoke("getDefectStats") as Promise<DefectRepositoryStats>,
+  reindexAllDefects: () => ipcRenderer.invoke("reindexAllDefects") as Promise<void>,
+  // OCR
+  ocrExtractFromFile: (filePath: string) =>
+    ipcRenderer.invoke("ocrExtractFromFile", filePath) as Promise<import("@shared/types").OcrResult | null>,
 };
 
 contextBridge.exposeInMainWorld("qaBuddy", api);

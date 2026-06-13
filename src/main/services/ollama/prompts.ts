@@ -172,7 +172,7 @@ export function getConfluenceSummaryPrompt(query: string, content: string): stri
 
 export function getDashboardInsightPrompt(serializedData: string): string {
   return [
-    "You are a QA lead assistant.",
+    "You are a QA lead assistant analyzing real-time Jira project data.",
     "Give one short daily insight in Indonesian based on the dashboard data below.",
     "CRITICAL: Do NOT use any markdown formatting, tables, lists, or asterisks. Write in plain text paragraph format only.",
     "",
@@ -181,16 +181,120 @@ export function getDashboardInsightPrompt(serializedData: string): string {
     "- If the data is insufficient to draw a conclusion, say so honestly instead of fabricating insights.",
     "- Do NOT guess sprint deadlines, team capacity, or future predictions unless the data explicitly supports them.",
     "- Refer to actual issue keys, status names, and metric values from the data when making observations.",
+    "- If no Jira data is available, state that insight is not available and suggest connecting Jira.",
     "",
-    "=== DASHBOARD DATA ===",
+    "=== INSIGHT FOCUS ===",
+    "1. Summarize sprint completion progress with real numbers.",
+    "2. Highlight critical or high priority bugs that need attention.",
+    "3. Note any unusual patterns (e.g. many open issues, blocked items).",
+    "4. Mention Ready for QA count if any.",
+    "5. Compare found vs resolved this sprint.",
+    "",
+    "=== DASHBOARD DATA (from live Jira) ===",
     serializedData,
+  ].join("\n");
+}
+
+export function getJiraFirstChatPrompt(
+  jiraContext: string,
+  userQuery: string,
+  projectKey?: string,
+): string {
+  return [
+    "SYSTEM:",
+    "Anda adalah QA Buddy, asisten QA yang tugas utamanya menjawab pertanyaan tiket Jira secara akurat.",
+    "",
+    "ATURAN UTAMA:",
+    "1. Sumber utama untuk pertanyaan tiket adalah Jira live query.",
+    "2. Jangan gunakan Confluence atau RAG untuk menjawab status tiket jika Jira sudah tersedia.",
+    "3. Jika pertanyaan user menyebut status tiket, issue, bug, task, sprint, assignee, atau priority, jawab dengan data Jira.",
+    "4. Jika data Jira tidak cukup, katakan apa yang kurang. Jangan mengalihkan jawaban ke dokumen Confluence.",
+    "5. Selalu tulis dalam Bahasa Indonesia yang profesional dan ringkas.",
+    "6. Selalu sertakan issue key untuk setiap tiket yang disebut.",
+    "7. Jangan mengarang issue key, status, assignee, atau summary.",
+    "",
+    "OUTPUT RULES:",
+    "- Jika ada tiket ditemukan, tampilkan daftar hasil yang terurut relevansi.",
+    "- Jika tidak ada tiket ditemukan, jawab jujur bahwa tidak ada issue yang cocok.",
+    "- Gunakan label sumber: 'Sumber: Jira'.",
+    `- Project: ${projectKey || "Tidak disebutkan"}`,
+    "",
+    "KONTEKS JIRA:",
+    jiraContext,
+    "",
+    "PERTANYAAN USER:",
+    userQuery,
+  ].join("\n");
+}
+
+export function getKnowledgeBaseChatPrompt(
+  ragContext: string,
+  userQuery: string,
+): string {
+  return [
+    "SYSTEM:",
+    "Anda adalah QA Buddy, asisten knowledge base yang hanya menjawab berdasarkan dokumen yang diberikan.",
+    "",
+    "ATURAN UTAMA:",
+    "1. Jawab hanya menggunakan dokumen konteks yang disediakan.",
+    "2. Jangan menjawab sebagai tiket Jira jika pertanyaan user jelas meminta dokumentasi.",
+    "3. Jika informasi tidak cukup, katakan bahwa informasi belum tersedia di Knowledge Base.",
+    "4. Jangan mengarang URL, nama dokumen, nomor halaman, atau detail yang tidak ada di konteks.",
+    "5. Selalu tulis dalam Bahasa Indonesia yang profesional dan jelas.",
+    "",
+    "OUTPUT RULES:",
+    "- Jawaban harus menyebut judul dokumen sumber.",
+    "- Gunakan label sumber: 'Sumber: Confluence / RAG'.",
+    "- Jika ada bagian yang berasal dari OCR, tandai secara eksplisit.",
+    "",
+    "KONTEKS DOKUMEN:",
+    ragContext,
+    "",
+    "PERTANYAAN USER:",
+    userQuery,
+  ].join("\n");
+}
+
+export function getHybridChatPrompt(
+  jiraContext: string,
+  ragContext: string,
+  userQuery: string,
+): string {
+  return [
+    "SYSTEM:",
+    "Anda adalah QA Buddy, asisten QA yang menggabungkan data Jira dan knowledge base.",
+    "",
+    "ATURAN UTAMA:",
+    "1. Gunakan data Jira untuk fakta tiket.",
+    "2. Gunakan Confluence / RAG untuk konteks dokumentasi.",
+    "3. Jangan mencampur fakta dari dua sumber tanpa label yang jelas.",
+    "4. Jangan mengarang hubungan antara tiket dan dokumen jika tidak ada di data.",
+    "5. Jika ada konflik data, prioritaskan Jira untuk status tiket dan Confluence untuk dokumen.",
+    "",
+    "OUTPUT RULES:",
+    "- Pisahkan jawaban menjadi bagian:",
+    "  - Jira",
+    "  - Knowledge Base",
+    "  - Ringkasan",
+    "- Setiap bagian harus jelas sumbernya.",
+    "- Jika ada ketidakpastian, sebutkan.",
+    "",
+    "KONTEKS JIRA:",
+    jiraContext,
+    "",
+    "KONTEKS KNOWLEDGE BASE:",
+    ragContext,
+    "",
+    "PERTANYAAN USER:",
+    userQuery,
   ].join("\n");
 }
 
 export function getTestCaseExtractionPrompt(
   content: string,
   depth: ExtractionDepth,
-  ragContext?: string
+  ragContext?: string,
+  ocrText?: string
 ): string {
   const depthInstructions: Record<ExtractionDepth, string> = {
     "comprehensive": [
@@ -226,7 +330,18 @@ export function getTestCaseExtractionPrompt(
 
   const promptParts: string[] = [
     "You are a Senior QA Engineer with 10+ years of experience in software testing.",
-    "Your task is to extract well-structured test cases from the requirement text provided below.",
+    "Your task is to extract well-structured test cases from the requirement text and OCR results provided below.",
+    "",
+    "=== INPUT PRIORITY ===",
+    "1. HTML requirement text — primary source",
+    "2. OCR text from screenshots — secondary source, use if it contains requirement details",
+    "3. RAG context from Knowledge Base — tertiary source, for reference only",
+    "",
+    "=== SOURCE GROUNDING ===",
+    "- Base test cases on EXPLICIT requirements found in HTML or OCR text.",
+    "- If information is ONLY found in OCR text, mark it as 'OCR-derived' in the objective.",
+    "- If both HTML and OCR mention the same thing, use the HTML version as primary.",
+    "- Do NOT invent features or requirements that are not present in any source.",
     "",
     "=== OUTPUT FORMAT ===",
     "Return ONLY valid JSON with this exact shape:",
@@ -236,7 +351,7 @@ export function getTestCaseExtractionPrompt(
     "=== FIELD GUIDELINES ===",
     "- id: Sequential ID starting from TC-001",
     "- title: Short, actionable title starting with a verb (e.g. 'Verify login with valid credentials', 'Validate error message for empty email field')",
-    "- objective: Clear, measurable description of WHAT is being tested and WHAT the expected outcome is. Include preconditions if relevant.",
+    "- objective: Clear, measurable description of WHAT is being tested and WHAT the expected outcome is. Include preconditions if relevant. For OCR-derived items, mention '(dari screenshot)'.",
     "- priority:",
     "  P1 = Critical business flow, blocks release if failing (login, payment, core CRUD)",
     "  P2 = Important functionality, significant user impact (filters, search, notifications)",
@@ -248,24 +363,34 @@ export function getTestCaseExtractionPrompt(
     depthInstructions[depth],
     "",
     "=== ATURAN ANTI-HALUSINASI ===",
-    "- Ekstrak test case HANYA dari requirement text yang diberikan. JANGAN mengarang fitur, endpoint, atau business rule yang tidak ada di teks.",
-    "- Jika requirement text tidak jelas atau ambigu, buat test case berdasarkan apa yang eksplisit saja dan tandai di objective bahwa requirement perlu diklarifikasi.",
+    "- Ekstrak test case HANYA dari requirement yang ada di sumber. JANGAN mengarang fitur, endpoint, atau business rule yang tidak ada.",
+    "- Jika requirement tidak jelas atau ambigu, buat test case minimal dan tandai di objective bahwa requirement perlu diklarifikasi.",
+    "- Jangan menambah skenario yang tidak didukung bukti dari HTML, OCR, atau RAG.",
+    "- Jika OCR tidak meyakinkan (confidence rendah), gunakan hanya bagian yang paling pasti.",
     "",
     "=== RULES ===",
     "1. Each test case must be UNIQUE — no duplicate or overlapping scenarios",
     "2. PENTING: Selalu tulis judul (title) dan tujuan (objective) dalam Bahasa Indonesia.",
     "3. Titles must be specific and testable — avoid vague phrases like 'check feature works'",
     "4. Objectives must describe the expected behavior, not just repeat the title",
-    "5. Cover both the explicitly stated requirements AND implied/obvious test scenarios",
-    "6. Group related scenarios logically (e.g. all validation cases together)",
+    "5. Group related scenarios logically (e.g. all validation cases together)",
+    "6. Separate happy path, negative path, and edge cases clearly.",
   ];
 
   if (ragContext) {
     promptParts.push("");
-    promptParts.push("=== EXISTING PROJECT CONTEXT (from Knowledge Base) ===");
+    promptParts.push("=== EXISTING PROJECT CONTEXT (from Knowledge Base / RAG) ===");
     promptParts.push(ragContext);
     promptParts.push("=== END CONTEXT ===");
-    promptParts.push("Use the context above to: (1) avoid generating duplicate test cases that already exist, (2) align terminology and naming conventions with the project, (3) reference related existing test scenarios when relevant.");
+    promptParts.push("Use the context above ONLY for: (1) avoiding duplicate test cases, (2) aligning terminology, (3) reference. Do NOT add test cases based solely on RAG context.");
+  }
+
+  if (ocrText) {
+    promptParts.push("");
+    promptParts.push("=== OCR TEXT (from screenshot / image attachment) ===");
+    promptParts.push(ocrText);
+    promptParts.push("=== END OCR TEXT ===");
+    promptParts.push("Use OCR text as secondary source. Mark any OCR-derived items in the objective.");
   }
 
   promptParts.push("");
@@ -273,6 +398,86 @@ export function getTestCaseExtractionPrompt(
   promptParts.push(content.slice(0, 20000));
 
   return promptParts.join("\n");
+}
+
+export function getOcrGroundedExtractionPrompt(
+  htmlContent: string,
+  ocrText: string,
+  depth: ExtractionDepth,
+  ragContext?: string,
+): string {
+  const depthInstructions: Record<ExtractionDepth, string> = {
+    "comprehensive": "Aim for 10-25 test cases covering all happy path, negative, and edge cases.",
+    "happy-path": "Aim for 5-10 test cases covering primary user flows.",
+    "edge-case": "Aim for 8-15 test cases targeting potential breaking points.",
+  };
+
+  return [
+    "SYSTEM:",
+    "Anda adalah Senior QA Engineer yang mengekstrak test case dari gabungan teks HTML dan hasil OCR.",
+    "",
+    "ATURAN UTAMA:",
+    "1. Informasi dari OCR dianggap setara dengan teks requirement jika terlihat jelas.",
+    "2. Jika informasi hanya muncul di OCR, tandai sebagai OCR-derived pada objective.",
+    "3. Jangan menghapus fakta penting hanya karena tidak ada di HTML.",
+    "4. Jangan mengarang teks yang tidak terbaca jelas oleh OCR.",
+    "5. Jika OCR tidak meyakinkan, gunakan hanya bagian yang paling pasti.",
+    "",
+    "=== EXTRACTION DEPTH ===",
+    depthInstructions[depth],
+    "",
+    "=== OUTPUT FORMAT ===",
+    'Return ONLY valid JSON: {"testCases":[{"id":"TC-001","title":"...","objective":"...","priority":"P1|P2|P3","category":"...","selected":true}]}',
+    "WARNING: Keluarkan HANYA raw JSON. Jangan gunakan markdown block.",
+    "",
+    "KONTEKS HTML:",
+    htmlContent.slice(0, 15000),
+    "",
+    "KONTEKS OCR:",
+    ocrText,
+    "",
+    "KONTEKS RAG:" + (ragContext ? "\n" + ragContext : "\n(Tidak tersedia)"),
+  ].join("\n");
+}
+
+export function getRagEnrichedExtractionPrompt(
+  htmlContent: string,
+  ocrText: string | undefined,
+  ragContext: string,
+  depth: ExtractionDepth,
+): string {
+  const depthInstructions: Record<ExtractionDepth, string> = {
+    "comprehensive": "Aim for 10-25 test cases covering all scenarios.",
+    "happy-path": "Aim for 5-10 test cases covering primary user flows.",
+    "edge-case": "Aim for 8-15 test cases targeting potential breaking points.",
+  };
+
+  return [
+    "SYSTEM:",
+    "Anda adalah Senior QA Engineer yang mengekstrak test case baru dengan referensi knowledge base untuk menghindari duplikasi.",
+    "",
+    "ATURAN UTAMA:",
+    "1. Test case baru harus berdasarkan requirement saat ini.",
+    "2. RAG hanya dipakai untuk referensi konteks dan terminologi.",
+    "3. Jangan menyalin test case lama jika tidak relevan.",
+    "4. Jika konteks RAG bertentangan dengan requirement sumber, prioritaskan requirement sumber.",
+    "5. Gunakan struktur output JSON yang konsisten.",
+    "",
+    "=== EXTRACTION DEPTH ===",
+    depthInstructions[depth],
+    "",
+    "=== OUTPUT FORMAT ===",
+    'Return ONLY valid JSON: {"testCases":[{"id":"TC-001","title":"...","objective":"...","priority":"P1|P2|P3","category":"...","selected":true}]}',
+    "WARNING: Keluarkan HANYA raw JSON. Jangan gunakan markdown block.",
+    "",
+    "KONTEKS HTML:",
+    htmlContent.slice(0, 15000),
+    "",
+    "KONTEKS OCR:" + (ocrText ? "\n" + ocrText : "\n(Tidak tersedia)"),
+    "",
+    "KONTEKS RAG:",
+    ragContext,
+  ].join("\n");
 }
 
 export function getRagAnswerPrompt(query: string, contextText: string): string {

@@ -1,4 +1,5 @@
 import type {
+  AutoUqaGeneratedPayload,
   BugFormDraft,
   BugMetrics,
   BugPreview,
@@ -12,6 +13,7 @@ import type {
   JiraStatus,
   JiraUser,
   ManualTestCase,
+  PhaseTestSummary,
   StepConflictCheck,
   StepConflictMode,
   UpdateProgress,
@@ -386,15 +388,39 @@ export class JiraService {
     preview: BugPreview
   ): Promise<{ key: string; url: string }> {
     this.assertConfigured();
+    return this.createIssue(this.config.projectKey, this.config.bugIssueType || "Bug", {
+      summary: preview.summary,
+      description: preview.description,
+      priority: preview.priority || "Medium",
+      labels: preview.labels,
+      environment: draft.environment || undefined,
+    });
+  }
+
+  async createIssue(
+    projectKey: string,
+    issueType: string,
+    fields: {
+      summary: string;
+      description: string;
+      priority?: string;
+      labels?: string[];
+      environment?: string;
+      component?: string;
+      version?: string;
+      severity?: string;
+    }
+  ): Promise<{ key: string; url: string }> {
+    this.assertConfigured();
     const response = await this.client.api.post("/issue", {
       fields: {
-        project: { key: this.config.projectKey },
-        summary: preview.summary,
-        issuetype: { name: this.config.bugIssueType || "Bug" },
-        description: preview.description,
-        priority: { name: preview.priority || "Medium" },
-        labels: preview.labels,
-        environment: draft.environment || undefined,
+        project: { key: projectKey },
+        summary: fields.summary,
+        issuetype: { name: issueType },
+        description: fields.description,
+        priority: { name: fields.priority || "Medium" },
+        labels: fields.labels || [],
+        environment: fields.environment || undefined,
       },
     });
     const issueKey = response.data.key as string;
@@ -500,6 +526,288 @@ export class JiraService {
     }
 
     return created;
+  }
+
+  // -------------------------------------------------------------------------
+  // UQA (Daily Activity)
+  // -------------------------------------------------------------------------
+
+  async getCurrentUser(): Promise<{ accountId: string; displayName: string; emailAddress: string }> {
+    return this.client.getCurrentUser();
+  }
+
+  async getCustomFieldByName(
+    name: string
+  ): Promise<{ id: string; name: string; type: string; isCustom: boolean } | null> {
+    return this.client.getCustomFieldByName(name);
+  }
+
+  async getUqaIssues(
+    fieldId: string,
+    searchMode: "productTester" | "assignee" | "both" = "both",
+    projectKeys: string[] = []
+  ): Promise<import("@shared/types").UqaIssue[]> {
+    this.assertConfigured();
+    const num = fieldId.replace(/^customfield_/i, "");
+
+    let userCondition: string;
+    switch (searchMode) {
+      case "productTester":
+        userCondition = `cf[${num}] = currentUser()`;
+        break;
+      case "assignee":
+        userCondition = `assignee = currentUser()`;
+        break;
+      case "both":
+      default:
+        userCondition = `(cf[${num}] = currentUser() OR assignee = currentUser())`;
+        break;
+    }
+
+    let jql = `${userCondition} AND status NOT IN (SELESAI, DONE)`;
+
+    if (projectKeys.length > 0) {
+      const projects = projectKeys.map((k) => `"${k}"`).join(", ");
+      jql += ` AND project IN (${projects})`;
+    }
+
+    jql += " ORDER BY updated DESC";
+
+    const issues = await this.client.searchIssuesFull(jql, 100, [
+      "summary",
+      "status",
+      "description",
+      "updated",
+      "updateAuthor",
+      "project",
+      "assignee",
+    ]);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const results: import("@shared/types").UqaIssue[] = [];
+
+    for (const issue of issues) {
+      const detail = await this.client.getIssueDetail(issue.key);
+      if (!detail) continue;
+
+      const entries = this.parseUqaTable(detail.description);
+      const needsUpdate = !entries.some((e) => e.date === today);
+
+      results.push({
+        projectKey: issue.fields.project?.key || "",
+        projectName: issue.fields.project?.name || "",
+        issueKey: issue.key,
+        summary: issue.fields.summary || "",
+        entries,
+        lastUpdated: entries.length > 0 ? entries[entries.length - 1].date : null,
+        needsUpdate,
+        status: detail.status,
+        statusCategory: detail.statusCategory,
+        availableTransitions: [],
+        lastUpdateAuthor: detail.updateAuthor,
+        lastUpdateDate: detail.updated,
+      });
+    }
+
+    return results;
+  }
+
+  async getUqaTransitions(issueKey: string): Promise<import("@shared/types").UqaTransition[]> {
+    return this.client.getTransitions(issueKey);
+  }
+
+  async appendUqaEntry(issueKey: string, date: string, activity: string): Promise<void> {
+    const row = `|${date}|${activity}|`;
+    await this.client.appendToDescription(issueKey, row);
+  }
+
+  async appendUqaEntryWithNotes(issueKey: string, date: string, activity: string, notes: string): Promise<void> {
+    await this.client.appendToDescriptionWithNotes(issueKey, date, activity, notes);
+  }
+
+  async transitionUqaIssue(issueKey: string, transitionId: string): Promise<void> {
+    await this.client.executeTransition(issueKey, transitionId);
+  }
+
+  /**
+   * Auto-generate UQA notes by fetching linked Test Executions from the
+   * UQA ticket and aggregating their Xray test-run statuses.
+   */
+  async autoGenerateUqaNotes(issueKey: string): Promise<AutoUqaGeneratedPayload> {
+    this.assertConfigured();
+
+    const date = new Date().toISOString().slice(0, 10);
+    const links = await this.client.getIssueLinks(issueKey);
+
+    const phases: PhaseTestSummary[] = [];
+
+    for (const link of links) {
+      const phase = detectPhaseFromName(link.summary);
+      const testRuns = await this.client.getXrayTestExecutionTests(link.issueKey);
+      if (testRuns.length === 0) continue;
+
+      const todo = testRuns.filter((t) => t.status === "TODO").length;
+      const inProgress = testRuns.filter((t) => t.status === "EXECUTING").length;
+      const done = testRuns.filter((t) => t.status === "PASS").length;
+      const failed = testRuns.filter((t) => t.status === "FAIL").length;
+      const aborted = testRuns.filter((t) => t.status === "ABORTED").length;
+
+      const failedDetails = testRuns
+        .filter((t) => t.status === "FAIL" || t.status === "ABORTED")
+        .map((t) => ({
+          testKey: t.key,
+          defects: (t.defects || []).map((d) => `${d.key}: ${d.summary}`),
+        }));
+
+      phases.push({
+        phase,
+        testExecKey: link.issueKey,
+        testExecName: link.summary,
+        todo,
+        inProgress,
+        done,
+        failed,
+        aborted,
+        failedDetails,
+      });
+    }
+
+    const activity = phases
+      .filter((p) => p.phase !== "UNKNOWN")
+      .map((p) => p.phase)
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .sort(phaseSortOrder);
+
+    const generatedNotes = formatUqaNotes(phases);
+
+    return { date, activity, phases, generatedNotes };
+  }
+
+  /**
+   * Parse a Jira issue description and extract UQA table rows.
+   * Supports Confluence HTML tables and wiki markup (backward compat).
+   * Supports both YYYY-MM-DD and YYYYMMDD date formats.
+   */
+  private parseUqaTable(description: any): import("@shared/types").UqaEntry[] {
+    if (!description) return [];
+
+    let text: string;
+    let source = "unknown";
+    if (typeof description === "string") {
+      source = "string";
+      text = description;
+    } else if (description?.type === "doc") {
+      source = "adf";
+      text = this.client.adfToPlainText(description);
+    } else {
+      return [];
+    }
+
+    const preview = text.length > 200 ? text.slice(0, 200) + "..." : text;
+    console.log(`[UQA parseUqaTable] source=${source} textLength=${text.length} preview=`, preview);
+
+    // Try HTML table first (backup for HTML-stored descriptions)
+    const tableMatch = text.match(/<table\s+class="confluenceTable">(.*?)<\/table>/s);
+    if (tableMatch) {
+      console.log(`[UQA parseUqaTable] HTML path: ${tableMatch[1].length} chars`);
+      return this.parseHtmlUqaTable(tableMatch[1]);
+    }
+
+    console.log(`[UQA parseUqaTable] Wiki path`);
+    return this.parseWikiUqaTable(text);
+  }
+
+  /** Parse a Confluence HTML table body (<tbody> content) into UQA entries. */
+  private parseHtmlUqaTable(tableHtml: string): import("@shared/types").UqaEntry[] {
+    const entries: import("@shared/types").UqaEntry[] = [];
+    const rowRegex = /<tr>(.*?)<\/tr>/gs;
+    let rowMatch: RegExpExecArray | null;
+    while ((rowMatch = rowRegex.exec(tableHtml)) !== null) {
+      const row = rowMatch[1].trim();
+      if (!row) continue;
+      // Skip header rows
+      if (/<th[\s>]/i.test(row)) continue;
+
+      const cells: string[] = [];
+      const cellRegex = /<td[^>]*>(.*?)<\/td>/gs;
+      let cellMatch: RegExpExecArray | null;
+      while ((cellMatch = cellRegex.exec(row)) !== null) {
+        cells.push(cellMatch[1].trim());
+      }
+      if (cells.length < 2) continue;
+
+      // Date is first cell — strip HTML tags to get plain text
+      const dateText = cells[0].replace(/<[^>]+>/g, "").trim();
+      const dateMatch = dateText.match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+      if (!dateMatch) continue;
+      const date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+      // Activity is second cell — keep HTML content for rendering
+      const activity = cells[1];
+      const notes = cells.length > 2 ? cells[2] : undefined;
+
+      entries.push({ date, activity, notes });
+    }
+    return entries;
+  }
+
+  /** Normalize 8-digit date string to YYYY-MM-DD. Supports YYYYMMDD and DDMMYYYY. */
+  private normalizeUqaDate(s: string): string | null {
+    const d = s.replace(/-/g, "");
+    if (d.length !== 8) return null;
+    // Try YYYYMMDD first
+    let y = d.slice(0, 4), m = d.slice(4, 6), day = d.slice(6, 8);
+    const mn = Number(m), dn = Number(day);
+    if (mn >= 1 && mn <= 12 && dn >= 1 && dn <= 31) return `${y}-${m}-${day}`;
+    // Try DDMMYYYY
+    day = d.slice(0, 2); m = d.slice(2, 4); y = d.slice(4, 8);
+    const dn2 = Number(day), mn2 = Number(m);
+    if (mn2 >= 1 && mn2 <= 12 && dn2 >= 1 && dn2 <= 31) return `${y}-${m}-${day}`;
+    return null;
+  }
+
+  /** Parse wiki-markup table rows into UQA entries. Supports dual date format, 3-column rows, and multi-line notes. */
+  private parseWikiUqaTable(text: string): import("@shared/types").UqaEntry[] {
+    const entries: import("@shared/types").UqaEntry[] = [];
+
+    // Strip CR from CRLF line endings so regex $ matches correctly
+    text = text.replace(/\r/g, "");
+
+    // Join multi-line rows: lines that don't start with '|' are continuations
+    const lines = text.split("\n");
+    const joinedRows: string[] = [];
+    let current = "";
+    for (const line of lines) {
+      if (line.trim().startsWith("|") && current) {
+        joinedRows.push(current);
+        current = line;
+      } else if (line.trim().startsWith("|")) {
+        current = line;
+      } else if (current) {
+        current += "\n" + line;
+      }
+    }
+    if (current) joinedRows.push(current);
+
+    for (const row of joinedRows) {
+      // Strip trailing whitespace/NBSP so regex $ can match the final pipe
+      const cleaned = row.replace(/[\s\xa0]+$/, "");
+      // Try 3-column row: |date|activity|notes|
+      const match3 = cleaned.match(/^\|(\d{4}-?\d{2}-?\d{2})\|(.+?)\|(.*)\|$/s);
+      if (match3) {
+        const dateStr = this.normalizeUqaDate(match3[1]);
+        if (dateStr) entries.push({ date: dateStr, activity: match3[2].trim(), notes: match3[3].trim() || undefined });
+        continue;
+      }
+      // Fallback 2-column row: |date|activity|
+      const match2 = cleaned.match(/^\|(\d{4}-?\d{2}-?\d{2})\|(.+)\|$/s);
+      if (match2) {
+        const dateStr = this.normalizeUqaDate(match2[1]);
+        if (dateStr) entries.push({ date: dateStr, activity: match2[2].trim() });
+      } else {
+        console.log("[UQA parseUqaTable] FAILED row:", JSON.stringify(row).slice(0, 500));
+      }
+    }
+    return entries;
   }
 
   // -------------------------------------------------------------------------
@@ -839,4 +1147,61 @@ export class JiraService {
       );
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+function detectPhaseFromName(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.includes("system integration") || lower.includes("sit")) return "SIT";
+  if (lower.includes("user acceptance") || lower.includes("uat")) return "UAT";
+  if (lower.includes("deployment") || lower.includes("dt")) return "DT";
+  return "UNKNOWN";
+}
+
+const PHASE_ORDER: Record<string, number> = { SIT: 0, UAT: 1, DT: 2 };
+
+function phaseSortOrder(a: string, b: string): number {
+  return (PHASE_ORDER[a] ?? 99) - (PHASE_ORDER[b] ?? 99);
+}
+
+/**
+ * Format aggregated phase data into UQA notes in wiki markup.
+ */
+function formatUqaNotes(phases: PhaseTestSummary[]): string {
+  const parts: string[] = [];
+
+  const sorted = [...phases].sort((a, b) => phaseSortOrder(a.phase, b.phase));
+
+  for (const p of sorted) {
+    const lineItems: string[] = [];
+
+    // Phase header
+    lineItems.push(`*${p.phase}*`);
+
+    // Summary per test execution
+    const statusParts: string[] = [];
+    if (p.todo > 0) statusParts.push(`To Do ${p.todo} TC`);
+    if (p.inProgress > 0) statusParts.push(`In Progress ${p.inProgress} TC`);
+    if (p.done > 0) statusParts.push(`Done ${p.done} TC`);
+    if (p.failed > 0) statusParts.push(`Failed ${p.failed} TC`);
+    if (p.aborted > 0) statusParts.push(`Aborted ${p.aborted} TC`);
+
+    lineItems.push(`${p.testExecKey}: ${statusParts.join(", ")}`);
+
+    // Failed details (defects)
+    for (const fd of p.failedDetails) {
+      if (fd.defects.length > 0) {
+        for (const defect of fd.defects) {
+          lineItems.push(`  Failed - ${fd.testKey}: ${defect}`);
+        }
+      }
+    }
+
+    parts.push(lineItems.join("\n"));
+  }
+
+  return parts.join("\n\n");
 }

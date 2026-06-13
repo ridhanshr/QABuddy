@@ -6,10 +6,15 @@ import { QaService } from "./services/qa-service";
 import { RagService } from "./services/rag-service";
 import { logger } from "./services/logger";
 import { UpdateService } from "./services/update-service";
+import { UqaScheduler } from "./services/uqa-scheduler";
+import { DefectRepositoryService } from "./services/defect-repository/defect-repository-service";
+import { DefectAutoSyncScheduler } from "./services/defect-repository/defect-auto-sync-scheduler";
+import { OcrService } from "./services/ocr-service";
 import type {
   AppConfig,
   BugFormDraft,
   BugPreview,
+  DefectCreateDraft,
   ConfluenceTestImportEntry,
   ExtractedTestCase,
   ExtractionDepth,
@@ -21,13 +26,20 @@ import type {
   UpdateProgress,
   XrayFolder,
   FetchTestStepsResult,
+  JiraProjectSource,
+  DuplicateRelation,
+  SearchFilters,
 } from "@shared/types";
 import { testCaseExecutionSchema } from "@shared/types";
 
 const store = new ConfigStore();
 const ragService = new RagService();
 const qaService = new QaService(ragService);
+const ocrService = new OcrService();
 const updateService = new UpdateService();
+const uqaScheduler = new UqaScheduler();
+const defectRepoService = new DefectRepositoryService("http://127.0.0.1:11434");
+const defectAutoSyncScheduler = new DefectAutoSyncScheduler();
 
 const logsFilePath = path.join(app.getPath("userData"), "qa-buddy-logs.json");
 const execFilePath = path.join(app.getPath("userData"), "qa-buddy-executions.json");
@@ -128,11 +140,19 @@ app.whenReady().then(() => {
     });
   });
 
-  ipcMain.handle("saveConfig", async (_, config: AppConfig) => store.save(config));
+  ipcMain.handle("saveConfig", async (_, config: AppConfig) => {
+    const saved = await store.save(config);
+    if (config.uqa?.enabled) {
+      uqaScheduler.restart(config.uqa);
+    } else if (config.uqa && !config.uqa.enabled) {
+      uqaScheduler.stop();
+    }
+    return saved;
+  });
   ipcMain.handle("testConnections", async () => qaService.testConnections(await getConfig()));
   ipcMain.handle("healthcheck", async () => qaService.healthcheck(await getConfig()));
-  ipcMain.handle("getDashboard", async () => {
-    const dashboard = await qaService.getDashboard(await getConfig());
+  ipcMain.handle("getDashboard", async (_, options?: { skipInsight?: boolean }) => {
+    const dashboard = await qaService.getDashboard(await getConfig(), options?.skipInsight);
     if (dashboard.readyForQa && dashboard.readyForQa.length > 0) {
       const newIssues = dashboard.readyForQa.filter(i => !notifiedReadyForQaKeys.has(i.key));
       if (newIssues.length > 0 && lastReadyForQaCount > 0) {
@@ -170,6 +190,9 @@ app.whenReady().then(() => {
   );
   ipcMain.handle("createBug", async (_, draft: BugFormDraft, preview: BugPreview) =>
     qaService.createBug(await getConfig(), draft, preview)
+  );
+  ipcMain.handle("createDefectIssue", async (_, draft: DefectCreateDraft) =>
+    qaService.createDefectIssue(await getConfig(), draft)
   );
   ipcMain.handle("extractTestCases", async (_, url: string, depth: ExtractionDepth) =>
     qaService.extractTestCases(await getConfig(), url, depth)
@@ -234,6 +257,14 @@ app.whenReady().then(() => {
   ipcMain.handle("ragGetStats", async () => ragService.getStats());
   ipcMain.handle("ragClearIndex", async (_, source?: "confluence" | "jira") => ragService.clearIndex(source));
 
+  // OCR handlers
+  ipcMain.handle("ocrExtractFromFile", async (_, filePath: string) => {
+    const fs = require("node:fs");
+    const imageBuffer = fs.readFileSync(filePath);
+    const fileName = path.basename(filePath);
+    return ocrService.extractText(imageBuffer, fileName, "file");
+  });
+
   // Advanced Jira Organizer handlers
   ipcMain.handle("getJiraProjects", async () => qaService.getJiraProjects(await getConfig()));
   ipcMain.handle("getJiraBoards", async (_, projectKey: string) => qaService.getJiraBoards(await getConfig(), projectKey));
@@ -243,6 +274,70 @@ app.whenReady().then(() => {
   ipcMain.handle("getJiraUsers", async (_, projectKey: string) => qaService.getJiraUsers(await getConfig(), projectKey));
   ipcMain.handle("getJiraLabels", async () => qaService.getJiraLabels(await getConfig()));
   ipcMain.handle("getJiraCustomFields", async () => qaService.getJiraCustomFields(await getConfig()));
+  // UQA handlers
+  ipcMain.handle("getUqaIssues", async (): Promise<any[]> => {
+    const config = await getConfig();
+    return qaService.getUqaIssues(config);
+  });
+  ipcMain.handle("getUqaTransitions", async (_, issueKey: string): Promise<any[]> => {
+    return qaService.getUqaTransitions(await getConfig(), issueKey);
+  });
+  ipcMain.handle("appendUqaEntry", async (_, issueKey: string, date: string, activity: string): Promise<void> => {
+    return qaService.appendUqaEntry(await getConfig(), issueKey, date, activity);
+  });
+  ipcMain.handle("appendUqaEntryWithNotes", async (_, issueKey: string, date: string, activity: string, notes: string): Promise<void> => {
+    return qaService.appendUqaEntryWithNotes(await getConfig(), issueKey, date, activity, notes);
+  });
+  ipcMain.handle("transitionUqaIssue", async (_, issueKey: string, transitionId: string): Promise<void> => {
+    return qaService.transitionUqaIssue(await getConfig(), issueKey, transitionId);
+  });
+  ipcMain.handle("autoGenerateUqaNotes", async (_, issueKey: string): Promise<import("@shared/types").AutoUqaGeneratedPayload> => {
+    return qaService.autoGenerateUqaNotes(await getConfig(), issueKey);
+  });
+  ipcMain.handle("getUqaField", async () => qaService.getUqaField(await getConfig()));
+  ipcMain.handle("getCurrentUser", async () => qaService.getCurrentUser(await getConfig()));
+  ipcMain.handle("updateUqaSchedule", async (_, uqaConfig: import("@shared/types").UqaConfig) => {
+    const config = await getConfig();
+    config.uqa = uqaConfig;
+    await store.save(config);
+    uqaScheduler.restart(config.uqa);
+  });
+  ipcMain.handle("getUqaSchedule", async (): Promise<import("@shared/types").UqaConfig> => {
+    const config = await getConfig();
+    return config.uqa;
+  });
+  ipcMain.handle("getPerUqaReminder", async (_, issueKey: string): Promise<import("@shared/types").PerIssueReminder | null> => {
+    const config = await getConfig();
+    return config.uqa.perIssueReminders?.[issueKey] ?? null;
+  });
+  ipcMain.handle("updatePerUqaReminder", async (_, issueKey: string, reminder: import("@shared/types").PerIssueReminder) => {
+    const config = await getConfig();
+    if (!config.uqa.perIssueReminders) {
+      config.uqa.perIssueReminders = {};
+    }
+    config.uqa.perIssueReminders[issueKey] = reminder;
+    await store.save(config);
+    uqaScheduler.restart(config.uqa);
+  });
+  ipcMain.handle("checkUqaReminder", async () => {
+    if (uqaScheduler.isRunning()) {
+      uqaScheduler.restart((await getConfig()).uqa);
+    }
+  });
+
+  // UQA reminder ready listener (for notification-click navigation)
+  ipcMain.on("uqa-reminder-ready", async () => {
+    const config = await store.load();
+    if (config.uqa?.enabled) {
+      uqaScheduler.start(config.uqa, async () => qaService.getUqaIssues(config), (issueKey, summary) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win && !win.isDestroyed()) {
+          win.webContents.send("uqa-reminder-pushed", issueKey, summary);
+        }
+      });
+    }
+  });
+
   ipcMain.handle("getConfluencePage", async (_, pageId: string) => qaService.getConfluencePage(await getConfig(), pageId));
   ipcMain.handle("parseConfluenceEntries", async (_, pageId: string, options?: ParseConfluenceEntriesOptions) =>
     qaService.parseConfluenceEntries(await getConfig(), pageId, options)
@@ -305,7 +400,39 @@ app.whenReady().then(() => {
     return path.dirname(filePath);
   });
 
+  // Defect Repository handlers
+  ipcMain.handle("getDefectSources", async () => defectRepoService.getSources());
+  ipcMain.handle("saveDefectSource", async (_, source: JiraProjectSource) => {
+    const config = await getConfig();
+    return defectRepoService.saveSource(config, source);
+  });
+  ipcMain.handle("deleteDefectSource", async (_, id: string) => defectRepoService.deleteSource(id));
+  ipcMain.handle("syncDefectSource", async (_, projectKey: string) => {
+    const config = await getConfig();
+    return defectRepoService.syncSource(config, projectKey);
+  });
+  ipcMain.handle("findDefectDuplicateCandidates", async (_, filters: SearchFilters) => {
+    const config = await getConfig();
+    return defectRepoService.findDuplicateCandidates(filters, config);
+  });
+  ipcMain.handle("searchDefects", async (_, filters: SearchFilters) => defectRepoService.searchDefects(filters, await getConfig()));
+  ipcMain.handle("getDefect", async (_, id: string) => defectRepoService.getDefect(id));
+  ipcMain.handle("getDefectDuplicateRelations", async (_, defectId: string) => defectRepoService.getDuplicateRelations(defectId));
+  ipcMain.handle("markDuplicateDefect", async (_, relation: Omit<DuplicateRelation, "id" | "createdAt">) => defectRepoService.markDuplicate(relation));
+  ipcMain.handle("removeDuplicateDefectLink", async (_, id: string) => defectRepoService.removeDuplicateLink(id));
+  ipcMain.handle("getDefectStats", async () => defectRepoService.getStats());
+  ipcMain.handle("reindexAllDefects", async () => defectRepoService.reindexAll());
+
   createWindow();
+
+  defectAutoSyncScheduler.start(
+    () => defectRepoService.getSources(),
+    async (projectKey: string) => {
+      const config = await getConfig();
+      await defectRepoService.syncSource(config, projectKey);
+      await defectRepoService.recordAutoSync(projectKey, new Date().toISOString());
+    }
+  );
 
   // Check for updates automatically 5 seconds after launch
   setTimeout(async () => {
@@ -322,6 +449,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
+    defectAutoSyncScheduler.stop();
     app.quit();
   }
 });

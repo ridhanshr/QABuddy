@@ -1,6 +1,7 @@
 import type {
   AppBootstrap,
   AppConfig,
+  AutoUqaGeneratedPayload,
   BugFormDraft,
   BugPreview,
   BulkOperationResult,
@@ -11,6 +12,8 @@ import type {
   DashboardDigest,
   ExtractedTestCase,
   ExtractionDepth,
+  DefectCreateDraft,
+  IntentClassification,
   JiraBoard,
   JiraIssueSummary,
   JiraProject,
@@ -18,6 +21,7 @@ import type {
   JiraStatus,
   JiraUser,
   ManualTestCase,
+  OcrResult,
   ParseConfluenceEntriesOptions,
   StepConflictCheck,
   StepConflictMode,
@@ -31,6 +35,8 @@ import { ConfluenceService } from "./confluence-service";
 import { JiraService } from "./jira-service";
 import { OllamaService } from "./ollama-service";
 import type { ProjectContext } from "./ollama-service";
+import { IntentRouter } from "./intent-router";
+import { OcrService } from "./ocr-service";
 import { RagService } from "./rag-service";
 import { logger } from "./logger";
 import { stripHtml } from "./utils";
@@ -109,7 +115,7 @@ export class QaService {
 
   async bootstrap(config: AppConfig): Promise<AppBootstrap> {
     const status = await this.testConnections(config);
-    const dashboard = await this.getDashboard(config);
+    const dashboard = await this.getDashboard(config, true);
 
     return { config, status, dashboard };
   }
@@ -237,25 +243,44 @@ export class QaService {
     return ollama.getAvailableModels();
   }
 
-  async getDashboard(config: AppConfig): Promise<DashboardDigest> {
+  async getDashboard(config: AppConfig, skipInsight = false): Promise<DashboardDigest> {
     if (!config.jira.baseUrl || !config.jira.token) {
-      return demoDashboard();
+      const demo = demoDashboard();
+      return {
+        ...demo,
+        insight: "Jira belum dikonfigurasi. Dashboard ini menampilkan data demo. Hubungkan Jira untuk insight real-time dari project Anda.",
+      };
     }
 
     const jira = new JiraService(config.jira);
-    const ollama = config.ollama.endpoint ? new OllamaService(config.ollama) : null;
+    const ollama = !skipInsight && config.ollama.endpoint ? new OllamaService(config.ollama) : null;
 
     try {
-      const [readyForQa, bugMetrics, sprintReport] = await Promise.all([
+      const [readyForQa, bugMetrics, sprintReport, recentIssues] = await Promise.all([
         jira.getReadyForQaIssues(),
         jira.getBugMetrics(),
         jira.getSprintReport(),
+        jira.searchIssues(`project = "${config.jira.projectKey}" ORDER BY updated DESC`, 5).catch(() => []),
       ]);
-      const insight = ollama
-        ? await ollama.buildDashboardInsight(
-            JSON.stringify({ readyForQa, bugMetrics, sprintReport, projectKey: config.jira.projectKey })
-          )
-        : demoDashboard().insight;
+
+      let insight: string;
+      if (ollama) {
+        insight = await ollama.buildDashboardInsight(
+          JSON.stringify({
+            readyForQa,
+            bugMetrics,
+            sprintReport,
+            recentIssues: recentIssues.map((i: any) => ({ key: i.key, summary: i.summary, status: i.status, priority: i.priority })),
+            projectKey: config.jira.projectKey,
+          })
+        );
+      } else {
+        const totalOpen = bugMetrics.totalOpen;
+        const readyCount = readyForQa.length;
+        insight = sprintReport
+          ? `Dashboard ${config.jira.projectKey} — Sprint ${sprintReport.sprintName}: ${sprintReport.completionPercent}% selesai (${sprintReport.completedIssues}/${sprintReport.totalIssues} issue). ${totalOpen} bug terbuka, ${readyCount} siap QA. Hubungkan Ollama untuk insight yang lebih analitis.`
+          : `Dashboard ${config.jira.projectKey} — ${totalOpen} bug terbuka (${bugMetrics.critical} kritis, ${bugMetrics.high} high). ${readyCount} issue siap QA. Hubungkan Ollama untuk insight AI.`;
+      }
 
       return {
         insight,
@@ -263,8 +288,13 @@ export class QaService {
         bugMetrics,
         sprintReport: sprintReport || undefined,
       };
-    } catch {
-      return demoDashboard();
+    } catch (error) {
+      logger.error("QA", "Dashboard fetch failed:", error);
+      const demo = demoDashboard();
+      return {
+        ...demo,
+        insight: "Gagal memuat data Jira. Periksa koneksi Jira di Settings. Menampilkan data demo sementara.",
+      };
     }
   }
 
@@ -273,10 +303,11 @@ export class QaService {
     const confluenceConfigured = Boolean(config.confluence.baseUrl && config.confluence.token);
     const ollama = config.ollama.endpoint ? new OllamaService(config.ollama) : null;
     const lowerPrompt = prompt.toLowerCase();
-    
-    // Bypass RAG if user explicitly wants to search live Jira tickets
-    const explicitJiraIntent = /(cari|tampilkan|temukan|list|daftar|cek|buat|generate|bikin)\w*\s+.*(jql|tiket|ticket|issue|bug|task|story|epic|jira)/i.test(lowerPrompt) || 
-                               /(jql|tiket|ticket|issue|bug|task|story|epic|jira)\s+.*(status|type|tipe|issuetype|assignee|reporter|sprint|epic|prioritas|priority|project)/i.test(lowerPrompt);
+
+    // ─── Intent Router: deterministic classification first ──────────────
+    const router = new IntentRouter();
+    const intent: IntentClassification = router.classify(prompt);
+    logger.info("QA", `Intent classified: route=${intent.route}, confidence=${intent.confidence.toFixed(2)}, reason=${intent.reason}`);
 
     // ─── Build project context for enriched prompts ─────────────────────
     let projectContext: ProjectContext | undefined;
@@ -284,35 +315,8 @@ export class QaService {
       projectContext = await this.buildProjectContext(config);
     }
 
-    // ─── Build system prompt ────────────────────────────────────────────
-    const systemPromptParts: string[] = [
-      "Anda adalah QA Buddy, seorang asisten QA engineer ahli yang terintegrasi dengan Jira dan Confluence.",
-      "Tugas Anda adalah membantu QA engineer menemukan bug, menulis test case, menganalisis requirement, dan menghasilkan query JQL.",
-      "PENTING: Selalu berikan jawaban dan penjelasan dalam Bahasa Indonesia yang profesional, ramah, dan mudah dipahami.",
-      "Jadilah asisten yang ringkas namun mendalam. Saat merujuk ke issue Jira, selalu sertakan kunci issue (issue key) seperti [PROJ-123].",
-      "",
-      "=== ATURAN ANTI-HALUSINASI ===",
-      "- Jawab HANYA berdasarkan data yang diberikan (issue Jira, dokumen Confluence, atau Knowledge Base). JANGAN mengarang issue key, nama tiket, status, atau data yang tidak ada.",
-      "- Jika data tidak mencukupi untuk menjawab pertanyaan, katakan secara jujur bahwa informasinya belum tersedia dan sarankan langkah selanjutnya.",
-      "- JANGAN mengarang URL, nama orang, statistik, atau tren yang tidak ada di data yang diberikan.",
-      "- Pisahkan dengan jelas antara fakta dari data dan analisis/saran Anda.",
-    ];
-    if (config.jira.projectKey) {
-      systemPromptParts.push(`Current Jira project: ${config.jira.projectKey}`);
-    }
-    if (config.confluence.spaceKey) {
-      systemPromptParts.push(`Current Confluence space: ${config.confluence.spaceKey}`);
-    }
-    if (projectContext?.statuses && projectContext.statuses.length > 0) {
-      systemPromptParts.push(`Available Jira statuses: ${projectContext.statuses.join(", ")}`);
-    }
-    if (projectContext?.issueTypes && projectContext.issueTypes.length > 0) {
-      systemPromptParts.push(`Available Jira issue types: ${projectContext.issueTypes.join(", ")}`);
-    }
-    const systemPrompt = systemPromptParts.join("\n");
-
-    // ─── Confluence URL flow (skip hybrid) ──────────────────────────────
-    if (confluenceConfigured && (/(confluence|dokumentasi|documentation|page|doc)/i.test(lowerPrompt) || prompt.includes(config.confluence.baseUrl))) {
+    // ─── Confluence URL flow (direct page access) ───────────────────────
+    if (confluenceConfigured && (prompt.includes(config.confluence.baseUrl) || /^(ringkas|summary|baca|lihat)\s+.*url/i.test(lowerPrompt))) {
       const confluence = new ConfluenceService(config.confluence);
       const urlRegex = new RegExp(`(https?:\\/\\/[^\\s]*${config.confluence.baseUrl.replace(/https?:\/\//, '')}[^\\s]*)`, 'gi');
       const foundUrl = prompt.match(urlRegex)?.[0];
@@ -322,7 +326,7 @@ export class QaService {
         let answer = "";
         if (ollama) {
           const summary = await ollama.summarizeConfluence(prompt, stripHtml(page.body?.storage?.value || ""));
-          answer = summary || "Maaf, Ollama gagal memberikan ringkasan (Koneksi terputus atau memori penuh). Anda bisa melihat detail halaman di link bawah.";
+          answer = summary || "Maaf, Ollama gagal memberikan ringkasan. Anda bisa melihat detail halaman di link bawah.";
         } else {
           answer = `Berikut adalah isi dari halaman **${page.title}**. Hubungkan Ollama untuk mendapatkan ringkasan otomatis.`;
         }
@@ -342,101 +346,192 @@ export class QaService {
       return { mode: "confluence", answer: result.answer, pages: result.pages };
     }
 
-    if (!jiraConfigured && !confluenceConfigured) {
+    if (intent.route === "clarify" && !jiraConfigured && !confluenceConfigured) {
       return { mode: "error", answer: "Jira dan Confluence belum dikonfigurasi. Lengkapi koneksi di Settings terlebih dahulu." };
     }
-    if (!jiraConfigured) {
-      return { mode: "error", answer: "Jira belum dikonfigurasi. Isi URL, auth mode, dan token di Settings." };
-    }
 
-    const jira = new JiraService(config.jira);
-
-    // ─── Generate JQL first, then run RAG + Jira search in parallel ─────
-    let jql: string;
-    if (ollama) {
-      jql = await ollama.generateJql(prompt, config.jira.projectKey, projectContext, history);
-    } else {
-      jql = `project = "${config.jira.projectKey}" ORDER BY updated DESC`;
-    }
-
-    const [ragResults, issues] = await Promise.all([
-      (async () => {
-        if (!ollama || !this.ragService) return { results: [] as any[], hasRelevant: false };
-        try {
-          const results = await this.ragService.search(prompt, config.ollama.endpoint, 5);
-          return {
-            results,
-            hasRelevant: results.length > 0 && results[0].score > 0.4,
-          };
-        } catch { return { results: [] as any[], hasRelevant: false }; }
-      })(),
-      (async () => {
-        try {
-          return await jira.searchIssues(jql, 6);
-        } catch {
-          return [] as import("@shared/types").JiraIssueSummary[];
-        }
-      })(),
-    ]);
-
-    const hasJiraResults = issues.length > 0;
-    const hasRagResults = ragResults.hasRelevant;
-
-    // ─── Build combined answer ──────────────────────────────────────────
-    let answer: string;
-    let mode: "jira" | "confluence" | "hybrid" = "jira";
-    let pages: import("@shared/types").ConfluencePageSummary[] | undefined;
-
-    if (hasRagResults) {
-      const sources = ragResults.results.map((r: any) => {
-        let safeUrl = r.sourceUrl;
-        if (safeUrl.match(/\/pages\/\d+$/)) safeUrl = safeUrl.replace(/\/pages\/(\d+)$/, "/pages/viewpage.action?pageId=$1");
-        return { id: r.sourceUrl, title: r.sourceTitle, spaceName: "Knowledge Base", url: safeUrl, excerpt: r.content.slice(0, 150) + "..." };
-      });
-      pages = sources.filter((s: any, i: number, arr: any[]) => arr.findIndex((x: any) => x.url === s.url) === i);
-    }
-
-    if (hasRagResults && hasJiraResults && ollama) {
-      // Hybrid: both sources available
-      mode = "hybrid";
-      const contextText = ragResults.results.map((c: any, i: number) =>
-        `--- Document ${i + 1}: ${c.sourceTitle} ---\n${c.content}`
-      ).join("\n\n");
-      const issuesSummary = issues.map((i: any) =>
-        `${i.key} - "${i.summary}" (Status: ${i.status}, Priority: ${i.priority}, Assignee: ${i.assignee})`
-      ).join("; ");
-
-      const hybridAnswer = await ollama.chat(
-        systemPrompt + "\n\nAnda akan menerima data dari DUA sumber: Knowledge Base (dokumen internal) dan Jira (issue tracker).\nSintesis kedua sumber menjadi satu jawaban yang koheren dalam Bahasa Indonesia.\n\nATURAN: Gunakan HANYA data dari kedua sumber di bawah. JANGAN mengarang issue key, nama dokumen, atau fakta yang tidak ada di data. Jika ada informasi yang kurang, katakan secara jujur.",
-        `=== KNOWLEDGE BASE ===\n${contextText}\n\n=== JIRA SEARCH ===\nJQL: ${jql}\nIssues found: ${issuesSummary}\n\nPertanyaan pengguna: ${prompt}\n\nGabungkan informasi dari kedua sumber untuk memberikan jawaban yang lengkap. Jangan menambahkan data yang tidak ada di sumber.`,
+    if (intent.route === "clarify" && ollama && jiraConfigured) {
+      const jira = new JiraService(config.jira);
+      const issues = await jira.searchIssues(`project = "${config.jira.projectKey}" ORDER BY updated DESC`, 3).catch(() => []);
+      const jiraSummary = issues.map((i: any) => `${i.key} - "${i.summary}" (${i.status})`).join("; ") || "Tidak ada issue terbaru.";
+      const clarificationAnswer = await ollama.chat(
+        "Anda adalah QA Buddy. User bertanya sesuatu yang tidak jelas arahnya. Berikut data Jira terkini sebagai konteks. Tawarkan bantuan: apakah user ingin mencari tiket Jira, mencari dokumen, atau mengekstrak test case? Jawab dalam Bahasa Indonesia yang ramah.",
+        `Data Jira terkini: ${jiraSummary}\n\nPertanyaan user: ${prompt}`,
         history,
         0.5
       );
-      answer = hybridAnswer || `Ditemukan ${issues.length} issue dari Jira dan ${ragResults.results.length} dokumen dari Knowledge Base.`;
-    } else if (hasRagResults && ollama) {
-      // RAG only
-      mode = "confluence";
-      const answerText = await ollama.answerWithContext(prompt, ragResults.results, history);
-      answer = `📚 *Dijawab dari Knowledge Base*\n\n${answerText}`;
-    } else if (hasJiraResults && ollama && history.length > 0) {
-      // Jira only with chat
-      const issuesSummary = issues.map((i: any) =>
-        `${i.key} - "${i.summary}" (Status: ${i.status}, Priority: ${i.priority}, Assignee: ${i.assignee}, Type: ${i.type})`
-      ).join("; ");
-      const chatAnswer = await ollama.chat(
-        systemPrompt,
-        `Saya telah mencari Jira menggunakan JQL: ${jql}\nHasil: ${issuesSummary}\n\nPertanyaan asli pengguna: ${prompt}\n\nBerikan ringkasan yang jelas dan ringkas mengenai hasil pencarian ini dalam Bahasa Indonesia. HANYA gunakan data issue yang tercantum di atas. JANGAN mengarang issue key, status, atau informasi yang tidak ada di daftar hasil.`,
-        history,
-        0.5
-      );
-      answer = chatAnswer || `Saya menemukan ${issues.length} issue yang relevan.`;
-    } else {
-      answer = hasJiraResults
-        ? `Saya menemukan ${issues.length} issue yang relevan. JQL sudah saya buat dan hasilnya saya tampilkan di bawah.`
-        : "Tidak ada issue yang cocok dengan query tersebut.";
+      return { mode: "error", answer: clarificationAnswer || `Saya tidak yakin dengan yang Anda maksud. Apakah Anda ingin:\n1. Mencari tiket Jira?\n2. Mencari dokumen di Knowledge Base?\n3. Mengekstrak test case?\n\nSilakan sebutkan dengan lebih jelas.` };
     }
 
-    return { mode, answer, jql, issues, pages };
+    if (!jiraConfigured && intent.route === "jira") {
+      return { mode: "error", answer: "Jira belum dikonfigurasi. Isi URL, auth mode, dan token di Settings untuk mencari tiket." };
+    }
+
+    if (!jiraConfigured && intent.route === "confluence" && !confluenceConfigured) {
+      return { mode: "error", answer: "Confluence belum dikonfigurasi. Lengkapi koneksi di Settings." };
+    }
+
+    // ─── Jira Route ─────────────────────────────────────────────────────
+    if (intent.route === "jira" && jiraConfigured) {
+      const jira = new JiraService(config.jira);
+
+      let jql: string;
+      if (ollama) {
+        jql = await ollama.generateJql(prompt, config.jira.projectKey, projectContext, history);
+      } else {
+        jql = `project = "${config.jira.projectKey}" ORDER BY updated DESC`;
+      }
+
+      const issues = await jira.searchIssues(jql, 6).catch(() => [] as JiraIssueSummary[]);
+
+      if (issues.length === 0) {
+        return {
+          mode: "jira",
+          answer: "Tidak ada issue yang cocok dengan kriteria tersebut di Jira.",
+          jql,
+          issues: [],
+        };
+      }
+
+      if (ollama) {
+        const issuesSummary = issues.map((i: any) =>
+          `${i.key} - "${i.summary}" (Status: ${i.status}, Priority: ${i.priority}, Assignee: ${i.assignee}, Type: ${i.type})`
+        ).join("; ");
+        const chatAnswer = await ollama.chatJiraFirst(
+          `JQL: ${jql}\nHasil pencarian:\n${issuesSummary}`,
+          prompt,
+          config.jira.projectKey,
+          history
+        );
+        return {
+          mode: "jira",
+          answer: `Sumber: Jira\n\n${chatAnswer || `Ditemukan ${issues.length} issue.`}`,
+          jql,
+          issues,
+        };
+      }
+
+      return {
+        mode: "jira",
+        answer: `Sumber: Jira\n\nDitemukan ${issues.length} issue yang relevan.`,
+        jql,
+        issues,
+      };
+    }
+
+    // ─── Confluence / Knowledge Base Route ──────────────────────────────
+    if (intent.route === "confluence") {
+      if (ollama && this.ragService) {
+        try {
+          const ragResults = await this.ragService.search(prompt, config.ollama.endpoint, 5);
+          if (ragResults.length > 0 && ragResults[0].score > 0.4) {
+            const answerText = await ollama.chatKnowledgeBase(
+              ragResults.map((r: any, i: number) =>
+                `--- Document ${i + 1}: ${r.sourceTitle} ---\n${r.content}`
+              ).join("\n\n"),
+              prompt,
+              history
+            );
+            const pages = ragResults.map((r: any) => {
+              let safeUrl = r.sourceUrl;
+              if (safeUrl.match(/\/pages\/\d+$/)) safeUrl = safeUrl.replace(/\/pages\/(\d+)$/, "/pages/viewpage.action?pageId=$1");
+              return { id: r.sourceUrl, title: r.sourceTitle, spaceName: "Knowledge Base", url: safeUrl, excerpt: r.content.slice(0, 150) + "..." };
+            }).filter((s: any, i: number, arr: any[]) => arr.findIndex((x: any) => x.url === s.url) === i);
+
+            return {
+              mode: "confluence",
+              answer: `Sumber: Confluence / RAG\n\n${answerText}`,
+              pages,
+            };
+          }
+        } catch { /* RAG search failed */ }
+      }
+
+      return {
+        mode: "confluence",
+        answer: "Tidak ditemukan dokumen yang relevan di Knowledge Base. Coba indeks halaman Confluence terlebih dahulu melalui menu Knowledge Base.",
+      };
+    }
+
+    // ─── Mixed Route ────────────────────────────────────────────────────
+    if (intent.route === "mixed" && jiraConfigured) {
+      const jira = new JiraService(config.jira);
+
+      let jql: string;
+      if (ollama) {
+        jql = await ollama.generateJql(prompt, config.jira.projectKey, projectContext, history);
+      } else {
+        jql = `project = "${config.jira.projectKey}" ORDER BY updated DESC`;
+      }
+
+      const [issues, ragResults] = await Promise.all([
+        jira.searchIssues(jql, 6).catch(() => [] as JiraIssueSummary[]),
+        (async () => {
+          if (!ollama || !this.ragService) return [] as any[];
+          try {
+            return await this.ragService.search(prompt, config.ollama.endpoint, 5);
+          } catch { return []; }
+        })(),
+      ]);
+
+      const hasJira = issues.length > 0;
+      const hasRag = ragResults.length > 0 && ragResults[0].score > 0.4;
+
+      if (!hasJira && !hasRag) {
+        return {
+          mode: "hybrid",
+          answer: "Tidak ditemukan data dari Jira maupun Knowledge Base untuk pertanyaan tersebut.",
+          jql,
+        };
+      }
+
+      if (ollama && hasJira && hasRag) {
+        const jiraSummary = issues.map((i: any) =>
+          `${i.key} - "${i.summary}" (Status: ${i.status}, Priority: ${i.priority}, Assignee: ${i.assignee})`
+        ).join("; ");
+        const contextText = ragResults.map((r: any, i: number) =>
+          `--- Document ${i + 1}: ${r.sourceTitle} ---\n${r.content}`
+        ).join("\n\n");
+
+        const hybridAnswer = await ollama.chatHybrid(jiraSummary, contextText, prompt, history);
+        const pages = ragResults.map((r: any) => ({
+          id: r.sourceUrl,
+          title: r.sourceTitle,
+          spaceName: "Knowledge Base",
+          url: r.sourceUrl,
+          excerpt: r.content.slice(0, 150) + "..."
+        }));
+
+        return {
+          mode: "hybrid",
+          answer: hybridAnswer || `Ditemukan ${issues.length} issue dari Jira dan ${ragResults.length} dokumen dari Knowledge Base.`,
+          jql,
+          issues,
+          pages,
+        };
+      }
+
+      if (hasJira) {
+        return {
+          mode: "jira",
+          answer: `Sumber: Jira\n\nDitemukan ${issues.length} issue yang relevan.`,
+          jql,
+          issues,
+        };
+      }
+
+      return {
+        mode: "confluence",
+        answer: "Sumber: Confluence / RAG\n\nDitemukan dokumen yang relevan di Knowledge Base.",
+        pages: ragResults.map((r: any) => ({ id: r.sourceUrl, title: r.sourceTitle, spaceName: "Knowledge Base", url: r.sourceUrl, excerpt: r.content.slice(0, 150) + "..." })),
+      };
+    }
+
+    // ─── Fallback ───────────────────────────────────────────────────────
+    return {
+      mode: "error",
+      answer: "Maaf, saya tidak dapat memproses pertanyaan Anda. Silakan coba lagi dengan pertanyaan yang lebih spesifik.",
+    };
   }
 
   /**
@@ -518,6 +613,45 @@ export class QaService {
     return jira.createBug(draft, preview);
   }
 
+  async createDefectIssue(
+    config: AppConfig,
+    draft: DefectCreateDraft
+  ): Promise<{ key: string; url: string }> {
+    if (!config.jira.baseUrl || !config.jira.token) {
+      throw new Error("Jira belum dikonfigurasi. Simpan koneksi Jira di Settings sebelum membuat defect.");
+    }
+    const jira = new JiraService(config.jira);
+    const description = [
+      draft.description?.trim() || "",
+      draft.stepsToReproduce?.trim() ? `h4. Steps to Reproduce\n${draft.stepsToReproduce.trim()}` : "",
+      draft.expectedResult?.trim() ? `h4. Expected Result\n${draft.expectedResult.trim()}` : "",
+      draft.actualResult?.trim() ? `h4. Actual Result\n${draft.actualResult.trim()}` : "",
+      draft.environment?.trim() ? `h4. Environment\n${draft.environment.trim()}` : "",
+      draft.component?.trim() ? `h4. Component\n${draft.component.trim()}` : "",
+      draft.version?.trim() ? `h4. Version\n${draft.version.trim()}` : "",
+      draft.severity?.trim() ? `h4. Severity\n${draft.severity.trim()}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const labels = draft.labels
+      ? draft.labels
+          .split(",")
+          .map((label) => label.trim())
+          .filter(Boolean)
+      : [];
+
+    return jira.createIssue(draft.projectKey, draft.issueType, {
+      summary: draft.summary.trim(),
+      description,
+      priority: draft.priority || "Medium",
+      labels,
+      environment: draft.environment || undefined,
+      component: draft.component || undefined,
+      version: draft.version || undefined,
+      severity: draft.severity || undefined,
+    });
+  }
+
   async extractTestCases(
     config: AppConfig,
     url: string,
@@ -528,6 +662,7 @@ export class QaService {
     }
     const confluence = new ConfluenceService(config.confluence);
     const ollama = config.ollama.endpoint ? new OllamaService(config.ollama) : undefined;
+    const ocr = new OcrService();
 
     // ─── RAG Enrichment: Fetch related context from knowledge base ────
     let ragContext: string | undefined;
@@ -566,6 +701,55 @@ export class QaService {
       } catch (ragError) {
         logger.error("RAG", "Enrichment for test extraction failed:", ragError);
       }
+    }
+
+    // ─── OCR: Extract text from image attachments on the page ─────────
+    let ocrText: string | undefined;
+    try {
+      const pageIdMatch = url.match(/(?:pages\/|pageId=)(\d+)/);
+      if (pageIdMatch) {
+        const pageId = pageIdMatch[1];
+        const attachments = await confluence.getAttachments(pageId);
+        const imageAttachments = attachments.filter((att: any) => {
+          const ct = (att.contentType || att.mimeType || "").toLowerCase();
+          const ext = (att.title || "").toLowerCase();
+          return ct.startsWith("image/") || /\.(png|jpg|jpeg|gif|bmp|webp)$/i.test(ext);
+        });
+
+        if (imageAttachments.length > 0) {
+          logger.info("OCR", `Found ${imageAttachments.length} image attachments to OCR`);
+          const ocrResults: OcrResult[] = [];
+
+          for (const att of imageAttachments.slice(0, 5)) {
+            try {
+              const downloadUrl = att._links?.download || att.downloadUrl;
+              if (downloadUrl) {
+                const imageBuffer = await confluence.downloadAttachment(downloadUrl);
+                const result = await ocr.extractText(imageBuffer, att.title, pageId);
+                if (result) ocrResults.push(result);
+              }
+            } catch (attError) {
+              logger.warn("OCR", `Failed to process attachment ${att.title}:`, attError);
+            }
+          }
+
+          if (ocrResults.length > 0) {
+            ocrText = ocrResults
+              .map((r) => `[OCR dari ${r.sourceAttachment}] ${r.text}`)
+              .join("\n\n");
+            logger.info("OCR", `Total OCR text length: ${ocrText.length} chars`);
+          }
+        }
+      }
+    } catch (ocrError) {
+      logger.warn("OCR", "OCR pipeline failed, continuing without OCR:", ocrError);
+    }
+
+    // ─── Choose extraction strategy based on available sources ────────
+    if (ollama && ocrText && ragContext) {
+      return confluence.extractTestCases(url, depth, ollama, ragContext, ocrText);
+    } else if (ollama && ocrText) {
+      return confluence.extractTestCases(url, depth, ollama, undefined, ocrText);
     }
 
     return confluence.extractTestCases(url, depth, ollama, ragContext);
@@ -832,6 +1016,61 @@ export class QaService {
     this.assertJiraConfigured(config);
     const jira = new JiraService(config.jira);
     return jira.bulkMoveToXrayFolder(issueKeys, folderPath);
+  }
+
+  async getCurrentUser(config: AppConfig): Promise<{ accountId: string; displayName: string; emailAddress: string }> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    return jira.getCurrentUser();
+  }
+
+  async getUqaField(config: AppConfig): Promise<{ id: string; name: string; type: string; isCustom: boolean } | null> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    return jira.getCustomFieldByName("Product Tester");
+  }
+
+  async getUqaIssues(config: AppConfig): Promise<import("@shared/types").UqaIssue[]> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    let fieldId = config.uqa.productTesterFieldId;
+    if (!fieldId) {
+      const field = await jira.getCustomFieldByName("Product Tester");
+      if (!field) throw new Error("Custom field 'Product Tester' tidak ditemukan di Jira. Cek Settings.");
+      fieldId = field.id;
+    }
+    return jira.getUqaIssues(fieldId, config.uqa.searchMode, config.uqa.projectKeys);
+  }
+
+  async getUqaTransitions(config: AppConfig, issueKey: string): Promise<import("@shared/types").UqaTransition[]> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    // Also fetch latest available transitions for a single issue
+    return jira.getUqaTransitions(issueKey);
+  }
+
+  async appendUqaEntry(config: AppConfig, issueKey: string, date: string, activity: string): Promise<void> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    return jira.appendUqaEntry(issueKey, date, activity);
+  }
+
+  async appendUqaEntryWithNotes(config: AppConfig, issueKey: string, date: string, activity: string, notes: string): Promise<void> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    return jira.appendUqaEntryWithNotes(issueKey, date, activity, notes);
+  }
+
+  async transitionUqaIssue(config: AppConfig, issueKey: string, transitionId: string): Promise<void> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    return jira.transitionUqaIssue(issueKey, transitionId);
+  }
+
+  async autoGenerateUqaNotes(config: AppConfig, issueKey: string): Promise<AutoUqaGeneratedPayload> {
+    this.assertJiraConfigured(config);
+    const jira = new JiraService(config.jira);
+    return jira.autoGenerateUqaNotes(issueKey);
   }
 
   private assertJiraConfigured(config: AppConfig) {

@@ -20,6 +20,7 @@
     "material-symbols": "^0.44.12",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "tesseract.js": "^7.0.0",
     "xlsx": "^0.18.5",
     "zod": "^3.25.6"
   },

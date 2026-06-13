@@ -288,13 +288,21 @@ export class ConfluenceService {
     };
   }
 
-  async extractTestCases(url: string, depth: string, ollama?: any, ragContext?: string) {
+  async getAttachments(pageId: string): Promise<any[]> {
+    return this.rawClient.getAttachments(pageId);
+  }
+
+  async downloadAttachment(downloadUrl: string): Promise<Buffer> {
+    return this.rawClient.downloadAttachment(downloadUrl);
+  }
+
+  async extractTestCases(url: string, depth: string, ollama?: any, ragContext?: string, ocrText?: string) {
     const page = await this.getPageByUrl(url);
     const content = page.body?.storage?.value || "";
     
     let testCases: any[] = [];
     if (ollama && typeof ollama.extractTestCases === "function") {
-      const extracted = await ollama.extractTestCases(stripHtml(content), depth as any, ragContext);
+      const extracted = await ollama.extractTestCases(stripHtml(content), depth as any, ragContext, ocrText);
       if (extracted && extracted.length > 0) {
         testCases = extracted;
       }

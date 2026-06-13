@@ -10,9 +10,11 @@ import TestCaseExtractor from "./screens/TestCaseExtractor";
 import ManualTestCaseScreen from "./screens/ManualTestCaseScreen";
 import DocumentationSync from "./screens/DocumentationSync";
 import AdvancedJiraOrganizer from "./screens/AdvancedJiraOrganizer";
+import DailyUQA from "./screens/DailyUQA";
 import Logs from "./screens/Logs";
 import Settings from "./screens/Settings";
 import Documentation from "./screens/Documentation";
+import DefectRepository from "./screens/DefectRepository";
 
 const primaryNavigation: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: "grid_view", filledIcon: "grid_view" },
@@ -22,6 +24,8 @@ const primaryNavigation: NavItem[] = [
   { key: "manual-test-case", label: "Manual Test Case", icon: "assignment", filledIcon: "assignment" },
   { key: "documentation-sync", label: "Documentation Sync", icon: "description", filledIcon: "description" },
   { key: "advanced-jira-organizer", label: "Advanced Jira Organizer", icon: "account_tree", filledIcon: "account_tree" },
+  { key: "daily-uqa", label: "Daily UQA", icon: "edit_note", filledIcon: "edit_note" },
+  { key: "defect-repository", label: "Defect Repository", icon: "inventory_2", filledIcon: "inventory_2" },
 ];
 
 const footerNavigation: NavItem[] = [
@@ -185,6 +189,8 @@ function AppContent() {
               {activeView === "manual-test-case" && <ManualTestCaseScreen />}
               {activeView === "documentation-sync" && <DocumentationSync />}
               {activeView === "advanced-jira-organizer" && <AdvancedJiraOrganizer />}
+              {activeView === "daily-uqa" && <DailyUQA />}
+              {activeView === "defect-repository" && <DefectRepository />}
               {activeView === "logs" && <Logs />}
               {activeView === "settings" && <Settings />}
               {activeView === "documentation" && <Documentation />}

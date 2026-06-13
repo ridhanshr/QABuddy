@@ -471,6 +471,38 @@ export default function Settings() {
                       {ollamaModels.map((model) => (
                         <option key={model} value={model}>{model}</option>
                       ))}
+                      </select>
+                  </label>
+                </div>
+                <div className="bug-form-row-2col" style={{ marginTop: 8 }}>
+                  <label>
+                    <span>Defect Repo Embedding Model</span>
+                    <select
+                      onChange={(event) =>
+                        setConfig({ ...config, ollama: { ...config.ollama, defectEmbeddingModel: event.target.value } })
+                      }
+                      value={config.ollama.defectEmbeddingModel || ""}
+                      disabled={modelsLoading}
+                    >
+                      <option value="">Use Active Model</option>
+                      {ollamaModels.map((model) => (
+                        <option key={model} value={model}>{model}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Defect Repo Explanation Model</span>
+                    <select
+                      onChange={(event) =>
+                        setConfig({ ...config, ollama: { ...config.ollama, defectExplanationModel: event.target.value } })
+                      }
+                      value={config.ollama.defectExplanationModel || ""}
+                      disabled={modelsLoading}
+                    >
+                      <option value="">Disabled</option>
+                      {ollamaModels.map((model) => (
+                        <option key={model} value={model}>{model}</option>
+                      ))}
                     </select>
                   </label>
                 </div>

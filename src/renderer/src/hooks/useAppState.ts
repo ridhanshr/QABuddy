@@ -49,7 +49,7 @@ export type ChatMessage = {
 export type LogEntry = {
   id: string;
   time: string;
-  source: "Sync to Confluence" | "Submit to Jira" | "Xray Organizer" | "Advanced Jira Organizer" | "Update from Confluence";
+  source: "Sync to Confluence" | "Submit to Jira" | "Xray Organizer" | "Advanced Jira Organizer" | "Update from Confluence" | "Defect Repository";
   status: "success" | "error" | "info";
   message: string;
   detail?: string;
@@ -427,6 +427,13 @@ export function useAppState() {
       setLogs(loadedLogs || []);
       const info = await window.qaBuddy.getUpdateStatus().catch(() => null);
       if (info) setUpdateInfo(info);
+      void Promise.all([
+        loadDefectSources(),
+        loadDefectStats(),
+        loadAllDefects(),
+      ]).catch(() => {
+        // Keep bootstrap resilient even if defect repository data fails to load.
+      });
     } catch (error) {
       setBanner({
         tone: "error",
@@ -473,7 +480,7 @@ export function useAppState() {
                 updates.model = models[0];
               }
               // Also fix specialized models if they reference a non-existent model
-              for (const key of ["jqlModel", "chatModel", "extractionModel", "insightModel"] as const) {
+              for (const key of ["jqlModel", "chatModel", "extractionModel", "insightModel", "defectEmbeddingModel", "defectExplanationModel"] as const) {
                 const val = config.ollama[key];
                 if (val && !models.includes(val)) {
                   updates[key] = "";
@@ -663,6 +670,155 @@ export function useAppState() {
     });
     return cleanup;
   }, [loadRagStats]);
+
+  // ── Defect Repository State ──────────────────────────────────────────
+  const [defectSources, setDefectSources] = useState<import("@shared/types").JiraProjectSource[]>([]);
+  const [defectSearchQuery, setDefectSearchQuery] = useState("");
+  const [defectCandidates, setDefectCandidates] = useState<import("@shared/types").DuplicateCandidate[]>([]);
+  const [defectSearchResults, setDefectSearchResults] = useState<import("@shared/types").DefectRecord[]>([]);
+  const [defectSearching, setDefectSearching] = useState(false);
+  const [defectSyncing, setDefectSyncing] = useState<string | null>(null);
+  const [defectStats, setDefectStats] = useState<import("@shared/types").DefectRepositoryStats | null>(null);
+  const [defectViewDefect, setDefectViewDefect] = useState<import("@shared/types").DefectRecord | null>(null);
+  const [defectViewRelations, setDefectViewRelations] = useState<import("@shared/types").DuplicateRelation[]>([]);
+  const [defectShowNewSource, setDefectShowNewSource] = useState(false);
+  const [defectFilters, setDefectFilters] = useState<import("@shared/types").SearchFilters>({ query: "" });
+  const [defectTab, setDefectTab] = useState<"repository" | "sources" | "detail" | "stats">("repository");
+  const [defectDuplicateTab, setDefectDuplicateTab] = useState(false);
+
+  const loadDefectSources = useCallback(async () => {
+    try {
+      const sources = await window.qaBuddy.getDefectSources();
+      setDefectSources(sources);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const loadDefectStats = useCallback(async () => {
+    try {
+      const stats = await window.qaBuddy.getDefectStats();
+      setDefectStats(stats);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const loadAllDefects = useCallback(async () => {
+    setDefectSearching(true);
+    try {
+      const result = await window.qaBuddy.searchDefects({ query: "" });
+      setDefectCandidates(result.candidates);
+      setDefectSearchResults(result.defects);
+    } catch {
+      // silent — data kosong saat pertama kali
+    } finally {
+      setDefectSearching(false);
+    }
+  }, []);
+
+  const handleDefectSync = useCallback(async (projectKey: string) => {
+    setDefectSyncing(projectKey);
+    try {
+      const result = await window.qaBuddy.syncDefectSource(projectKey);
+      setBanner({ tone: "success", text: `Sync ${projectKey}: ${result.indexed} diindeks, ${result.skipped} dilewati.` });
+      await loadDefectSources();
+      await loadDefectStats();
+      loadAllDefects();
+    } catch (error: any) {
+      setBanner({ tone: "error", text: `Sync gagal: ${error.message}` });
+    } finally {
+      setDefectSyncing(null);
+    }
+  }, [loadDefectSources, loadDefectStats, loadAllDefects, setBanner]);
+
+  const handleDefectSearch = useCallback(async (query?: string, filters?: import("@shared/types").SearchFilters) => {
+    const q = query ?? defectSearchQuery;
+    const f = filters ?? defectFilters;
+    if (!q.trim() && !f.projectKeys?.length && !f.issueTypes?.length && !f.statuses?.length && !f.components?.length && !f.versions?.length && !f.severities?.length) return;
+    setDefectSearching(true);
+    try {
+      const result = await window.qaBuddy.searchDefects({ ...f, query: q });
+      setDefectCandidates(result.candidates);
+      setDefectSearchResults(result.defects);
+    } catch (error: any) {
+      setBanner({ tone: "error", text: `Search gagal: ${error.message}` });
+    } finally {
+      setDefectSearching(false);
+    }
+  }, [defectSearchQuery, defectFilters, setBanner]);
+
+  const handleDefectViewDetail = useCallback(async (id: string) => {
+    try {
+      const [defect, relations] = await Promise.all([
+        window.qaBuddy.getDefect(id),
+        window.qaBuddy.getDefectDuplicateRelations(id),
+      ]);
+      if (defect) {
+        setDefectViewDefect(defect);
+        setDefectViewRelations(relations);
+        setDefectTab("detail");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleDefectMarkDuplicate = useCallback(async (duplicateDefectId: string, primaryDefectId: string, reason: string) => {
+    try {
+      await window.qaBuddy.markDuplicateDefect({
+        primaryDefectId,
+        duplicateDefectId,
+        reason,
+        confidenceScore: 0,
+        createdBy: "user",
+      });
+      setBanner({ tone: "success", text: "Defect ditandai sebagai duplicate." });
+      if (defectViewDefect) {
+        await handleDefectViewDetail(defectViewDefect.id);
+      }
+    } catch (error: any) {
+      setBanner({ tone: "error", text: `Gagal menandai duplicate: ${error.message}` });
+    }
+  }, [defectViewDefect, handleDefectViewDetail, setBanner]);
+
+  const handleDefectRemoveDuplicate = useCallback(async (relationId: string) => {
+    try {
+      await window.qaBuddy.removeDuplicateDefectLink(relationId);
+      setBanner({ tone: "success", text: "Link duplicate dihapus." });
+      if (defectViewDefect) {
+        await handleDefectViewDetail(defectViewDefect.id);
+      }
+    } catch (error: any) {
+      setBanner({ tone: "error", text: `Gagal menghapus link duplicate: ${error.message}` });
+    }
+  }, [defectViewDefect, handleDefectViewDetail, setBanner]);
+
+  const handleDefectSaveSource = useCallback(async (source: import("@shared/types").JiraProjectSource) => {
+    try {
+      await window.qaBuddy.saveDefectSource(source);
+      setDefectShowNewSource(false);
+      await loadDefectSources();
+      setBanner({ tone: "success", text: `Source ${source.projectKey} berhasil disimpan.` });
+    } catch (error: any) {
+      setBanner({ tone: "error", text: `Gagal menyimpan source: ${error.message}` });
+    }
+  }, [loadDefectSources, setBanner]);
+
+  const handleDefectDeleteSource = useCallback(async (id: string) => {
+    try {
+      await window.qaBuddy.deleteDefectSource(id);
+      await loadDefectSources();
+      await loadDefectStats();
+      setDefectTab("repository");
+      setDefectCandidates([]);
+      setDefectSearchResults([]);
+      loadAllDefects();
+      setBanner({ tone: "success", text: "Source berhasil dihapus." });
+    } catch (error: any) {
+      setBanner({ tone: "error", text: `Gagal menghapus source: ${error.message}` });
+    }
+  }, [loadDefectSources, loadDefectStats, loadAllDefects, setBanner, setDefectTab, setDefectCandidates, setDefectSearchResults]);
 
   // Listen for update progress events
   useEffect(() => {
@@ -2001,7 +2157,7 @@ export function useAppState() {
       setBanner({ tone: "success", text: "Konfigurasi berhasil disimpan." });
 
       // Refresh dashboard in background — don't block the save
-      window.qaBuddy.getDashboard()
+      window.qaBuddy.getDashboard({ skipInsight: true })
         .then((nextDashboard) => setDashboard(nextDashboard))
         .catch(() => { /* dashboard refresh is best-effort */ });
     } catch (error) {
@@ -2335,5 +2491,33 @@ export function useAppState() {
     showDetailedProgress,
     setShowDetailedProgress,
     handleDownloadAndInstall,
+    defectSources,
+    defectSearchQuery,
+    setDefectSearchQuery,
+    defectCandidates,
+    defectSearchResults,
+    defectSearching,
+    defectSyncing,
+    defectStats,
+    defectViewDefect,
+    defectViewRelations,
+    defectShowNewSource,
+    setDefectShowNewSource,
+    defectFilters,
+    setDefectFilters,
+    defectTab,
+    setDefectTab,
+    defectDuplicateTab,
+    setDefectDuplicateTab,
+    loadDefectSources,
+    loadDefectStats,
+    handleDefectSync,
+    handleDefectSearch,
+    loadAllDefects,
+    handleDefectViewDetail,
+    handleDefectMarkDuplicate,
+    handleDefectRemoveDuplicate,
+    handleDefectSaveSource,
+    handleDefectDeleteSource,
   };
 }

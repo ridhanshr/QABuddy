@@ -16,7 +16,12 @@ import {
   getConfluenceSummaryPrompt,
   getDashboardInsightPrompt,
   getTestCaseExtractionPrompt,
+  getOcrGroundedExtractionPrompt,
+  getRagEnrichedExtractionPrompt,
   getRagAnswerPrompt,
+  getJiraFirstChatPrompt,
+  getKnowledgeBaseChatPrompt,
+  getHybridChatPrompt,
 } from "./ollama/prompts";
 
 export class OllamaService {
@@ -303,15 +308,75 @@ export class OllamaService {
   async extractTestCases(
     content: string,
     depth: ExtractionDepth,
-    ragContext?: string
+    ragContext?: string,
+    ocrText?: string
   ): Promise<ExtractedTestCase[] | null> {
-    const prompt = getTestCaseExtractionPrompt(content, depth, ragContext);
+    const prompt = getTestCaseExtractionPrompt(content, depth, ragContext, ocrText);
     const response = await this.generateJson<{ testCases: ExtractedTestCase[] }>(
       prompt,
       0.7,
       this.modelFor("extraction")
     );
     return response?.testCases ?? null;
+  }
+
+  async extractTestCasesOcrGrounded(
+    htmlContent: string,
+    ocrText: string,
+    depth: ExtractionDepth,
+    ragContext?: string,
+  ): Promise<ExtractedTestCase[] | null> {
+    const prompt = getOcrGroundedExtractionPrompt(htmlContent, ocrText, depth, ragContext);
+    const response = await this.generateJson<{ testCases: ExtractedTestCase[] }>(
+      prompt,
+      0.7,
+      this.modelFor("extraction")
+    );
+    return response?.testCases ?? null;
+  }
+
+  async extractTestCasesRagEnriched(
+    htmlContent: string,
+    ocrText: string | undefined,
+    ragContext: string,
+    depth: ExtractionDepth,
+  ): Promise<ExtractedTestCase[] | null> {
+    const prompt = getRagEnrichedExtractionPrompt(htmlContent, ocrText, ragContext, depth);
+    const response = await this.generateJson<{ testCases: ExtractedTestCase[] }>(
+      prompt,
+      0.7,
+      this.modelFor("extraction")
+    );
+    return response?.testCases ?? null;
+  }
+
+  async chatJiraFirst(
+    jiraContext: string,
+    userQuery: string,
+    projectKey?: string,
+    history?: ChatHistoryMessage[],
+  ): Promise<string | null> {
+    const systemPrompt = getJiraFirstChatPrompt(jiraContext, userQuery, projectKey);
+    return this.client.chat(systemPrompt, userQuery, history || [], 0.3, this.modelFor("chat"));
+  }
+
+  async chatKnowledgeBase(
+    ragContext: string,
+    userQuery: string,
+    history?: ChatHistoryMessage[],
+  ): Promise<string | null> {
+    const systemPrompt = getKnowledgeBaseChatPrompt(ragContext, userQuery);
+    return this.client.chat(systemPrompt, userQuery, history || [], 0.3, this.modelFor("chat"));
+  }
+
+  async chatHybrid(
+    jiraContext: string,
+    ragContext: string,
+    userQuery: string,
+    history?: ChatHistoryMessage[],
+  ): Promise<string | null> {
+    const systemPrompt = getHybridChatPrompt(jiraContext, ragContext, userQuery);
+    return this.client.chat(systemPrompt, userQuery, history || [], 0.3, this.modelFor("chat"));
   }
 
   async answerWithContext(

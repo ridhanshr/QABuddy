@@ -493,4 +493,42 @@ export class RagService {
     }
     await this.saveStore();
   }
+
+  // ─── OCR Text Indexing ──────────────────────────────────────────────
+
+  async indexOcrText(
+    ocrText: string,
+    metadata: {
+      sourcePageId: string;
+      sourceTitle: string;
+      sourceUrl: string;
+      attachmentName: string;
+      containerId?: string;
+    },
+    endpoint: string,
+    embeddingModel = "nomic-embed-text",
+  ): Promise<void> {
+    if (ocrText.length < 20) return;
+
+    const chunks = chunkText(ocrText);
+    if (chunks.length === 0) return;
+
+    const embeddings = await this.getEmbeddingsBatch(chunks, endpoint, embeddingModel);
+
+    for (let j = 0; j < chunks.length; j++) {
+      this.store.chunks.push({
+        id: `ocr-${metadata.sourcePageId}-${metadata.attachmentName}-${j}`,
+        source: "confluence",
+        sourceId: metadata.sourcePageId,
+        containerId: metadata.containerId,
+        sourceTitle: `${metadata.sourceTitle} (OCR: ${metadata.attachmentName})`,
+        sourceUrl: metadata.sourceUrl,
+        content: `[OCR dari ${metadata.attachmentName}]\n${chunks[j]}`,
+        embedding: embeddings[j],
+        indexedAt: new Date().toISOString(),
+      });
+    }
+
+    await this.saveStore();
+  }
 }

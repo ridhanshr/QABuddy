@@ -27,6 +27,13 @@ export interface XrayFolder {
   children?: XrayFolder[];
 }
 
+export interface XrayTestRun {
+  id: number;
+  key: string;
+  status: "TODO" | "EXECUTING" | "PASS" | "FAIL" | "ABORTED";
+  defects?: Array<{ key: string; summary: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // JiraClient
 // ---------------------------------------------------------------------------
@@ -193,6 +200,219 @@ export class JiraClient {
     }));
   }
 
+  // -------------------------------------------------------------------------
+  // UQA (Daily Activity) methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Fetch the current Jira user (myself).
+   */
+  async getCurrentUser(): Promise<{ accountId: string; displayName: string; emailAddress: string }> {
+    const res = await this.api.get("/myself");
+    return res.data;
+  }
+
+  /**
+   * Find a custom field by its exact name.
+   */
+  async getCustomFieldByName(
+    name: string
+  ): Promise<{ id: string; name: string; type: string; isCustom: boolean } | null> {
+    const res = await this.api.get<any[]>("/field");
+    const fields = res.data || [];
+    const field = fields.find((f: any) => f.name === name);
+    if (!field) return null;
+    return {
+      id: field.id,
+      name: field.name,
+      type: field.schema?.type || "string",
+      isCustom: field.id?.startsWith("customfield_") ?? false,
+    };
+  }
+
+  /**
+   * Run a JQL search and return full issue details (key, summary, status, fields).
+   */
+  async searchIssuesFull(
+    jql: string,
+    maxResults: number,
+    fields: string[] = ["summary", "status"]
+  ): Promise<any[]> {
+    const res = await this.api.get("/search", {
+      params: {
+        jql,
+        maxResults,
+        fields: fields.join(","),
+      },
+    });
+    return res.data.issues || [];
+  }
+
+  /**
+   * Fetch detailed issue data: description, status, transitions, updated, updateAuthor.
+   */
+  async getIssueDetail(
+    issueKey: string
+  ): Promise<{
+    key: string;
+    summary: string;
+    description: any;
+    status: string;
+    statusCategory: string;
+    updated: string;
+    updateAuthor: string;
+    updateAuthorDisplay: string;
+  } | null> {
+    try {
+      const res = await this.api.get(`/issue/${issueKey}`, {
+        params: {
+          fields: "summary,description,status,updated,updateAuthor",
+        },
+      });
+      const d = res.data;
+      return {
+        key: d.key,
+        summary: d.fields.summary,
+        description: d.fields.description,
+        status: d.fields.status?.name || "",
+        statusCategory: d.fields.status?.statusCategory?.name || "",
+        updated: d.fields.updated || "",
+        updateAuthor: d.fields.updateAuthor?.accountId || "",
+        updateAuthorDisplay: d.fields.updateAuthor?.displayName || "",
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get available transitions for an issue.
+   */
+  async getTransitions(
+    issueKey: string
+  ): Promise<{ id: string; name: string; toStatus: string }[]> {
+    const res = await this.api.get(`/issue/${issueKey}/transitions`);
+    return (res.data.transitions || []).map((t: any) => ({
+      id: t.id,
+      name: t.name,
+      toStatus: t.to?.name || t.name,
+    }));
+  }
+
+  /**
+   * Execute a transition on an issue.
+   */
+  async executeTransition(issueKey: string, transitionId: string): Promise<void> {
+    await this.api.post(`/issue/${issueKey}/transitions`, {
+      transition: { id: transitionId },
+    });
+  }
+
+  /**
+   * Update issue description. Appends a wiki-format table row.
+   * Expects `appendRow` in wiki format: `|date|activity|`
+   */
+  async appendToDescription(issueKey: string, appendRow: string): Promise<void> {
+    const detail = await this.getIssueDetail(issueKey);
+    if (!detail) throw new Error(`Issue ${issueKey} not found`);
+
+    const existing = detail.description;
+    let newDescription: string;
+
+    if (typeof existing === "string") {
+      newDescription = existing.trimEnd() + "\n" + appendRow;
+    } else if (existing && typeof existing === "object" && existing.type === "doc") {
+      const plainText = this.adfToPlainText(existing);
+      newDescription = plainText.trimEnd() + "\n" + appendRow;
+    } else {
+      newDescription = `||Date||Activity||\n${appendRow}`;
+    }
+
+    await this.api.put(`/issue/${issueKey}`, {
+      fields: { description: newDescription },
+    });
+  }
+
+  /**
+   * Update issue description with a 3-column wiki row (Date / Activity / Notes).
+   */
+  async appendToDescriptionWithNotes(issueKey: string, date: string, activity: string, notes: string): Promise<void> {
+    const detail = await this.getIssueDetail(issueKey);
+    if (!detail) throw new Error(`Issue ${issueKey} not found`);
+
+    const existing = detail.description;
+    let newDescription: string;
+
+    const row = `|${date}|${activity}|${notes}|`;
+
+    if (typeof existing === "string") {
+      newDescription = existing.trimEnd() + "\n" + row;
+    } else if (existing && typeof existing === "object" && existing.type === "doc") {
+      const plainText = this.adfToPlainText(existing);
+      newDescription = plainText.trimEnd() + "\n" + row;
+    } else {
+      newDescription = `||Date||Activity||Notes||\n${row}`;
+    }
+
+    await this.api.put(`/issue/${issueKey}`, {
+      fields: { description: newDescription },
+    });
+  }
+
+  /**
+   * Simple ADF-to-plain-text converter (handles basic doc/paragraph/text nodes).
+   * Tables are converted to wiki markup for storage compatibility.
+   */
+  adfToPlainText(adf: any): string {
+    if (!adf || !adf.content) return "";
+    const extract = (nodes: any[]): string => {
+      let result = "";
+      for (const node of nodes) {
+        if (node.type === "text") {
+          result += node.text || "";
+        } else if (node.type === "hardBreak" || node.type === "hard_break") {
+          result += "\n";
+        } else if (node.type === "paragraph") {
+          result += extract(node.content || []) + "\n";
+        } else if (node.type === "table") {
+          result += this.adfTableToWiki(node) + "\n";
+        } else if (node.type === "tableRow") {
+          result += "|";
+          for (const cell of node.content || []) {
+            result += extract(cell.content || []) + "|";
+          }
+          result += "\n";
+        } else if (node.type === "tableHeader") {
+          result += "||";
+          for (const cell of node.content || []) {
+            result += extract(cell.content || []) + "||";
+          }
+          result += "\n";
+        } else if (node.content) {
+          result += extract(node.content);
+        }
+      }
+      return result;
+    };
+    return extract(adf.content || []);
+  }
+
+  private adfTableToWiki(table: any): string {
+    let wiki = "";
+    for (const row of table.content || []) {
+      if (row.type === "tableRow") {
+        const isHeader = row.content?.[0]?.type === "tableHeader";
+        const sep = isHeader ? "||" : "|";
+        wiki += sep;
+        for (const cell of row.content || []) {
+          wiki += this.adfToPlainText(cell).replace(/\n/g, " ") + sep;
+        }
+        wiki += "\n";
+      }
+    }
+    return wiki;
+  }
+
   /**
    * Move a set of test issue keys into an Xray folder.
    * Throws if the folder cannot be found.
@@ -214,5 +434,64 @@ export class JiraClient {
       `/testrepository/${projectKey}/folders/${folderId}/tests`,
       { add: issueKeys }
     );
+  }
+
+  /**
+   * Get issue links from a Jira issue, filtering for Test Execution type.
+   * Returns linked Test Executions with their summary and key.
+   */
+  async getIssueLinks(issueKey: string): Promise<
+    Array<{ issueKey: string; issueTypeName: string; summary: string }>
+  > {
+    const res = await this.api.get(`/issue/${issueKey}`, {
+      params: { fields: "issuelinks" },
+    });
+    const links = res.data.fields?.issuelinks || [];
+    const results: Array<{ issueKey: string; issueTypeName: string; summary: string }> = [];
+
+    for (const link of links) {
+      const typeName = link.type?.name || "";
+      if (typeName !== "Test Execution") continue;
+
+      if (link.inwardIssue?.fields?.issuetype?.name === "Test Execution") {
+        results.push({
+          issueKey: link.inwardIssue.key,
+          issueTypeName: link.inwardIssue.fields.issuetype.name,
+          summary: link.inwardIssue.fields.summary || "",
+        });
+      }
+      if (link.outwardIssue?.fields?.issuetype?.name === "Test Execution") {
+        results.push({
+          issueKey: link.outwardIssue.key,
+          issueTypeName: link.outwardIssue.fields.issuetype.name,
+          summary: link.outwardIssue.fields.summary || "",
+        });
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Get all test runs within a Test Execution via Xray API.
+   * Uses ?detailed=true to include defects/evidences.
+   */
+  async getXrayTestExecutionTests(testExecKey: string): Promise<XrayTestRun[]> {
+    try {
+      const res = await this.xray.get<any>(`/testexec/${testExecKey}/test?detailed=true`);
+      const data = res.data;
+      if (!Array.isArray(data)) return [];
+
+      return data.map((t: any) => ({
+        id: t.id,
+        key: t.key,
+        status: t.status,
+        defects: t.defects?.map((d: any) => ({
+          key: d.key,
+          summary: d.summary,
+        })) || [],
+      }));
+    } catch {
+      return [];
+    }
   }
 }

@@ -39,3 +39,6 @@ qa-buddy-config.json
 design-system/
 example-program/
 requirement/
+
+# Test output
+test-results/
