@@ -42,9 +42,6 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [entries, setEntries] = useState<UqaEntry[]>(issue.entries);
 
-  useEffect(() => {
-    console.log(`[UQA Dialog] ${issue.issueKey} entries (${issue.entries.length}):`, issue.entries);
-  }, []);
 
   const [autoExpanded, setAutoExpanded] = useState(false);
   const [autoData, setAutoData] = useState<AutoUqaGeneratedPayload | null>(null);
@@ -255,7 +252,9 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
 
                     {autoData.phases.length === 0 && (
                       <div className="uqa-auto-phase-empty">
-                        Tidak ditemukan Test Execution yang terhubung.
+                        {autoData.noLinksFound
+                          ? "Tidak ada Test Execution yang terhubung ke issue ini. Tambahkan link issue dengan tipe Test Execution."
+                          : "Test Execution ditemukan namun belum memiliki test runs (data masih kosong)."}
                       </div>
                     )}
 
@@ -509,9 +508,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
 }
 
 export default function DailyUQA() {
-  const { activeView, setBanner, config, setConfig, saveSettings } = useApp();
-  const [issues, setIssues] = useState<UqaIssue[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { setBanner, config, setConfig, saveSettings, uqaIssues, uqaSyncing, uqaSyncProgress, syncUqaIssues } = useApp();
   const [dialogIssue, setDialogIssue] = useState<UqaIssue | null>(null);
   const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
   const [showSettings, setShowSettings] = useState(false);
@@ -522,17 +519,17 @@ export default function DailyUQA() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const statusOptions = useMemo(() => {
-    const s = new Set(issues.map((i) => i.status));
+    const s = new Set(uqaIssues.map((i) => i.status));
     return Array.from(s).sort();
-  }, [issues]);
+  }, [uqaIssues]);
 
   const noActivityCount = useMemo(
-    () => issues.filter((issue) => lastEntryDate(issue.entries) == null).length,
-    [issues],
+    () => uqaIssues.filter((issue) => lastEntryDate(issue.entries) == null).length,
+    [uqaIssues],
   );
 
   const processedIssues = useMemo(() => {
-    let result = [...issues];
+    let result = [...uqaIssues];
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -574,9 +571,9 @@ export default function DailyUQA() {
     });
 
     return result;
-  }, [issues, searchQuery, statusFilter, sortKey, sortDir]);
+  }, [uqaIssues, searchQuery, statusFilter, sortKey, sortDir]);
 
-  const needUpdateCount = issues.filter((i) => i.needsUpdate).length;
+  const needUpdateCount = uqaIssues.filter((i) => i.needsUpdate).length;
 
   const tableStats = useMemo(() => [
     { label: "Visible", value: processedIssues.length },
@@ -604,36 +601,19 @@ export default function DailyUQA() {
 
   const statusIcon = (s: string) => statusMeta[s]?.icon || "circle";
 
-  const fetchIssues = useCallback(async () => {
-    try {
-      const data = await window.qaBuddy.getUqaIssues();
-      setIssues(data);
-    } catch (err: any) {
-      setBanner({ text: `Gagal memuat UQA issues: ${err?.message || "Unknown error"}`, tone: "error" });
-    } finally {
-      setLoading(false);
-    }
-  }, [setBanner]);
-
-  useEffect(() => {
-    if (activeView !== "daily-uqa") return;
-    fetchIssues();
-  }, [activeView, fetchIssues]);
-
   useEffect(() => {
     const unsub = window.qaBuddy.onUqaReminder((issueKey) => {
-      fetchIssues();
+      syncUqaIssues();
     });
     return unsub;
-  }, [fetchIssues]);
+  }, [syncUqaIssues]);
 
   const handleSubmitted = useCallback((issueKey: string) => {
     setRefreshing((prev) => new Set(prev).add(issueKey));
-    window.qaBuddy.getUqaIssues().then((data) => {
-      setIssues(data);
+    syncUqaIssues().then(() => {
       setRefreshing(new Set());
     });
-  }, []);
+  }, [syncUqaIssues]);
 
   return (
     <div className="daily-uqa">
@@ -642,9 +622,14 @@ export default function DailyUQA() {
           <h3>Daily UQA</h3>
         </div>
         <div className="page-header-right" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {!loading && (
-            <button className="secondary-button" onClick={fetchIssues} type="button" title="Refresh">
-              <span className="material-symbols">refresh</span>
+          {!uqaSyncing && (
+            <button className="secondary-button" onClick={syncUqaIssues} type="button" title="Sync dari Jira">
+              <span className="material-symbols">sync</span>
+            </button>
+          )}
+          {uqaSyncing && (
+            <button className="secondary-button" type="button" disabled>
+              <span className="material-symbols spin">sync</span>
             </button>
           )}
           <button
@@ -658,7 +643,36 @@ export default function DailyUQA() {
             </span>
           </button>
         </div>
-      </div>
+       </div>
+
+      {uqaSyncing && uqaSyncProgress && (
+        <div className="card uqa-progress-card" style={{ margin: "16px 0", padding: "12px 16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 13, color: "var(--font-secondary)" }}>{uqaSyncProgress.message}</span>
+            <span style={{ fontSize: 12, color: "var(--font-disabled)" }}>
+              {uqaSyncProgress.current} / {uqaSyncProgress.total}
+            </span>
+          </div>
+          <div style={{ height: 6, background: "var(--surface-secondary)", borderRadius: 3, overflow: "hidden" }}>
+            <div
+              className="uqa-progress-bar"
+              style={{
+                height: "100%",
+                background: "var(--accent-primary)",
+                borderRadius: 3,
+                transition: "width 0.3s ease",
+                width: uqaSyncProgress.total > 0 ? `${Math.min(100, (uqaSyncProgress.current / uqaSyncProgress.total) * 100)}%` : "0%",
+              }}
+            />
+          </div>
+          {uqaSyncProgress.status === "done" && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--success)" }}>Sinkronisasi selesai</div>
+          )}
+          {uqaSyncProgress.status === "error" && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--error)" }}>Sinkronisasi gagal</div>
+          )}
+        </div>
+      )}
 
       {showSettings && (
         <div className="card uqa-settings-panel">
@@ -753,7 +767,7 @@ export default function DailyUQA() {
                 setSavingUqaConfig(true);
                 try {
                   await saveSettings();
-                  await fetchIssues();
+                  await syncUqaIssues();
                   setBanner({ tone: "success", text: "Konfigurasi UQA tersimpan." });
                   setShowSettings(false);
                 } catch (err: any) {
@@ -772,9 +786,9 @@ export default function DailyUQA() {
         </div>
       )}
 
-      {loading ? (
+      {uqaIssues.length === 0 && uqaSyncing ? (
         <div className="card"><p>Memuat data UQA...</p></div>
-      ) : issues.length === 0 ? (
+      ) : uqaIssues.length === 0 ? (
         <div className="card">
           <div className="empty-state">
             <span className="material-symbols empty-icon">fact_check</span>

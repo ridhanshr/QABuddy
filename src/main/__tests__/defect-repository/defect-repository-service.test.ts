@@ -58,6 +58,9 @@ describe("DefectRepositoryService", () => {
         searchMode: "both",
         projectKeys: [],
       },
+      dashboard: {
+        projects: [],
+      },
     };
 
     const existingDefect: DefectRecord = {
@@ -247,6 +250,9 @@ describe("DefectRepositoryService", () => {
         searchMode: "both",
         projectKeys: [],
       },
+      dashboard: {
+        projects: [],
+      },
     });
 
     expect(result.defects).toHaveLength(1);
@@ -341,6 +347,9 @@ describe("DefectRepositoryService", () => {
         perIssueReminders: {},
         searchMode: "both",
         projectKeys: [],
+      },
+      dashboard: {
+        projects: [],
       },
     };
 

@@ -12,7 +12,7 @@ import {
   generateSingleTable,
   normalizeAttachmentOrder,
 } from "./confluence/table-formatter";
-import { stripHtml } from "./utils";
+import { stripHtml, parseConfluenceDisplayUrl, fallbackTestCases } from "./utils";
 import { logger } from "./logger";
 
 function normalizeFilename(name: string): string {
@@ -278,7 +278,13 @@ export class ConfluenceService {
     if (pageId) {
       return this.getPage(pageId);
     }
-    throw new Error("Invalid Confluence URL. Could not find page ID.");
+
+    const displayInfo = parseConfluenceDisplayUrl(url);
+    if (displayInfo) {
+      return this.rawClient.getPageByTitle(displayInfo.spaceKey, displayInfo.title);
+    }
+
+    throw new Error("Invalid Confluence URL. Could not find page ID or friendly path.");
   }
 
   async summarize(prompt: string, ollama?: any) {
@@ -296,22 +302,42 @@ export class ConfluenceService {
     return this.rawClient.downloadAttachment(downloadUrl);
   }
 
-  async extractTestCases(url: string, depth: string, ollama?: any, ragContext?: string, ocrText?: string) {
-    const page = await this.getPageByUrl(url);
+  async extractTestCases(url: string, depth: string, ollama?: any, ragContext?: string, ocrText?: string, pageOverride?: any) {
+    const page = pageOverride || await this.getPageByUrl(url);
     const content = page.body?.storage?.value || "";
     
     let testCases: any[] = [];
-    if (ollama && typeof ollama.extractTestCases === "function") {
-      const extracted = await ollama.extractTestCases(stripHtml(content), depth as any, ragContext, ocrText);
-      if (extracted && extracted.length > 0) {
-        testCases = extracted;
+    let isFallback = false;
+
+    if (ollama) {
+      try {
+        let extracted: any[] | null = null;
+        if (ragContext && typeof ollama.extractTestCasesRagEnriched === "function") {
+          extracted = await ollama.extractTestCasesRagEnriched(stripHtml(content), ocrText, ragContext, depth as any);
+        } else if (ocrText && typeof ollama.extractTestCasesOcrGrounded === "function") {
+          extracted = await ollama.extractTestCasesOcrGrounded(stripHtml(content), ocrText, depth as any, ragContext);
+        } else if (typeof ollama.extractTestCases === "function") {
+          extracted = await ollama.extractTestCases(stripHtml(content), depth as any, ragContext, ocrText);
+        }
+
+        if (extracted && extracted.length > 0) {
+          testCases = extracted;
+        }
+      } catch (err) {
+        logger.error("Confluence", "Ollama extraction failed, falling back to rule-based...", err);
       }
+    }
+
+    if (testCases.length === 0) {
+      testCases = fallbackTestCases(stripHtml(content), depth);
+      isFallback = true;
     }
     
     return {
       testCases,
       pageTitle: page.title,
-      sourceUrl: url
+      sourceUrl: url,
+      isFallback
     };
   }
 

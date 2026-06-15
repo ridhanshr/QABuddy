@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
-import type { JiraProjectSource, DuplicateCandidate, DefectCreateDraft } from "@shared/types";
+import type { JiraProjectSource, DuplicateCandidate, DefectCreateDraft, BugFormDraft, BugPreview } from "@shared/types";
 
 const duplicateCandidateThreshold = 20;
 const defectIssueTypeOptions = ["Bug", "Task", "Defect"] as const;
@@ -100,6 +100,8 @@ export default function DefectRepository() {
   const [sourceEditorOpen, setSourceEditorOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState<JiraProjectSourceDraft | null>(null);
   const [sourceError, setSourceError] = useState<string | null>(null);
+  const [polishing, setPolishing] = useState(false);
+  const [polishPreview, setPolishPreview] = useState<BugPreview | null>(null);
 
   useEffect(() => {
     app.loadDefectSources();
@@ -149,6 +151,7 @@ export default function DefectRepository() {
     setCreateInfo(null);
     setCreateDuplicateCandidates([]);
     setShowDuplicateWarning(false);
+    setPolishPreview(null);
     setShowCreateDefect(true);
   };
 
@@ -159,6 +162,7 @@ export default function DefectRepository() {
     setCreateSubmitting(false);
     setCreateError(null);
     setCreateInfo(null);
+    setPolishPreview(null);
     setCreateDraft(createEmptyDraft(defectProjectOptions[0]?.projectKey || ""));
   };
 
@@ -279,6 +283,39 @@ export default function DefectRepository() {
       setCreateError(error?.message || "Gagal membuat defect.");
     } finally {
       setCreateSubmitting(false);
+    }
+  };
+
+  const polishDefectDraft = async () => {
+    if (!createDraft.summary.trim()) {
+      setCreateError("Isi Summary terlebih dahulu sebelum menggunakan AI Polish.");
+      return;
+    }
+    setPolishing(true);
+    setCreateError(null);
+    try {
+      const bugDraft: BugFormDraft = {
+        title: createDraft.summary,
+        stepsToReproduce: createDraft.stepsToReproduce,
+        actualResult: createDraft.actualResult,
+        expectedResult: createDraft.expectedResult,
+        environment: createDraft.environment,
+        priority: createDraft.priority,
+        labels: createDraft.labels,
+      };
+      const preview = await window.qaBuddy.polishBugReport(bugDraft);
+      setPolishPreview(preview);
+      setCreateDraft((prev) => ({
+        ...prev,
+        summary: preview.summary,
+        description: preview.description,
+        priority: preview.priority,
+        labels: preview.labels.join(", "),
+      }));
+    } catch (error: any) {
+      setCreateError(error?.message || "Gagal memproses AI Polish.");
+    } finally {
+      setPolishing(false);
     }
   };
 
@@ -1191,14 +1228,40 @@ export default function DefectRepository() {
                   </label>
                 </div>
 
+                {polishPreview && (
+                  <div style={{ marginTop: 16, padding: 16, borderRadius: 8, background: "var(--surface-container)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <span className="material-symbols" style={{ fontSize: 18, color: "var(--tertiary)" }}>auto_awesome</span>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>AI Polish Result</span>
+                    </div>
+                    <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{polishPreview.description}</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "var(--surface-container-high)" }}>{polishPreview.priority}</span>
+                      {polishPreview.labels.map((label) => (
+                        <span key={label} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "var(--surface-container-high)" }}>{label}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="defect-create-actions">
                   <button
                     className="ghost-button"
                     type="button"
-                    onClick={resetCreateDefect}
+                    onClick={() => { setPolishPreview(null); resetCreateDefect(); }}
                     disabled={createSubmitting}
                   >
                     Cancel
+                  </button>
+                  <button
+                    className="insight-btn secondary"
+                    type="button"
+                    onClick={() => void polishDefectDraft()}
+                    disabled={polishing || createSubmitting}
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span className="material-symbols" style={{ fontSize: 16 }}>auto_awesome</span>
+                    {polishing ? "Polishing..." : "Polish with AI"}
                   </button>
                   <button
                     className="insight-btn primary"

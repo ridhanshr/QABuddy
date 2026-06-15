@@ -7,6 +7,7 @@ import { RagService } from "./services/rag-service";
 import { logger } from "./services/logger";
 import { UpdateService } from "./services/update-service";
 import { UqaScheduler } from "./services/uqa-scheduler";
+import { UqaStore } from "./services/uqa-store";
 import { DefectRepositoryService } from "./services/defect-repository/defect-repository-service";
 import { DefectAutoSyncScheduler } from "./services/defect-repository/defect-auto-sync-scheduler";
 import { OcrService } from "./services/ocr-service";
@@ -38,6 +39,7 @@ const qaService = new QaService(ragService);
 const ocrService = new OcrService();
 const updateService = new UpdateService();
 const uqaScheduler = new UqaScheduler();
+const uqaStore = new UqaStore();
 const defectRepoService = new DefectRepositoryService("http://127.0.0.1:11434");
 const defectAutoSyncScheduler = new DefectAutoSyncScheduler();
 
@@ -184,6 +186,9 @@ app.whenReady().then(() => {
     }
     return dashboard;
   });
+  ipcMain.handle("getProjectInsight", async (_, request: import("@shared/types").ProjectInsightRequest) =>
+    qaService.getProjectInsight(await getConfig(), request)
+  );
   ipcMain.handle("askAssistant", async (_, prompt: string, history?: any[]) =>
     qaService.askAssistant(await getConfig(), prompt, history || [])
   );
@@ -196,9 +201,21 @@ app.whenReady().then(() => {
   ipcMain.handle("createDefectIssue", async (_, draft: DefectCreateDraft) =>
     qaService.createDefectIssue(await getConfig(), draft)
   );
-  ipcMain.handle("extractTestCases", async (_, url: string, depth: ExtractionDepth) =>
-    qaService.extractTestCases(await getConfig(), url, depth)
-  );
+  ipcMain.handle("extractTestCases", async (event, url: string, depth: ExtractionDepth) => {
+    const requestId = "extract";
+    const ctrl = new AbortController();
+    abortControllers.set(requestId, ctrl);
+    const sendProgress = (msg: string) => {
+      try { event.sender.send("extraction-progress", msg); } catch { /* window gone */ }
+    };
+    sendProgress("Mengambil halaman Confluence...");
+    try {
+      const result = await qaService.extractTestCases(await getConfig(), url, depth, ctrl.signal);
+      return result;
+    } finally {
+      abortControllers.delete(requestId);
+    }
+  });
   ipcMain.handle("createTestCases", async (_, cases: ExtractedTestCase[]) =>
     qaService.createTestCases(await getConfig(), cases)
   );
@@ -281,6 +298,10 @@ app.whenReady().then(() => {
     const config = await getConfig();
     return qaService.getUqaIssues(config);
   });
+  ipcMain.handle("checkUqaOnStartup", async (): Promise<any[]> => {
+    const config = await getConfig();
+    return qaService.getUqaIssues(config);
+  });
   ipcMain.handle("getUqaTransitions", async (_, issueKey: string): Promise<any[]> => {
     return qaService.getUqaTransitions(await getConfig(), issueKey);
   });
@@ -320,6 +341,27 @@ app.whenReady().then(() => {
     config.uqa.perIssueReminders[issueKey] = reminder;
     await store.save(config);
     uqaScheduler.restart(config.uqa);
+  });
+  ipcMain.handle("getUqaIssuesFromStore", async () => {
+    return uqaStore.load();
+  });
+  ipcMain.handle("syncUqaIssues", async () => {
+    const config = await getConfig();
+    const win = BrowserWindow.getAllWindows()[0];
+    const sendProgress = (progress: import("@shared/types").UqaSyncProgress) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("uqa-sync-progress", progress);
+      }
+    };
+    
+    sendProgress({ status: "fetching", message: "Mengambil konfigurasi...", current: 0, total: 0 });
+    const issues = await qaService.getUqaIssues(config, (current, total, message) => {
+      sendProgress({ status: "processing", message, current, total });
+    });
+    sendProgress({ status: "saving", message: "Menyimpan ke store...", current: issues.length, total: issues.length });
+    uqaStore.save(issues);
+    sendProgress({ status: "done", message: "Sinkronisasi selesai", current: issues.length, total: issues.length });
+    return issues;
   });
   ipcMain.handle("checkUqaReminder", async () => {
     if (uqaScheduler.isRunning()) {
@@ -425,6 +467,13 @@ app.whenReady().then(() => {
   ipcMain.handle("getDefectStats", async () => defectRepoService.getStats());
   ipcMain.handle("reindexAllDefects", async () => defectRepoService.reindexAll());
 
+  // Request cancellation
+  const abortControllers = new Map<string, AbortController>();
+  ipcMain.on("cancel-request", (_, requestId: string) => {
+    const ctrl = abortControllers.get(requestId);
+    if (ctrl) { ctrl.abort(); abortControllers.delete(requestId); }
+  });
+
   createWindow();
 
   defectAutoSyncScheduler.start(
@@ -452,6 +501,7 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     defectAutoSyncScheduler.stop();
+    ocrService.terminate().catch(() => {});
     app.quit();
   }
 });

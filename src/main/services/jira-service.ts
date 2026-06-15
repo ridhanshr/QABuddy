@@ -82,6 +82,28 @@ export class JiraService {
   }
 
   // -------------------------------------------------------------------------
+  // JQL helper methods
+  // -------------------------------------------------------------------------
+
+  private buildLabelFilters(exclude: string[], include: string[]): string {
+    const parts: string[] = [];
+    if (exclude.length > 0)
+      parts.push(`AND labels NOT IN (${exclude.map((l) => `"${l}"`).join(", ")})`);
+    if (include.length > 0)
+      parts.push(`AND labels IN (${include.map((l) => `"${l}"`).join(", ")})`);
+    return parts.join(" ");
+  }
+
+  private buildStatusFilters(exclude: string[], include: string[]): string {
+    const parts: string[] = [];
+    if (exclude.length > 0)
+      parts.push(`AND status NOT IN (${exclude.map((s) => `"${s}"`).join(", ")})`);
+    if (include.length > 0)
+      parts.push(`AND status IN (${include.map((s) => `"${s}"`).join(", ")})`);
+    return parts.join(" ");
+  }
+
+  // -------------------------------------------------------------------------
   // Issue search / query
   // -------------------------------------------------------------------------
 
@@ -89,6 +111,7 @@ export class JiraService {
     jql: string,
     maxResults = 8
   ): Promise<JiraIssueSummary[]> {
+    logger.debug("Jira", `searchIssues: ${jql}`);
     const response = await this.client.api.get("/search", {
       params: {
         jql,
@@ -108,16 +131,30 @@ export class JiraService {
     return this.searchIssues(jql, maxResults);
   }
 
-  async getReadyForQaIssues(): Promise<JiraIssueSummary[]> {
+  async getReadyForQaIssues(
+    projectKey?: string,
+    issueType?: string,
+    excludeLabels?: string[],
+    includeLabels?: string[],
+    excludeStatuses?: string[],
+    includeStatuses?: string[]
+  ): Promise<JiraIssueSummary[]> {
+    const pk = projectKey || this.config.projectKey;
+    const it = issueType || this.config.bugIssueType;
+    if (!pk || !it) {
+      logger.warn("Jira", "getReadyForQaIssues: projectKey or issueType is empty, returning []");
+      return [];
+    }
+    const labelFilter = this.buildLabelFilters(excludeLabels || [], includeLabels || []);
+    const statusFilter = this.buildStatusFilters(excludeStatuses || [], includeStatuses || []);
     const baseJql =
       this.config.readyForQaJql.trim() ||
-      `project = "${this.config.projectKey}" AND issuetype = Task AND status NOT IN ("DEPLOY", "DROPPED/CANCELLED") ORDER BY priority DESC, updated DESC`;
+      `project = "${pk}" AND issuetype = "${it}" ORDER BY priority DESC, updated DESC`;
 
-    // Strip trailing ORDER BY so we can append filters before it
     const orderMatch = baseJql.match(/^(.*?)\s*(ORDER\s+BY\s+.*)$/i);
     const filterPart = orderMatch ? orderMatch[1] : baseJql;
     const orderPart = orderMatch ? ` ${orderMatch[2]}` : "";
-    const jql = `${filterPart} AND labels not in (NOT_DEFECT)${orderPart}`;
+    const jql = `${filterPart} ${labelFilter} ${statusFilter}${orderPart}`;
 
     return this.searchIssues(jql, 1000);
   }
@@ -126,28 +163,40 @@ export class JiraService {
   // Metrics & reports
   // -------------------------------------------------------------------------
 
-  async getBugMetrics(): Promise<BugMetrics> {
-    const project = this.config.projectKey;
+  async getBugMetrics(
+    projectKey?: string,
+    issueType?: string,
+    excludeLabels?: string[],
+    includeLabels?: string[],
+    excludeStatuses?: string[],
+    includeStatuses?: string[]
+  ): Promise<BugMetrics> {
+    const project = projectKey || this.config.projectKey;
+    const it = issueType || this.config.bugIssueType;
+    if (!project || !it) {
+      logger.warn("Jira", "getBugMetrics: projectKey or issueType is empty, returning zeroed metrics");
+      return { totalOpen: 0, critical: 0, high: 0, medium: 0, low: 0, resolvedThisSprint: 0, foundThisSprint: 0, epicTotal: 0, epicCompleted: 0, epicTasksTotal: 0, epicTasksResolved: 0 };
+    }
+    const typeFilter = `AND issuetype = "${it}"`;
+    const labelFilter = this.buildLabelFilters(excludeLabels || [], includeLabels || []);
+    const statusFilter = this.buildStatusFilters(excludeStatuses || [], includeStatuses || []);
     const search = (jql: string) => this.client.countByJql(jql);
 
-    const statusFilter = `status NOT IN ("DROPPED/CANCELLED", "DEPLOYED")`;
     const [
       totalOpen,
       critical,
       high,
       medium,
       low,
-      resolvedThisSprint,
-      foundThisSprint,
     ] = await Promise.all([
-      search(`project = "${project}" AND issuetype = Task AND resolution = Unresolved AND ${statusFilter} AND labels not in (NOT_DEFECT)`),
-      search(`project = "${project}" AND issuetype = Task AND resolution = Unresolved AND ${statusFilter} AND priority = Critical AND labels not in (NOT_DEFECT)`),
-      search(`project = "${project}" AND issuetype = Task AND resolution = Unresolved AND ${statusFilter} AND priority = High AND labels not in (NOT_DEFECT)`),
-      search(`project = "${project}" AND issuetype = Task AND resolution = Unresolved AND ${statusFilter} AND priority = Medium AND labels not in (NOT_DEFECT)`),
-      search(`project = "${project}" AND issuetype = Task AND resolution = Unresolved AND ${statusFilter} AND priority = Low AND labels not in (NOT_DEFECT)`),
-      search(`project = "${project}" AND issuetype = Task AND resolution != Unresolved AND sprint in openSprints() AND ${statusFilter} AND labels not in (NOT_DEFECT)`),
-      search(`project = "${project}" AND issuetype = Task AND sprint in openSprints() AND ${statusFilter} AND labels not in (NOT_DEFECT)`),
+      search(`project = "${project}" ${typeFilter} ${statusFilter} ${labelFilter}`).catch(() => 0),
+      search(`project = "${project}" ${typeFilter} ${statusFilter} AND priority = Critical ${labelFilter}`).catch(() => 0),
+      search(`project = "${project}" ${typeFilter} ${statusFilter} AND priority = High ${labelFilter}`).catch(() => 0),
+      search(`project = "${project}" ${typeFilter} ${statusFilter} AND priority = Medium ${labelFilter}`).catch(() => 0),
+      search(`project = "${project}" ${typeFilter} ${statusFilter} AND priority = Low ${labelFilter}`).catch(() => 0),
     ]);
+    const resolvedThisSprint = 0;
+    const foundThisSprint = 0;
 
     let [epicTotal, epicCompleted, epicTasksTotal, epicTasksResolved] = [
       0, 0, 0, 0,
@@ -172,8 +221,8 @@ export class JiraService {
       if (epicKeys.length > 0) {
         const keys = epicKeys.map((i) => i.key).join(", ");
         [epicTasksTotal, epicTasksResolved] = await Promise.all([
-          search(`project = "${project}" AND issuetype = Task AND "Epic Link" in (${keys}) AND labels not in (NOT_DEFECT)`),
-          search(`project = "${project}" AND issuetype = Task AND resolution != Unresolved AND "Epic Link" in (${keys}) AND labels not in (NOT_DEFECT)`),
+          search(`project = "${project}" AND issuetype = Task AND "Epic Link" in (${keys}) ${labelFilter}`),
+          search(`project = "${project}" AND issuetype = Task AND resolution != Unresolved AND "Epic Link" in (${keys}) ${labelFilter}`),
         ]);
       }
     } catch {
@@ -439,22 +488,32 @@ export class JiraService {
     const created: { key: string; url: string }[] = [];
 
     for (const item of cases) {
-      const response = await this.client.api.post("/issue", {
-        fields: {
-          project: { key: this.config.projectKey },
-          summary: item.title,
-          issuetype: { name: this.config.testCaseIssueType || "Task" },
-          description: `Objective:\n${item.objective}\n\nCategory: ${item.category}`,
-          priority: { name: mapQaPriorityToJiraPriority(item.priority) },
-          labels: [
-            "qa-buddy",
-            "test-case",
-            item.category.toLowerCase().replace(/\s+/g, "-"),
-          ],
-        },
-      });
-      const issueKey = response.data.key as string;
-      created.push({ key: issueKey, url: this.client.issueUrl(issueKey) });
+      try {
+        const response = await this.client.api.post("/issue", {
+          fields: {
+            project: { key: this.config.projectKey },
+            summary: item.title,
+            issuetype: { name: this.config.testCaseIssueType || "Task" },
+            description: `Objective:\n${item.objective}\n\nCategory: ${item.category}`,
+            priority: { name: mapQaPriorityToJiraPriority(item.priority) },
+            labels: [
+              "qa-buddy",
+              "test-case",
+              item.category.toLowerCase().replace(/\s+/g, "-"),
+            ],
+          },
+        });
+        const issueKey = response.data.key as string;
+        created.push({ key: issueKey, url: this.client.issueUrl(issueKey) });
+      } catch (err) {
+        // Rollback: delete previously created issues
+        for (const c of created) {
+          try {
+            await this.client.api.delete(`/issue/${c.key}`);
+          } catch { /* best-effort rollback */ }
+        }
+        throw err;
+      }
     }
 
     return created;
@@ -545,7 +604,8 @@ export class JiraService {
   async getUqaIssues(
     fieldId: string,
     searchMode: "productTester" | "assignee" | "both" = "both",
-    projectKeys: string[] = []
+    projectKeys: string[] = [],
+    onProgress?: (current: number, total: number, message: string) => void
   ): Promise<import("@shared/types").UqaIssue[]> {
     this.assertConfigured();
     const num = fieldId.replace(/^customfield_/i, "");
@@ -586,7 +646,12 @@ export class JiraService {
     const today = new Date().toISOString().slice(0, 10);
     const results: import("@shared/types").UqaIssue[] = [];
 
-    for (const issue of issues) {
+    onProgress?.(0, issues.length, "Mengambil daftar issue...");
+    
+    for (let i = 0; i < issues.length; i++) {
+      const issue = issues[i];
+      onProgress?.(i, issues.length, `Memproses ${issue.key} (${i + 1}/${issues.length})...`);
+      
       const detail = await this.client.getIssueDetail(issue.key);
       if (!detail) continue;
 
@@ -609,6 +674,8 @@ export class JiraService {
       });
     }
 
+    onProgress?.(issues.length, issues.length, "Menyimpan ke store...");
+    
     return results;
   }
 
@@ -640,6 +707,10 @@ export class JiraService {
     const links = await this.client.getIssueLinks(issueKey);
 
     const phases: PhaseTestSummary[] = [];
+
+    if (links.length === 0) {
+      return { date, activity: [], phases, generatedNotes: "", noLinksFound: true };
+    }
 
     for (const link of links) {
       const phase = detectPhaseFromName(link.summary);
@@ -703,17 +774,13 @@ export class JiraService {
       return [];
     }
 
-    const preview = text.length > 200 ? text.slice(0, 200) + "..." : text;
-    console.log(`[UQA parseUqaTable] source=${source} textLength=${text.length} preview=`, preview);
 
     // Try HTML table first (backup for HTML-stored descriptions)
     const tableMatch = text.match(/<table\s+class="confluenceTable">(.*?)<\/table>/s);
     if (tableMatch) {
-      console.log(`[UQA parseUqaTable] HTML path: ${tableMatch[1].length} chars`);
       return this.parseHtmlUqaTable(tableMatch[1]);
     }
 
-    console.log(`[UQA parseUqaTable] Wiki path`);
     return this.parseWikiUqaTable(text);
   }
 
@@ -803,8 +870,6 @@ export class JiraService {
       if (match2) {
         const dateStr = this.normalizeUqaDate(match2[1]);
         if (dateStr) entries.push({ date: dateStr, activity: match2[2].trim() });
-      } else {
-        console.log("[UQA parseUqaTable] FAILED row:", JSON.stringify(row).slice(0, 500));
       }
     }
     return entries;

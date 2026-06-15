@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import ReactDOM from "react-dom";
 import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
+import type { ExtractionDepth } from "@shared/types";
 
 export default function ManualTestCaseScreen() {
   const {
@@ -76,6 +77,18 @@ export default function ManualTestCaseScreen() {
     setShowManualDuplicateModal,
     checkManualDuplicate,
     confirmManualSubmitWithDuplicates,
+    extractUrl,
+    setExtractUrl,
+    extractDepth,
+    setExtractDepth,
+    extractLoading,
+    extractCases,
+    extractedCases,
+    setExtractedCases,
+    exportCases,
+    exportLoading,
+    extractMeta,
+    extractionProgress,
   } = useApp();
 
   const flattenFolderOptions = useMemo(() => {
@@ -124,8 +137,8 @@ export default function ManualTestCaseScreen() {
   return (
     <section style={{ maxWidth: 1000, margin: "0 auto", paddingBottom: 100 }}>
       <div style={{ marginBottom: 32 }}>
-        <h2 className="text-display">Manual Test Case</h2>
-        <p className="text-body-lg">Manage, create, and organize your manual test repository.</p>
+        <h2 className="text-display">Test Cases</h2>
+        <p className="text-body-lg">Create, organize, extract, and sync your manual test repository.</p>
         
         <div style={{ display: 'flex', gap: 24, marginTop: 24, borderBottom: '1px solid var(--outline-variant)' }}>
           <button 
@@ -184,6 +197,25 @@ export default function ManualTestCaseScreen() {
           >
             <span className="material-symbols" style={{ fontSize: 20 }}>cloud_sync</span>
             Update from Confluence
+          </button>
+          <button 
+            onClick={() => setManualTab("extractor")}
+            style={{ 
+              padding: '12px 4px', 
+              background: 'none', 
+              border: 'none', 
+              borderBottom: manualTab === "extractor" ? '2px solid var(--primary)' : '2px solid transparent',
+              color: manualTab === "extractor" ? 'var(--primary)' : 'var(--on-surface-variant)',
+              fontWeight: manualTab === "extractor" ? 600 : 400,
+              cursor: 'pointer',
+              fontSize: 14,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}
+          >
+            <span className="material-symbols" style={{ fontSize: 20 }}>auto_awesome</span>
+            AI Extractor
           </button>
         </div>
       </div>
@@ -804,6 +836,170 @@ export default function ManualTestCaseScreen() {
                   <p>Pastikan tabel Confluence memiliki format: <strong>No. Test Case</strong>, <strong>Scenario</strong> (mengandung link Jira issue), <strong>Steps</strong>, <strong>Expected Result</strong>.</p>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manualTab === "extractor" && (
+        <div className="extraction-grid">
+          <div className="bug-preview-col">
+            <div className="extractor-bento-card">
+              <div className="extractor-header">
+                <div className="extractor-title-group">
+                  <div className="extractor-icon-box" style={{ width: 32, height: 32 }}>
+                    <span className="material-symbols" style={{ fontSize: 18 }}>auto_awesome</span>
+                  </div>
+                  <div className="extractor-title-text">
+                    <h3 style={{ fontSize: 16, margin: 0 }}>AI Extractor</h3>
+                    <p style={{ fontSize: 12, margin: 0 }}>Analyze Confluence docs</p>
+                  </div>
+                </div>
+                <div className="ollama-badge">
+                  <span className="material-symbols" style={{ fontSize: 11 }}>memory</span>
+                  <span>Powered by Ollama</span>
+                </div>
+              </div>
+
+              <div className="bug-form-fields" style={{ marginBottom: 24 }}>
+                <label>
+                  <span>Confluence Page URL</span>
+                  <input
+                    onChange={(event) => setExtractUrl(event.target.value)}
+                    placeholder="https://confluence.company.com/pages/..."
+                    type="url"
+                    value={extractUrl}
+                  />
+                </label>
+                <label>
+                  <span>Extraction Depth</span>
+                  <select
+                    onChange={(event) => setExtractDepth(event.target.value as ExtractionDepth)}
+                    value={extractDepth}
+                  >
+                    <option value="comprehensive">Comprehensive (Positive & Negative)</option>
+                    <option value="happy-path">Happy Path Only</option>
+                    <option value="edge-case">Edge Cases Focused</option>
+                  </select>
+                </label>
+              </div>
+
+              <button
+                className="primary-button"
+                onClick={() => void extractCases()}
+                disabled={extractLoading}
+                style={{ width: "100%", marginTop: "auto" }}
+                type="button"
+              >
+                <span className="material-symbols" style={{ fontSize: 18 }}>model_training</span>
+                {extractLoading ? "Extracting..." : "Extract Test Cases"}
+              </button>
+              {extractLoading && extractionProgress && (
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--on-surface-variant)" }}>
+                    <span className="material-symbols" style={{ fontSize: 16, animation: "spin 1s linear infinite" }}>sync</span>
+                    {extractionProgress}
+                  </div>
+                  <button
+                    className="chip"
+                    onClick={() => { window.qaBuddy.cancelRequest("extract"); }}
+                    type="button"
+                    style={{ alignSelf: "flex-start" }}
+                  >
+                    <span className="material-symbols" style={{ fontSize: 14 }}>close</span> Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="results-panel">
+            <div className="results-toolbar">
+              <div className="results-title-group">
+                <h3 style={{ fontSize: 20, fontWeight: 600 }}>Extraction Results</h3>
+                {extractMeta && (
+                  <span style={{ fontSize: 12, color: "var(--on-surface-variant)", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={extractMeta.title}>
+                    dari: {extractMeta.title}
+                  </span>
+                )}
+                <span className="count-badge">{extractedCases.length} Items</span>
+                {extractMeta?.isFallback && (
+                  <span className="chip" style={{ fontSize: 11, color: "#f59e0b", border: "1px solid #f59e0b", padding: "2px 8px" }}>
+                    Rule-Based (Ollama offline)
+                  </span>
+                )}
+              </div>
+              <div className="toolbar-actions" style={{ display: "flex", gap: 8 }}>
+                {extractedCases.length > 0 && (
+                  <>
+                    <button className="chip" onClick={() => setExtractedCases((prev) => prev.map((c) => ({ ...c, selected: true })))} type="button">Select All</button>
+                    <button className="chip" onClick={() => setExtractedCases((prev) => prev.map((c) => ({ ...c, selected: false })))} type="button">Deselect All</button>
+                  </>
+                )}
+                <button
+                  className="primary-button"
+                  onClick={() => void exportCases()}
+                  disabled={exportLoading}
+                  style={{ background: "var(--inverse-surface)", color: "var(--inverse-on-surface)", borderColor: "var(--inverse-surface)", opacity: exportLoading ? 0.5 : 1, cursor: exportLoading ? "not-allowed" : "pointer" }}
+                  type="button"
+                >
+                  <span className="material-symbols" style={{ fontSize: 18 }}>integration_instructions</span>
+                  {exportLoading ? "Exporting..." : "Export to Jira"}
+                </button>
+              </div>
+            </div>
+
+            <div className="case-item-list">
+              {extractedCases.length > 0 ? (
+                extractedCases.map((item) => (
+                  <label className="case-item-row" key={item.id}>
+                    <div className="checkbox-box">
+                      <input
+                        checked={item.selected}
+                        onChange={(event) =>
+                          setExtractedCases((current) =>
+                            current.map((entry) =>
+                              entry.id === item.id ? { ...entry, selected: event.target.checked } : entry
+                            )
+                          )
+                        }
+                        type="checkbox"
+                      />
+                    </div>
+                    <div className="content">
+                      <div className="header">
+                        <h4>{item.title}</h4>
+                        <span className="priority-pill">{item.priority}</span>
+                      </div>
+                      <p className="desc">{item.objective}</p>
+                      <div className="tag-box">
+                        <span className="case-tag">
+                          <span
+                            className="tag-dot"
+                            style={{
+                              background:
+                                item.category === "Functional"
+                                  ? "#10b981"
+                                  : item.category === "UI/UX"
+                                  ? "#f59e0b"
+                                  : item.category === "Security"
+                                  ? "#ef4444"
+                                  : item.category === "Error Handling"
+                                  ? "#8b5cf6"
+                                  : "#3b82f6",
+                            }}
+                          ></span>
+                          {item.category}
+                        </span>
+                      </div>
+                    </div>
+                  </label>
+                ))
+              ) : (
+                <div className="bug-preview-placeholder" style={{ padding: 24, border: "none" }}>
+                  Start extraction to see results here...
+                </div>
+              )}
             </div>
           </div>
         </div>

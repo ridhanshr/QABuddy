@@ -99,6 +99,13 @@ export interface PerIssueReminder {
   remindDays?: number[];
 }
 
+export interface UqaSyncProgress {
+  status: "fetching" | "processing" | "saving" | "done" | "error";
+  message: string;
+  current: number;
+  total: number;
+}
+
 export interface UqaConfig {
   enabled: boolean;
   remindTime: string;
@@ -119,6 +126,9 @@ export interface AppConfig {
     language: string;
   };
   uqa: UqaConfig;
+  dashboard: {
+    projects: DashboardProjectConfig[];
+  };
 }
 
 export interface ConnectionStatusItem {
@@ -168,11 +178,36 @@ export interface BugMetrics {
   epicTasksResolved: number;
 }
 
+export interface DashboardProjectConfig {
+  projectKey: string;
+  issueType: string;
+  customJql?: string;
+  excludeLabels: string[];
+  includeLabels: string[];
+  excludeStatuses: string[];
+  includeStatuses: string[];
+  enabled: boolean;
+}
+
+export interface DashboardProjectData {
+  bugMetrics: BugMetrics;
+  readyForQa: JiraIssueSummary[];
+}
+
+export interface ProjectInsightRequest {
+  projectKey: string;
+  bugMetrics: BugMetrics;
+  readyForQa: JiraIssueSummary[];
+  sprintReport?: SprintReport | null;
+}
+
 export interface DashboardDigest {
   insight: string;
   readyForQa: JiraIssueSummary[];
   bugMetrics: BugMetrics;
+  projects: Record<string, DashboardProjectData>;
   sprintReport?: SprintReport;
+  isDemo?: boolean;
 }
 
 export interface ConfluencePageSummary {
@@ -242,6 +277,7 @@ export interface ExtractedTestCaseResult {
   pageTitle: string;
   sourceUrl: string;
   testCases: ExtractedTestCase[];
+  isFallback?: boolean;
 }
 
 export interface ManualTestCase {
@@ -378,6 +414,7 @@ export interface DesktopApi {
   testConnections: () => Promise<ConnectionStatus>;
   healthcheck: () => Promise<any>;
   getDashboard: (options?: { skipInsight?: boolean }) => Promise<DashboardDigest>;
+  getProjectInsight: (request: ProjectInsightRequest) => Promise<string>;
   askAssistant: (prompt: string, history?: ChatHistoryMessage[]) => Promise<ChatResponse>;
   polishBugReport: (draft: BugFormDraft) => Promise<BugPreview>;
   createBug: (draft: BugFormDraft, preview: BugPreview) => Promise<{ key: string; url: string }>;
@@ -438,12 +475,17 @@ export interface DesktopApi {
   transitionUqaIssue: (issueKey: string, transitionId: string) => Promise<void>;
   onUqaReminder: (callback: (issueKey: string, summary: string) => void) => () => void;
   checkUqaOnStartup: () => Promise<UqaIssue[]>;
+  cancelRequest: (requestId: string) => void;
+  onExtractionProgress: (callback: (msg: string) => void) => () => void;
   getUqaField: () => Promise<{ id: string; name: string; type: string; isCustom: boolean } | null>;
   updateUqaSchedule: (config: UqaConfig) => Promise<void>;
   getUqaSchedule: () => Promise<UqaConfig>;
   autoGenerateUqaNotes: (issueKey: string) => Promise<AutoUqaGeneratedPayload>;
   getPerUqaReminder: (issueKey: string) => Promise<PerIssueReminder | null>;
   updatePerUqaReminder: (issueKey: string, reminder: PerIssueReminder) => Promise<void>;
+  getUqaIssuesFromStore: () => Promise<UqaIssue[]>;
+  syncUqaIssues: () => Promise<UqaIssue[]>;
+  onUqaSyncProgress: (callback: (progress: UqaSyncProgress) => void) => () => void;
   // Defect Repository
   getDefectSources: () => Promise<JiraProjectSource[]>;
   saveDefectSource: (source: JiraProjectSource) => Promise<JiraProjectSource[]>;
@@ -588,6 +630,7 @@ export interface AutoUqaGeneratedPayload {
   activity: string[];
   phases: PhaseTestSummary[];
   generatedNotes: string;
+  noLinksFound?: boolean;
 }
 
 export interface UqaIssueLink {
@@ -757,6 +800,21 @@ export const ollamaConfigSchema = z.object({
   defectExplanationModel: z.string().optional(),
 });
 
+export const uqaConfigSchema = z.object({
+  enabled: z.boolean(),
+  remindTime: z.string(),
+  remindDays: z.array(z.number()),
+  productTesterFieldId: z.string().nullable(),
+  lastNotifiedDate: z.record(z.string()),
+  perIssueReminders: z.record(z.object({
+    enabled: z.boolean(),
+    remindTime: z.string().optional(),
+    remindDays: z.array(z.number()).optional(),
+  })),
+  searchMode: z.enum(["productTester", "assignee", "both"]),
+  projectKeys: z.array(z.string()),
+});
+
 export const appConfigSchema = z.object({
   jira: jiraConfigSchema,
   confluence: confluenceConfigSchema,
@@ -764,6 +822,18 @@ export const appConfigSchema = z.object({
   preferences: z.object({
     theme: themeSchema,
     language: z.string(),
+  }),
+  uqa: uqaConfigSchema,
+  dashboard: z.object({
+      projects: z.array(z.object({
+        projectKey: z.string(),
+        issueType: z.string(),
+        excludeLabels: z.array(z.string()),
+        includeLabels: z.array(z.string()),
+        excludeStatuses: z.array(z.string()),
+        includeStatuses: z.array(z.string()),
+        enabled: z.boolean(),
+      })),
   }),
 });
 
@@ -822,5 +892,8 @@ export const defaultConfig: AppConfig = {
     perIssueReminders: {},
     searchMode: "both",
     projectKeys: [],
+  },
+  dashboard: {
+    projects: [],
   },
 };

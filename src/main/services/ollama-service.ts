@@ -1,12 +1,14 @@
 import type {
   BugFormDraft,
+  BugMetrics,
   BugPreview,
   ChatHistoryMessage,
   ExtractedTestCase,
   ExtractionDepth,
+  JiraIssueSummary,
   OllamaConfig,
 } from "@shared/types";
-import { extractJsonBlock, fallbackBugPreview } from "./utils";
+import { extractJsonBlock, fallbackBugPreview, validateBugPreview } from "./utils";
 import { logger } from "./logger";
 import { OllamaClient } from "./ollama/ollama-client";
 import {
@@ -56,7 +58,11 @@ export class OllamaService {
     const prompt = getBugPolishPrompt(draft);
 
     const response = await this.generateJson<BugPreview>(prompt, undefined, this.modelFor("default"));
-    return response ?? fallback;
+    if (response) {
+      const validated = validateBugPreview(response);
+      if (validated) return validated;
+    }
+    return fallback;
   }
 
   async generateJql(
@@ -303,6 +309,13 @@ export class OllamaService {
     const prompt = getDashboardInsightPrompt(serializedData);
     const response = await this.client.generateText(prompt, undefined, 0.4, this.modelFor("insight"));
     return response || "Belum ada insight AI. Periksa koneksi Ollama untuk analisis yang lebih akurat.";
+  }
+
+  async getProjectInsight(projectKey: string, bugMetrics: BugMetrics, readyForQa: JiraIssueSummary[]): Promise<string> {
+    const data = JSON.stringify({ projectKey, bugMetrics, readyForQa });
+    const prompt = getDashboardInsightPrompt(data);
+    const response = await this.client.generateText(prompt, undefined, 0.4, this.modelFor("insight"));
+    return response || "";
   }
 
   async extractTestCases(

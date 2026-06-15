@@ -5,8 +5,6 @@ import { AppProvider, useApp } from "./context/AppContext";
 import NavigationButton, { NavItem } from "./components/NavigationButton";
 import Dashboard from "./screens/Dashboard";
 import ChatAssistant from "./screens/ChatAssistant";
-import BugReport from "./screens/BugReport";
-import TestCaseExtractor from "./screens/TestCaseExtractor";
 import ManualTestCaseScreen from "./screens/ManualTestCaseScreen";
 import DocumentationSync from "./screens/DocumentationSync";
 import AdvancedJiraOrganizer from "./screens/AdvancedJiraOrganizer";
@@ -19,9 +17,7 @@ import DefectRepository from "./screens/DefectRepository";
 const primaryNavigation: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: "grid_view", filledIcon: "grid_view" },
   { key: "chat-assistant", label: "Chat Assistant", icon: "chat_spark", filledIcon: "chat_spark" },
-  { key: "bug-report", label: "Bug Report", icon: "bug_report", filledIcon: "bug_report" },
-  { key: "test-case-extractor", label: "Test Case Extractor", icon: "terminal", filledIcon: "terminal" },
-  { key: "manual-test-case", label: "Manual Test Case", icon: "assignment", filledIcon: "assignment" },
+  { key: "manual-test-case", label: "Test Cases", icon: "assignment", filledIcon: "assignment" },
   { key: "documentation-sync", label: "Documentation Sync", icon: "description", filledIcon: "description" },
   { key: "advanced-jira-organizer", label: "Advanced Jira Organizer", icon: "account_tree", filledIcon: "account_tree" },
   { key: "daily-uqa", label: "Daily UQA", icon: "edit_note", filledIcon: "edit_note" },
@@ -184,8 +180,6 @@ function AppContent() {
             <>
               {activeView === "dashboard" && <Dashboard />}
               {activeView === "chat-assistant" && <ChatAssistant />}
-              {activeView === "bug-report" && <BugReport />}
-              {activeView === "test-case-extractor" && <TestCaseExtractor />}
               {activeView === "manual-test-case" && <ManualTestCaseScreen />}
               {activeView === "documentation-sync" && <DocumentationSync />}
               {activeView === "advanced-jira-organizer" && <AdvancedJiraOrganizer />}

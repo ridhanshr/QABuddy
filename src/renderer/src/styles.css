@@ -348,6 +348,12 @@ a:hover { color: color-mix(in srgb, var(--tertiary) 80%, white); }
   display: inline-flex; align-items: center; justify-content: center;
 }
 .icon-button:hover { color: var(--tertiary); background: var(--surface-container-low); }
+.icon-btn {
+  background: transparent; border: none; cursor: pointer; color: var(--on-surface-variant);
+  width: 36px; height: 36px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.icon-btn:hover { background: var(--surface-container-low); color: var(--tertiary); }
 .status-divider { width: 1px; height: 32px; background: var(--outline-variant); }
 .profile-chip { display: flex; align-items: center; gap: var(--margin-sm); font-size: 12px; font-weight: 500; color: var(--on-surface-variant); }
 .profile-avatar {
@@ -433,14 +439,6 @@ a:hover { color: color-mix(in srgb, var(--tertiary) 80%, white); }
 .table-metrics { display: flex; gap: 12px; }
 .link-button { padding: 0; background: transparent; color: var(--primary); font-size: 13px; font-family: monospace; }
 .link-button:hover { text-decoration: underline; }
-
-/* ── Chat (Mockup-Accurate 3-Panel Layout) ── */
-.chat-layout {
-  display: flex; gap: 0; height: calc(100vh - 64px);
-  margin: calc(var(--gutter) * -1); /* bleed to edges */
-}
-.chat-center { flex: 1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--outline-variant); background: var(--surface); }
-.chat-history { flex: 1; overflow-y: auto; padding: var(--gutter); display: flex; flex-direction: column; gap: 24px; }
 
 /* System greeting pill */
 .chat-greeting { display: flex; justify-content: center; }
@@ -804,8 +802,6 @@ textarea { resize: vertical; }
 .status-card-grid, .status-card, .status-card-head { display: none; }
 
 /* ── Chat Assistant (Premium UI) ── */
-.chat-layout { display: grid; grid-template-columns: 1fr 320px; height: calc(100vh - 64px); background: var(--surface); overflow: hidden; }
-.chat-center { display: flex; flex-direction: column; height: 100%; border-right: 1px solid var(--outline-variant); background: var(--surface); position: relative; }
 
 .chat-history { flex: 1; overflow-y: auto; padding: var(--margin-md); display: flex; flex-direction: column; gap: 24px; }
 .chat-greeting { display: flex; justify-content: center; margin-bottom: 8px; }
@@ -859,7 +855,7 @@ textarea { resize: vertical; }
   border-radius: 999px; padding: 6px 16px; font-size: 13px; color: var(--on-surface);
   cursor: pointer; transition: all 0.2s;
 }
-.chip:hover { background: var(--surface-container); border-color: var(--primary); color: var(--primary); }
+.chip:hover, .chip-active { background: var(--surface-container); border-color: var(--primary); color: var(--primary); }
 
 .chat-input-container { padding: var(--margin-md); border-top: 1px solid var(--outline-variant); background: var(--surface-container-lowest); }
 .chat-input-wrapper { 
@@ -1039,11 +1035,11 @@ textarea { resize: vertical; }
 }
 
 /* ── Chat Assistant ── */
-.chat-layout { display: flex; gap: 0; height: calc(100vh - 64px); overflow: hidden; background: var(--background); }
+.chat-layout { display: flex; gap: 0; height: 100%; overflow: hidden; background: var(--background); }
 .chat-center { flex: 1; display: flex; flex-direction: column; background: var(--background); min-width: 0; border-right: 1px solid var(--outline-variant); }
 .chat-history { 
-  flex: 1; overflow-y: auto; padding: var(--margin-md); 
-  display: flex; flex-direction: column; gap: 24px;
+  flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--margin-md); 
+  display: flex; flex-direction: column; gap: 16px;
 }
 .chat-greeting { display: flex; justify-content: center; margin-bottom: 8px; }
 .chat-greeting-pill { 
@@ -1096,7 +1092,7 @@ textarea { resize: vertical; }
   padding: 6px 12px; font-size: 13px; color: var(--tertiary); cursor: pointer; transition: all 0.15s ease;
   font-family: var(--font-body); font-weight: 500;
 }
-.chip:hover { 
+.chip:hover, .chip-active { 
   background: rgba(8, 87, 195, 0.08); 
   border-color: var(--tertiary); 
 }

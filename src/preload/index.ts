@@ -23,6 +23,7 @@ import type {
   ManualTestCase,
   RagIndexProgress,
   RagStats,
+  UqaSyncProgress,
   StepConflictCheck,
   StepConflictMode,
   TestCaseExecution,
@@ -45,6 +46,7 @@ import type {
   DefectRepositoryStats,
   DuplicateCandidate,
   DefectCreateDraft,
+  ProjectInsightRequest,
 } from "@shared/types";
 
 const api: DesktopApi = {
@@ -53,6 +55,7 @@ const api: DesktopApi = {
   testConnections: () => ipcRenderer.invoke("testConnections") as Promise<ConnectionStatus>,
   healthcheck: () => ipcRenderer.invoke("healthcheck") as Promise<any>,
   getDashboard: (options?: { skipInsight?: boolean }) => ipcRenderer.invoke("getDashboard", options) as Promise<DashboardDigest>,
+  getProjectInsight: (request: ProjectInsightRequest) => ipcRenderer.invoke("getProjectInsight", request) as Promise<string>,
   askAssistant: (prompt: string, history?: ChatHistoryMessage[]) =>
     ipcRenderer.invoke("askAssistant", prompt, history) as Promise<ChatResponse>,
   polishBugReport: (draft: BugFormDraft) =>
@@ -168,6 +171,15 @@ const api: DesktopApi = {
     ipcRenderer.invoke("updateUqaSchedule", config) as Promise<void>,
   getUqaSchedule: () =>
     ipcRenderer.invoke("getUqaSchedule") as Promise<UqaConfig>,
+  getUqaIssuesFromStore: () =>
+    ipcRenderer.invoke("getUqaIssuesFromStore") as Promise<UqaIssue[]>,
+  syncUqaIssues: () =>
+    ipcRenderer.invoke("syncUqaIssues") as Promise<UqaIssue[]>,
+  onUqaSyncProgress: (callback: (progress: UqaSyncProgress) => void) => {
+    const handler = (_: any, progress: UqaSyncProgress) => callback(progress);
+    ipcRenderer.on("uqa-sync-progress", handler);
+    return () => ipcRenderer.removeListener("uqa-sync-progress", handler);
+  },
   getPerUqaReminder: (issueKey: string) =>
     ipcRenderer.invoke("getPerUqaReminder", issueKey) as Promise<import("@shared/types").PerIssueReminder | null>,
   updatePerUqaReminder: (issueKey: string, reminder: import("@shared/types").PerIssueReminder) =>
@@ -186,6 +198,14 @@ const api: DesktopApi = {
   removeDuplicateDefectLink: (id: string) => ipcRenderer.invoke("removeDuplicateDefectLink", id) as Promise<void>,
   getDefectStats: () => ipcRenderer.invoke("getDefectStats") as Promise<DefectRepositoryStats>,
   reindexAllDefects: () => ipcRenderer.invoke("reindexAllDefects") as Promise<void>,
+  cancelRequest: (requestId: string) => {
+    ipcRenderer.send("cancel-request", requestId);
+  },
+  onExtractionProgress: (callback: (msg: string) => void) => {
+    const handler = (_: any, msg: string) => callback(msg);
+    ipcRenderer.on("extraction-progress", handler);
+    return () => ipcRenderer.removeListener("extraction-progress", handler);
+  },
   // OCR
   ocrExtractFromFile: (filePath: string) =>
     ipcRenderer.invoke("ocrExtractFromFile", filePath) as Promise<import("@shared/types").OcrResult | null>,

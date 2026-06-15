@@ -134,6 +134,23 @@ export function fallbackBugPreview(draft: BugFormDraft): BugPreview {
   };
 }
 
+export function validateBugPreview(raw: unknown): BugPreview | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.summary !== "string") return null;
+  if (typeof obj.description !== "string") return null;
+  const priority = typeof obj.priority === "string" ? obj.priority : "Medium";
+  let labels: string[];
+  if (Array.isArray(obj.labels)) {
+    labels = obj.labels.filter((l): l is string => typeof l === "string");
+  } else if (typeof obj.labels === "string") {
+    labels = obj.labels.split(",").map((l) => l.trim()).filter(Boolean);
+  } else {
+    labels = [];
+  }
+  return { summary: obj.summary, description: obj.description, priority, labels };
+}
+
 export function fallbackTestCases(
   bodyText: string,
   depth: string

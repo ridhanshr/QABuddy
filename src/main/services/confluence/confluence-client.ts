@@ -28,6 +28,17 @@ export class ConfluenceClient {
     return response.data;
   }
 
+  async getPageByTitle(spaceKey: string, title: string) {
+    const response = await this.client().get(
+      `/content?spaceKey=${spaceKey}&title=${encodeURIComponent(title)}&expand=body.storage,body.view,version,space`,
+      { timeout: 120000 }
+    );
+    if (response.data?.results && response.data.results.length > 0) {
+      return response.data.results[0];
+    }
+    throw new Error(`Page not found with title "${title}" in space "${spaceKey}".`);
+  }
+
   async uploadAttachment(pageId: string, filename: string, base64Data: string) {
     const formData = new FormData();
     const buffer = Buffer.from(base64Data.split(",")[1], "base64");

@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { marked } from "marked";
 import { useApp } from "../context/AppContext";
 
 const quickPrompts = [
@@ -12,6 +13,7 @@ export default function ChatAssistant() {
     loading,
     status,
     chatMessages,
+    setChatMessages,
     chatPrompt,
     setChatPrompt,
     submitChat,
@@ -21,6 +23,12 @@ export default function ChatAssistant() {
     setBanner,
     recentSummaries
   } = useApp();
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, chatLoading]);
 
   if (loading || activeView !== "chat-assistant") {
     return null;
@@ -32,10 +40,21 @@ export default function ChatAssistant() {
       <div className="chat-center">
         <div className="chat-history">
           {/* System Greeting */}
-          <div className="chat-greeting">
+          <div className="chat-greeting" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <div className="chat-greeting-pill">
               Chat session started • {status.jira.ok && status.confluence.ok ? "Jira & Confluence Connected" : "Waiting for connection..."}
             </div>
+            {chatMessages.length > 1 && (
+              <button
+                className="icon-btn"
+                onClick={() => setChatMessages([chatMessages[0]])}
+                title="Clear chat"
+                type="button"
+                style={{ width: 28, height: 28, fontSize: 16, color: "var(--on-surface-variant)" }}
+              >
+                <span className="material-symbols">delete_sweep</span>
+              </button>
+            )}
           </div>
 
           {/* Messages */}
@@ -48,7 +67,11 @@ export default function ChatAssistant() {
               )}
               <div className={`chat-bubble ${message.role === "user" ? "user-bubble" : "ai-bubble"}`}>
                 <div className="bubble-content">
-                  <p>{message.text}</p>
+                  {message.role === "assistant" ? (
+                    <div className="markdown-body" dangerouslySetInnerHTML={{ __html: marked.parse(message.text, { breaks: true }) as string }} />
+                  ) : (
+                    <p>{message.text}</p>
+                  )}
                   
                   {message.role === "user" && message.attachments && message.attachments.length > 0 && (
                     <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -58,6 +81,21 @@ export default function ChatAssistant() {
                           {att}
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {message.role === "assistant" && !message.response && index === chatMessages.length - 1 && (
+                    <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                      <button
+                        className="chip"
+                        onClick={() => {
+                          const lastUser = [...chatMessages].reverse().find(m => m.role === "user");
+                          if (lastUser) void submitChat(lastUser.text);
+                        }}
+                        type="button"
+                      >
+                        <span className="material-symbols" style={{ fontSize: 14 }}>refresh</span> Coba lagi
+                      </button>
                     </div>
                   )}
 
@@ -114,8 +152,23 @@ export default function ChatAssistant() {
             </div>
           ))}
 
+          {/* Typing indicator */}
+          {chatLoading && (
+            <div className="chat-message-row ai-row">
+              <div className="ai-avatar">
+                <span className="material-symbols">robot_2</span>
+              </div>
+              <div className="chat-bubble ai-bubble" style={{ display: "flex", alignItems: "center", gap: 4, padding: "12px 20px" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--tertiary)", animation: "pulse 1.2s infinite" }} />
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--tertiary)", animation: "pulse 1.2s infinite 0.2s" }} />
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--tertiary)", animation: "pulse 1.2s infinite 0.4s" }} />
+              </div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+
           {/* Suggestion Chips */}
-          {chatMessages.length < 3 && (
+          {chatMessages.length <= 3 && (
             <div className="suggestion-row" style={{ marginLeft: 44 }}>
               {quickPrompts.map((prompt) => (
                 <button 
@@ -191,8 +244,8 @@ export default function ChatAssistant() {
                 }
               }}
               placeholder="Tanya apa saja tentang Jira atau Confluence..."
-              rows={1}
-              style={{ resize: "none" }}
+              rows={3}
+              style={{ resize: "vertical", minHeight: 44 }}
               value={chatPrompt}
             />
             <button className="chat-input-send" onClick={() => void submitChat()} type="button">
@@ -219,22 +272,28 @@ export default function ChatAssistant() {
         <div className="sidebar-content">
           {recentSummaries.length > 0 ? (
             recentSummaries.map((summary, index) => {
-              const page = summary.response!.pages![0];
+              const page = summary.response?.pages?.[0];
               return (
                 <div className="summary-card" key={`summary-${index}`}>
                   <div className="card-top">
                     <span className="type">Confluence Doc</span>
                     <span className="time">Just now</span>
                   </div>
-                  <h4>{page.title}</h4>
+                  {page ? (
+                  <>
+                    <h4>{page.title}</h4>
+                    <p>{summary.text.length > 80 ? summary.text.slice(0, 80) + "..." : summary.text}</p>
+                    <div 
+                      className="card-hover-action" 
+                      onClick={() => void window.qaBuddy.openExternal(page.url)}
+                    >
+                      <span className="material-symbols">arrow_forward</span>
+                      <span>View Full Doc</span>
+                    </div>
+                  </>
+                ) : (
                   <p>{summary.text.length > 80 ? summary.text.slice(0, 80) + "..." : summary.text}</p>
-                  <div 
-                    className="card-hover-action" 
-                    onClick={() => void window.qaBuddy.openExternal(page.url)}
-                  >
-                    <span className="material-symbols">arrow_forward</span>
-                    <span>View Full Doc</span>
-                  </div>
+                )}
                 </div>
               );
             })

@@ -395,6 +395,9 @@ export function getTestCaseExtractionPrompt(
 
   promptParts.push("");
   promptParts.push("=== REQUIREMENT TEXT TO ANALYZE ===");
+  if (content.length > 20000) {
+    console.warn("[Prompt] Confluence content truncated from", content.length, "to 20000 chars");
+  }
   promptParts.push(content.slice(0, 20000));
 
   return promptParts.join("\n");

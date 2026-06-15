@@ -10,12 +10,14 @@ import type {
   ConfluenceTestImportEntry,
   ConnectionStatus,
   DashboardDigest,
+  DashboardProjectData,
   ExtractedTestCase,
   ExtractionDepth,
   DefectCreateDraft,
   IntentClassification,
   JiraBoard,
   JiraIssueSummary,
+  BugMetrics,
   JiraProject,
   JiraSprint,
   JiraStatus,
@@ -23,6 +25,7 @@ import type {
   ManualTestCase,
   OcrResult,
   ParseConfluenceEntriesOptions,
+  ProjectInsightRequest,
   StepConflictCheck,
   StepConflictMode,
   UpdateProgress,
@@ -30,7 +33,6 @@ import type {
   XrayFolder,
   FetchTestStepsResult,
 } from "@shared/types";
-import { defaultConfig } from "@shared/types";
 import { ConfluenceService } from "./confluence-service";
 import { JiraService } from "./jira-service";
 import { OllamaService } from "./ollama-service";
@@ -39,10 +41,11 @@ import { IntentRouter } from "./intent-router";
 import { OcrService } from "./ocr-service";
 import { RagService } from "./rag-service";
 import { logger } from "./logger";
-import { stripHtml } from "./utils";
+import { stripHtml, fallbackBugPreview } from "./utils";
 
 function demoDashboard(): DashboardDigest {
   return {
+    isDemo: true,
     insight: "Hari ini ada peningkatan bug di modul Payment. Hubungkan Jira dan Ollama untuk insight real-time.",
     readyForQa: [
       {
@@ -99,6 +102,7 @@ function demoDashboard(): DashboardDigest {
       doneIssues: 15,
       completionPercent: 54,
     },
+    projects: {},
   };
 }
 
@@ -254,14 +258,35 @@ export class QaService {
 
     const jira = new JiraService(config.jira);
     const ollama = !skipInsight && config.ollama.endpoint ? new OllamaService(config.ollama) : null;
+    const firstProject = config.dashboard?.projects?.find(p => p.enabled);
+    const mainProjectKey = firstProject?.projectKey || "";
+    const mainIssueType = firstProject?.issueType || "";
 
     try {
       const [readyForQa, bugMetrics, sprintReport, recentIssues] = await Promise.all([
-        jira.getReadyForQaIssues(),
-        jira.getBugMetrics(),
-        jira.getSprintReport(),
-        jira.searchIssues(`project = "${config.jira.projectKey}" ORDER BY updated DESC`, 5).catch(() => []),
+        jira.getReadyForQaIssues(mainProjectKey || undefined, mainIssueType || undefined, firstProject?.excludeLabels, firstProject?.includeLabels, firstProject?.excludeStatuses, firstProject?.includeStatuses).catch(() => [] as JiraIssueSummary[]),
+        jira.getBugMetrics(mainProjectKey || undefined, mainIssueType || undefined, firstProject?.excludeLabels, firstProject?.includeLabels, firstProject?.excludeStatuses, firstProject?.includeStatuses).catch(() => ({ totalOpen: 0, critical: 0, high: 0, medium: 0, low: 0, resolvedThisSprint: 0, foundThisSprint: 0, epicTotal: 0, epicCompleted: 0, epicTasksTotal: 0, epicTasksResolved: 0 } as BugMetrics)),
+        jira.getSprintReport().catch(() => null),
+        mainProjectKey
+          ? jira.searchIssues(`project = "${mainProjectKey}"${mainIssueType ? ` AND issuetype = "${mainIssueType}"` : ""} ORDER BY updated DESC`, 5).catch(() => [])
+          : Promise.resolve([]),
       ]);
+
+      // ─── Per-project data from dashboard config ─────────────────────
+      const projects: Record<string, DashboardProjectData> = {};
+      if (config.dashboard?.projects?.length > 0) {
+        for (const pc of config.dashboard.projects.filter(p => p.enabled)) {
+          try {
+            const [pReadyForQa, pBugMetrics] = await Promise.all([
+              jira.getReadyForQaIssues(pc.projectKey, pc.issueType, pc.excludeLabels, pc.includeLabels, pc.excludeStatuses, pc.includeStatuses),
+              jira.getBugMetrics(pc.projectKey, pc.issueType, pc.excludeLabels, pc.includeLabels, pc.excludeStatuses, pc.includeStatuses),
+            ]);
+            projects[pc.projectKey] = { readyForQa: pReadyForQa, bugMetrics: pBugMetrics };
+          } catch (e) {
+            logger.warn("QA", `Failed to fetch project ${pc.projectKey}:`, e);
+          }
+        }
+      }
 
       let insight: string;
       if (ollama) {
@@ -271,21 +296,24 @@ export class QaService {
             bugMetrics,
             sprintReport,
             recentIssues: recentIssues.map((i: any) => ({ key: i.key, summary: i.summary, status: i.status, priority: i.priority })),
-            projectKey: config.jira.projectKey,
+            projectKey: mainProjectKey,
+            projects: Object.keys(projects),
           })
         );
       } else {
         const totalOpen = bugMetrics.totalOpen;
         const readyCount = readyForQa.length;
+        const projectCount = Object.keys(projects).length;
         insight = sprintReport
-          ? `Dashboard ${config.jira.projectKey} — Sprint ${sprintReport.sprintName}: ${sprintReport.completionPercent}% selesai (${sprintReport.completedIssues}/${sprintReport.totalIssues} issue). ${totalOpen} bug terbuka, ${readyCount} siap QA. Hubungkan Ollama untuk insight yang lebih analitis.`
-          : `Dashboard ${config.jira.projectKey} — ${totalOpen} bug terbuka (${bugMetrics.critical} kritis, ${bugMetrics.high} high). ${readyCount} issue siap QA. Hubungkan Ollama untuk insight AI.`;
+          ? `Dashboard ${mainProjectKey} — Sprint ${sprintReport.sprintName}: ${sprintReport.completionPercent}% selesai (${sprintReport.completedIssues}/${sprintReport.totalIssues} issue). ${totalOpen} bug terbuka, ${readyCount} siap QA${projectCount > 0 ? `, ${projectCount} project tambahan dimonitor.` : "."} Hubungkan Ollama untuk insight yang lebih analitis.`
+          : `Dashboard ${mainProjectKey} — ${totalOpen} bug terbuka (${bugMetrics.critical} kritis, ${bugMetrics.high} high). ${readyCount} issue siap QA${projectCount > 0 ? `, ${projectCount} project tambahan dimonitor.` : "."} Hubungkan Ollama untuk insight AI.`;
       }
 
       return {
         insight,
         readyForQa,
         bugMetrics,
+        projects,
         sprintReport: sprintReport || undefined,
       };
     } catch (error) {
@@ -296,6 +324,17 @@ export class QaService {
         insight: "Gagal memuat data Jira. Periksa koneksi Jira di Settings. Menampilkan data demo sementara.",
       };
     }
+  }
+
+  async getProjectInsight(config: AppConfig, request: ProjectInsightRequest): Promise<string> {
+    const ollama = config.ollama.endpoint ? new OllamaService(config.ollama) : null;
+    if (ollama) {
+      const aiInsight = await ollama.getProjectInsight(request.projectKey, request.bugMetrics, request.readyForQa);
+      if (aiInsight) return aiInsight;
+    }
+    const totalOpen = request.bugMetrics.totalOpen;
+    const readyCount = request.readyForQa.length;
+    return `Dashboard ${request.projectKey} — ${totalOpen} bug terbuka (${request.bugMetrics.critical} kritis, ${request.bugMetrics.high} high). ${readyCount} issue siap QA.`;
   }
 
   async askAssistant(config: AppConfig, prompt: string, history: ChatHistoryMessage[] = []): Promise<ChatResponse> {
@@ -354,12 +393,17 @@ export class QaService {
       const jira = new JiraService(config.jira);
       const issues = await jira.searchIssues(`project = "${config.jira.projectKey}" ORDER BY updated DESC`, 3).catch(() => []);
       const jiraSummary = issues.map((i: any) => `${i.key} - "${i.summary}" (${i.status})`).join("; ") || "Tidak ada issue terbaru.";
-      const clarificationAnswer = await ollama.chat(
-        "Anda adalah QA Buddy. User bertanya sesuatu yang tidak jelas arahnya. Berikut data Jira terkini sebagai konteks. Tawarkan bantuan: apakah user ingin mencari tiket Jira, mencari dokumen, atau mengekstrak test case? Jawab dalam Bahasa Indonesia yang ramah.",
-        `Data Jira terkini: ${jiraSummary}\n\nPertanyaan user: ${prompt}`,
-        history,
-        0.5
-      );
+      let clarificationAnswer: string | null = null;
+      try {
+        clarificationAnswer = await ollama.chat(
+          "Anda adalah QA Buddy. User bertanya sesuatu yang tidak jelas arahnya. Berikut data Jira terkini sebagai konteks. Tawarkan bantuan: apakah user ingin mencari tiket Jira, mencari dokumen, atau mengekstrak test case? Jawab dalam Bahasa Indonesia yang ramah.",
+          `Data Jira terkini: ${jiraSummary}\n\nPertanyaan user: ${prompt}`,
+          history,
+          0.5
+        );
+      } catch (e) {
+        logger.warn("QA", "Ollama clarification failed:", e);
+      }
       return { mode: "error", answer: clarificationAnswer || `Saya tidak yakin dengan yang Anda maksud. Apakah Anda ingin:\n1. Mencari tiket Jira?\n2. Mencari dokumen di Knowledge Base?\n3. Mengekstrak test case?\n\nSilakan sebutkan dengan lebih jelas.` };
     }
 
@@ -367,7 +411,7 @@ export class QaService {
       return { mode: "error", answer: "Jira belum dikonfigurasi. Isi URL, auth mode, dan token di Settings untuk mencari tiket." };
     }
 
-    if (!jiraConfigured && intent.route === "confluence" && !confluenceConfigured) {
+    if (intent.route === "confluence" && !confluenceConfigured) {
       return { mode: "error", answer: "Confluence belum dikonfigurasi. Lengkapi koneksi di Settings." };
     }
 
@@ -397,12 +441,17 @@ export class QaService {
         const issuesSummary = issues.map((i: any) =>
           `${i.key} - "${i.summary}" (Status: ${i.status}, Priority: ${i.priority}, Assignee: ${i.assignee}, Type: ${i.type})`
         ).join("; ");
-        const chatAnswer = await ollama.chatJiraFirst(
-          `JQL: ${jql}\nHasil pencarian:\n${issuesSummary}`,
-          prompt,
-          config.jira.projectKey,
-          history
-        );
+        let chatAnswer: string | null = null;
+        try {
+          chatAnswer = await ollama.chatJiraFirst(
+            `JQL: ${jql}\nHasil pencarian:\n${issuesSummary}`,
+            prompt,
+            config.jira.projectKey,
+            history
+          );
+        } catch (e) {
+          logger.warn("QA", "Ollama chatJiraFirst failed:", e);
+        }
         return {
           mode: "jira",
           answer: `Sumber: Jira\n\n${chatAnswer || `Ditemukan ${issues.length} issue.`}`,
@@ -421,7 +470,14 @@ export class QaService {
 
     // ─── Confluence / Knowledge Base Route ──────────────────────────────
     if (intent.route === "confluence") {
-      if (ollama && this.ragService) {
+      if (!ollama) {
+        return {
+          mode: "error",
+          answer: "Ollama (AI) belum dikonfigurasi. Silakan aktifkan dan pilih model Ollama di Settings untuk mencari dokumen di Knowledge Base."
+        };
+      }
+
+      if (this.ragService) {
         try {
           const ragResults = await this.ragService.search(prompt, config.ollama.endpoint, 5);
           if (ragResults.length > 0 && ragResults[0].score > 0.4) {
@@ -493,7 +549,12 @@ export class QaService {
           `--- Document ${i + 1}: ${r.sourceTitle} ---\n${r.content}`
         ).join("\n\n");
 
-        const hybridAnswer = await ollama.chatHybrid(jiraSummary, contextText, prompt, history);
+        let hybridAnswer: string | null = null;
+        try {
+          hybridAnswer = await ollama.chatHybrid(jiraSummary, contextText, prompt, history);
+        } catch (e) {
+          logger.warn("QA", "Ollama chatHybrid failed:", e);
+        }
         const pages = ragResults.map((r: any) => ({
           id: r.sourceUrl,
           title: r.sourceTitle,
@@ -594,8 +655,7 @@ export class QaService {
 
   async polishBugReport(config: AppConfig, draft: BugFormDraft): Promise<BugPreview> {
     if (!config.ollama.endpoint) {
-      const fallback = new OllamaService(defaultConfig.ollama);
-      return fallback.polishBugReport(draft);
+      return fallbackBugPreview(draft);
     }
     const ollama = new OllamaService(config.ollama);
     return ollama.polishBugReport(draft);
@@ -655,14 +715,20 @@ export class QaService {
   async extractTestCases(
     config: AppConfig,
     url: string,
-    depth: ExtractionDepth
+    depth: ExtractionDepth,
+    signal?: AbortSignal
   ) {
+    signal?.throwIfAborted();
     if (!config.confluence.baseUrl || !config.confluence.token) {
       throw new Error("Confluence belum dikonfigurasi. Simpan koneksi Confluence di Settings sebelum ekstraksi.");
     }
     const confluence = new ConfluenceService(config.confluence);
     const ollama = config.ollama.endpoint ? new OllamaService(config.ollama) : undefined;
     const ocr = new OcrService();
+
+    // Fetch Confluence page first to resolve friendly URLs and get correct Page ID
+    const page = await confluence.getPageByUrl(url);
+    const pageId = page?.id;
 
     // ─── RAG Enrichment: Fetch related context from knowledge base ────
     let ragContext: string | undefined;
@@ -674,14 +740,14 @@ export class QaService {
           const results: { content: string; sourceTitle: string; sourceUrl: string; score: number }[] = [];
 
           // 1. Exact match: find chunks belonging to this page
-          const pageIdMatch = url.match(/(?:pages\/|pageId=)(\d+)/);
-          if (pageIdMatch) {
-            const exactChunks = this.ragService.getChunksBySourceId("confluence", pageIdMatch[1]);
+          if (pageId) {
+            const exactChunks = this.ragService.getChunksBySourceId("confluence", pageId);
             results.push(...exactChunks);
           }
 
-          // 2. Semantic search using page title hint from URL
-          const urlTitle = (url.split("/").pop() || "").replace(/[+]/g, " ");
+          // 2. Semantic search using page title hint from URL or page title
+          const pageTitle = page?.title || "";
+          const urlTitle = pageTitle || (url.split("/").pop() || "").replace(/[+]/g, " ");
           const query = `test cases requirements acceptance criteria ${urlTitle}`;
           const semanticResults = await this.ragService.search(query, config.ollama.endpoint, 5);
 
@@ -706,9 +772,7 @@ export class QaService {
     // ─── OCR: Extract text from image attachments on the page ─────────
     let ocrText: string | undefined;
     try {
-      const pageIdMatch = url.match(/(?:pages\/|pageId=)(\d+)/);
-      if (pageIdMatch) {
-        const pageId = pageIdMatch[1];
+      if (pageId) {
         const attachments = await confluence.getAttachments(pageId);
         const imageAttachments = attachments.filter((att: any) => {
           const ct = (att.contentType || att.mimeType || "").toLowerCase();
@@ -718,6 +782,9 @@ export class QaService {
 
         if (imageAttachments.length > 0) {
           logger.info("OCR", `Found ${imageAttachments.length} image attachments to OCR`);
+          if (imageAttachments.length > 5) {
+            logger.info("OCR", "OCR limit: processing only the first 5 images");
+          }
           const ocrResults: OcrResult[] = [];
 
           for (const att of imageAttachments.slice(0, 5)) {
@@ -746,13 +813,7 @@ export class QaService {
     }
 
     // ─── Choose extraction strategy based on available sources ────────
-    if (ollama && ocrText && ragContext) {
-      return confluence.extractTestCases(url, depth, ollama, ragContext, ocrText);
-    } else if (ollama && ocrText) {
-      return confluence.extractTestCases(url, depth, ollama, undefined, ocrText);
-    }
-
-    return confluence.extractTestCases(url, depth, ollama, ragContext);
+    return confluence.extractTestCases(url, depth, ollama, ragContext, ocrText, page);
   }
 
   async createTestCases(config: AppConfig, cases: ExtractedTestCase[]) {
@@ -1030,7 +1091,7 @@ export class QaService {
     return jira.getCustomFieldByName("Product Tester");
   }
 
-  async getUqaIssues(config: AppConfig): Promise<import("@shared/types").UqaIssue[]> {
+  async getUqaIssues(config: AppConfig, onProgress?: (current: number, total: number, message: string) => void): Promise<import("@shared/types").UqaIssue[]> {
     this.assertJiraConfigured(config);
     const jira = new JiraService(config.jira);
     let fieldId = config.uqa.productTesterFieldId;
@@ -1039,7 +1100,7 @@ export class QaService {
       if (!field) throw new Error("Custom field 'Product Tester' tidak ditemukan di Jira. Cek Settings.");
       fieldId = field.id;
     }
-    return jira.getUqaIssues(fieldId, config.uqa.searchMode, config.uqa.projectKeys);
+    return jira.getUqaIssues(fieldId, config.uqa.searchMode, config.uqa.projectKeys, onProgress);
   }
 
   async getUqaTransitions(config: AppConfig, issueKey: string): Promise<import("@shared/types").UqaTransition[]> {

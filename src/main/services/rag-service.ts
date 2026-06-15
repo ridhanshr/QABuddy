@@ -110,7 +110,9 @@ export class RagService {
   }
 
   private async saveStore(): Promise<void> {
-    await fsProm.writeFile(this.storePath, JSON.stringify(this.store), "utf-8");
+    const tmpPath = this.storePath + ".tmp";
+    await fsProm.writeFile(tmpPath, JSON.stringify(this.store), "utf-8");
+    await fsProm.rename(tmpPath, this.storePath);
   }
 
   onProgress(callback: (progress: RagIndexProgress) => void): void {
@@ -450,8 +452,7 @@ export class RagService {
 
     scored.sort((a, b) => b.score - a.score);
 
-    // Return top results with score > 0.3
-    return scored.filter((r) => r.score > 0.3).slice(0, topK);
+    return scored.filter((r) => r.score > 0.4).slice(0, topK);
   }
 
   // ─── Stats ───────────────────────────────────────────────────────────────

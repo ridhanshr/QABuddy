@@ -1,6 +1,7 @@
 import type { JiraConfig } from "@shared/types";
 import { createAtlassianClient } from "../http";
 import type { AxiosInstance } from "axios";
+import { logger } from "../logger";
 
 // ---------------------------------------------------------------------------
 // Typed response shapes
@@ -75,6 +76,7 @@ export class JiraClient {
    * Run a JQL query and return only the total count (maxResults=0).
    */
   async countByJql(jql: string): Promise<number> {
+    logger.debug("Jira", `countByJql: ${jql}`);
     const res = await this.api.get<JiraSearchResponse>("/search", {
       params: { jql, maxResults: 0, fields: "id" },
     });
@@ -450,9 +452,6 @@ export class JiraClient {
     const results: Array<{ issueKey: string; issueTypeName: string; summary: string }> = [];
 
     for (const link of links) {
-      const typeName = link.type?.name || "";
-      if (typeName !== "Test Execution") continue;
-
       if (link.inwardIssue?.fields?.issuetype?.name === "Test Execution") {
         results.push({
           issueKey: link.inwardIssue.key,

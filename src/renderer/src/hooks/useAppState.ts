@@ -2,14 +2,13 @@ import React, { startTransition, useCallback, useEffect, useMemo, useRef, useSta
 import type {
   AppBootstrap,
   AppConfig,
-  BugFormDraft,
-  BugPreview,
   BulkOperationResult,
   ChatResponse,
   ConfluenceTestImportEntry,
   ConnectionStatus,
   ConnectionStatusItem,
   ConfluencePreviewResult,
+  DashboardProjectConfig,
   ParseConfluenceParseDebugReport,
   ParseConfluenceEntriesResult,
   DashboardDigest,
@@ -23,6 +22,7 @@ import type {
   ManualTestCase,
   RagIndexProgress,
   RagStats,
+  UqaSyncProgress,
   StepConflictMode,
   TestCaseExecution,
   UpdateProgress,
@@ -31,6 +31,7 @@ import type {
   ViewKey,
   ChatHistoryMessage,
   XrayFolder,
+  UqaIssue,
 } from "@shared/types";
 import { defaultConfig } from "@shared/types";
 import * as XLSX from "xlsx";
@@ -42,6 +43,7 @@ import ollamaIcon from "../assets/ollama.png";
 export type ChatMessage = {
   role: "user" | "assistant";
   text: string;
+  sentText?: string;
   response?: ChatResponse;
   attachments?: string[];
 };
@@ -82,23 +84,6 @@ export type ExecutionStats = {
 export type BannerState = {
   tone: "info" | "success" | "error";
   text: string;
-};
-
-const emptyPreview: BugPreview = {
-  summary: "",
-  description: "",
-  priority: "Medium",
-  labels: [],
-};
-
-const initialBugDraft: BugFormDraft = {
-  title: "",
-  stepsToReproduce: "",
-  actualResult: "",
-  expectedResult: "",
-  environment: "",
-  priority: "Medium",
-  labels: "qa-buddy",
 };
 
 const emptyStatus: ConnectionStatus = {
@@ -216,14 +201,13 @@ export function useAppState() {
   ]);
   const [chatPrompt, setChatPrompt] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
-  const [bugDraft, setBugDraft] = useState<BugFormDraft>(initialBugDraft);
-  const [bugPreview, setBugPreview] = useState<BugPreview>(emptyPreview);
-  const [bugLoading, setBugLoading] = useState(false);
   const [extractUrl, setExtractUrl] = useState("");
   const [extractDepth, setExtractDepth] = useState<ExtractionDepth>("comprehensive");
   const [extractedCases, setExtractedCases] = useState<ExtractedTestCase[]>([]);
-  const [extractMeta, setExtractMeta] = useState<{ title: string; sourceUrl: string } | null>(null);
+  const [extractMeta, setExtractMeta] = useState<{ title: string; sourceUrl: string; isFallback?: boolean } | null>(null);
   const [extractLoading, setExtractLoading] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [extractionProgress, setExtractionProgress] = useState<string | null>(null);
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [healthcheckLoading, setHealthcheckLoading] = useState(false);
@@ -248,7 +232,7 @@ export function useAppState() {
   const [manualLoading, setManualLoading] = useState(false);
   const [progressHidden, setProgressHidden] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [manualTab, setManualTab] = useState<"creator" | "organizer" | "update-from-conf">("creator");
+  const [manualTab, setManualTab] = useState<"creator" | "organizer" | "update-from-conf" | "extractor">("creator");
   const [manualCases, setManualCases] = useState<ManualTestCase[]>([
     { id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "" }
   ]);
@@ -263,6 +247,8 @@ export function useAppState() {
   const [manualDuplicateResults, setManualDuplicateResults] = useState<Record<string, { matches: { key: string; summary: string; score: number }[]; checked: boolean }>>({});
   const [manualPendingDuplicates, setManualPendingDuplicates] = useState<Record<string, { key: string; summary: string; score: number }[]> | null>(null);
   const [showManualDuplicateModal, setShowManualDuplicateModal] = useState(false);
+  const [showDashboardConfig, setShowDashboardConfig] = useState(false);
+  const [dashboardProjects, setDashboardProjects] = useState<DashboardProjectConfig[]>([]);
 
   // Update from Confluence state
   const [confImportMode, setConfImportMode] = useState<"auto" | "jql-match" | "xray-folder">("auto");
@@ -414,6 +400,7 @@ export function useAppState() {
     setConfig(bootstrap.config);
     setStatus(bootstrap.status);
     setDashboard(bootstrap.dashboard);
+    setDashboardProjects(bootstrap.config.dashboard?.projects || []);
     setRagSyncSpace(bootstrap.config.confluence.spaceKey || "");
     setRagSyncProject(bootstrap.config.jira.projectKey || "");
   }, []);
@@ -820,6 +807,47 @@ export function useAppState() {
     }
   }, [loadDefectSources, loadDefectStats, loadAllDefects, setBanner, setDefectTab, setDefectCandidates, setDefectSearchResults]);
 
+  // ── UQA Store State ───────────────────────────────────────────────────
+  const [uqaIssues, setUqaIssues] = useState<UqaIssue[]>([]);
+  const [uqaSyncing, setUqaSyncing] = useState(false);
+  const [uqaSyncProgress, setUqaSyncProgress] = useState<UqaSyncProgress | null>(null);
+
+  const loadUqaIssuesFromStore = useCallback(async () => {
+    try {
+      const issues = await window.qaBuddy.getUqaIssuesFromStore();
+      setUqaIssues(issues);
+    } catch {
+      // silent
+    }
+  }, []);
+
+  const syncUqaIssues = useCallback(async () => {
+    setUqaSyncing(true);
+    setUqaSyncProgress({ status: "fetching", message: "Memulai...", current: 0, total: 0 });
+    try {
+      const issues = await window.qaBuddy.syncUqaIssues();
+      setUqaIssues(issues);
+    } catch {
+      // silent
+    } finally {
+      setUqaSyncing(false);
+      setUqaSyncProgress(null);
+    }
+  }, []);
+
+  // Listen for UQA sync progress events
+  useEffect(() => {
+    const cleanup = window.qaBuddy.onUqaSyncProgress((progress) => {
+      setUqaSyncProgress(progress);
+    });
+    return cleanup;
+  }, []);
+
+  // Load UQA issues from store on mount
+  useEffect(() => {
+    loadUqaIssuesFromStore();
+  }, [loadUqaIssuesFromStore]);
+
   // Listen for update progress events
   useEffect(() => {
     const cleanup = window.qaBuddy.onUpdateProgress((progress) => {
@@ -1011,14 +1039,13 @@ export function useAppState() {
     }
 
     setChatLoading(true);
-    setChatMessages((current) => [...current, { role: "user", text: prompt, attachments: chatAttachments.map(a => a.name) }]);
-    setChatPrompt("");
-
     let finalPrompt = prompt;
     if (chatAttachments.length > 0) {
       const attachmentsText = chatAttachments.map(a => `[Lampiran File: ${a.name}]\n${a.text}`).join("\n\n---\n\n");
       finalPrompt = `${attachmentsText}\n\n---\n\n${prompt}`.trim();
     }
+    setChatMessages((current) => [...current, { role: "user", text: prompt, sentText: finalPrompt, attachments: chatAttachments.map(a => a.name) }]);
+    setChatPrompt("");
     setChatAttachments([]);
 
     // Build conversation history from previous messages (last 10 pairs)
@@ -1027,7 +1054,7 @@ export function useAppState() {
       .slice(-10)
       .map((m) => ({
         role: m.role as "user" | "assistant",
-        content: m.text,
+        content: m.sentText || m.text,
       }));
 
     try {
@@ -1050,39 +1077,6 @@ export function useAppState() {
       ]);
     } finally {
       setChatLoading(false);
-    }
-  }
-
-  async function polishBug() {
-    setBugLoading(true);
-    try {
-      const preview = await window.qaBuddy.polishBugReport(bugDraft);
-      setBugPreview(preview);
-      setBanner({ tone: "success", text: "Preview bug report berhasil diperbarui." });
-    } catch (error) {
-      setBanner({
-        tone: "error",
-        text: toErrorMessage(error, "Gagal memproses preview bug report."),
-      });
-    } finally {
-      setBugLoading(false);
-    }
-  }
-
-  async function submitBug() {
-    setBugLoading(true);
-    try {
-      const preview = bugPreview.summary ? bugPreview : await window.qaBuddy.polishBugReport(bugDraft);
-      setBugPreview(preview);
-      const result = await window.qaBuddy.createBug(bugDraft, preview);
-      setBanner({ tone: "success", text: `Bug created: ${result.key}` });
-    } catch (error) {
-      setBanner({
-        tone: "error",
-        text: toErrorMessage(error, "Gagal membuat bug di Jira."),
-      });
-    } finally {
-      setBugLoading(false);
     }
   }
 
@@ -2032,14 +2026,18 @@ export function useAppState() {
       return;
     }
 
+    const unsubProgress = window.qaBuddy.onExtractionProgress((msg) => setExtractionProgress(msg));
     setExtractLoading(true);
+    setExtractionProgress("Memulai ekstraksi...");
     try {
       const result = await window.qaBuddy.extractTestCases(extractUrl, extractDepth);
       setExtractedCases(result.testCases);
-      setExtractMeta({ title: result.pageTitle, sourceUrl: result.sourceUrl });
+      setExtractMeta({ title: result.pageTitle, sourceUrl: result.sourceUrl, isFallback: result.isFallback });
       setBanner({
-        tone: "success",
-        text: `Berhasil mengekstrak ${result.testCases.length} test case dari requirement.`,
+        tone: result.isFallback ? "info" : "success",
+        text: result.isFallback
+          ? `Rule-based: ${result.testCases.length} test case diekstrak (Ollama tidak tersedia).`
+          : `Berhasil mengekstrak ${result.testCases.length} test case dari requirement.`,
       });
     } catch (error) {
       setBanner({
@@ -2048,22 +2046,32 @@ export function useAppState() {
       });
     } finally {
       setExtractLoading(false);
+      setExtractionProgress(null);
+      unsubProgress();
     }
   }
 
   async function exportCases() {
+    const selected = extractedCases.filter((c) => c.selected);
+    if (selected.length === 0) {
+      setBanner({ tone: "error", text: "Pilih minimal satu test case untuk di-export." });
+      return;
+    }
+    if (!window.confirm(`Export ${selected.length} test case(s) ke Jira?`)) return;
+    setExportLoading(true);
     try {
-      const result = await window.qaBuddy.createTestCases(extractedCases);
+      const result = await window.qaBuddy.createTestCases(selected);
       const message = result.created.length
         ? `Created ${result.created.length} Jira issue(s): ${result.created.map((item) => item.key).join(", ")}`
         : "Tidak ada test case yang dipilih.";
       setBanner({ tone: "success", text: message });
-      startTransition(() => setActiveView("settings"));
     } catch (error) {
       setBanner({
         tone: "error",
         text: toErrorMessage(error, "Gagal membuat test case di Jira."),
       });
+    } finally {
+      setExportLoading(false);
     }
   }
 
@@ -2170,6 +2178,29 @@ export function useAppState() {
     }
   }
 
+  async function saveDashboardConfig(projects: DashboardProjectConfig[]) {
+    const newConfig = { ...config, dashboard: { projects } };
+    try {
+      const saved = await window.qaBuddy.saveConfig(newConfig);
+      setConfig(saved);
+      setDashboardProjects(projects);
+      document.body.style.overflow = "";
+      setShowDashboardConfig(false);
+      setBanner({ tone: "success", text: "Konfigurasi Dashboard berhasil disimpan." });
+      setDashboardLoading(true);
+      window.qaBuddy.getDashboard({ skipInsight: true })
+        .then((nextDashboard) => {
+          setDashboard(nextDashboard);
+          setDashboardLoading(false);
+        })
+        .catch(() => {
+          setDashboardLoading(false);
+        });
+    } catch (error) {
+      setBanner({ tone: "error", text: toErrorMessage(error, "Gagal menyimpan konfigurasi Dashboard.") });
+    }
+  }
+
   const handleCheckForUpdates = useCallback(async () => {
     setUpdateChecking(true);
     try {
@@ -2247,12 +2278,6 @@ export function useAppState() {
     setChatPrompt,
     chatLoading,
     setChatLoading,
-    bugDraft,
-    setBugDraft,
-    bugPreview,
-    setBugPreview,
-    bugLoading,
-    setBugLoading,
     extractUrl,
     setExtractUrl,
     extractDepth,
@@ -2263,6 +2288,9 @@ export function useAppState() {
     setExtractMeta,
     extractLoading,
     setExtractLoading,
+    exportLoading,
+    setExportLoading,
+    extractionProgress,
     banner,
     setBanner,
     logs,
@@ -2434,8 +2462,6 @@ export function useAppState() {
     recordExecution,
     loadExecutionTracking,
     submitChat,
-    polishBug,
-    submitBug,
     submitManualCases,
     addManualCase,
     removeManualCase,
@@ -2490,6 +2516,11 @@ export function useAppState() {
     setDownloadingUpdate,
     showDetailedProgress,
     setShowDetailedProgress,
+    showDashboardConfig,
+    setShowDashboardConfig,
+    dashboardProjects,
+    setDashboardProjects,
+    saveDashboardConfig,
     handleDownloadAndInstall,
     defectSources,
     defectSearchQuery,
@@ -2519,5 +2550,10 @@ export function useAppState() {
     handleDefectRemoveDuplicate,
     handleDefectSaveSource,
     handleDefectDeleteSource,
+    uqaIssues,
+    uqaSyncing,
+    uqaSyncProgress,
+    loadUqaIssuesFromStore,
+    syncUqaIssues,
   };
 }

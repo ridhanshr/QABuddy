@@ -1,5 +1,7 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
+import type { DashboardProjectConfig, DashboardProjectData, ProjectInsightRequest } from "@shared/types";
 
 import jiraIcon from "../assets/jira.png";
 import confluenceIcon from "../assets/confluence.png";
@@ -29,14 +31,166 @@ export default function Dashboard() {
     ragStats,
     updateInfo,
     setSettingsTab,
+    showDashboardConfig,
+    setShowDashboardConfig,
+    dashboardProjects,
+    setDashboardProjects,
+    saveDashboardConfig,
   } = useApp();
 
-  if (loading || activeView !== "dashboard" || !dashboard) {
+  const [activeProjectTab, setActiveProjectTab] = useState<string>("all");
+  const [projectPage, setProjectPage] = useState(1);
+  const projectRowsPerPage = 10;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [projectInsight, setProjectInsight] = useState<string | null>(null);
+  const [projectInsightLoading, setProjectInsightLoading] = useState(false);
+  const [labelExcludeDrafts, setLabelExcludeDrafts] = useState<string[]>([]);
+  const [labelIncludeDrafts, setLabelIncludeDrafts] = useState<string[]>([]);
+  const [statusExcludeDrafts, setStatusExcludeDrafts] = useState<string[]>([]);
+  const [statusIncludeDrafts, setStatusIncludeDrafts] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (showDashboardConfig) {
+      document.body.style.overflow = "hidden";
+      setTimeout(() => dialogRef.current?.focus(), 50);
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => { document.body.style.overflow = ""; };
+  }, [showDashboardConfig]);
+
+  // Computed data based on active tab
+  const projectKeys = Object.keys(dashboard?.projects || {});
+  const hasProjects = projectKeys.length > 0;
+  const activeProjectData: DashboardProjectData | undefined = activeProjectTab !== "all"
+    ? dashboard?.projects?.[activeProjectTab]
+    : undefined;
+  const activeBugMetrics = activeProjectData?.bugMetrics || dashboard?.bugMetrics || {
+    totalOpen: 0, critical: 0, high: 0, medium: 0, low: 0,
+    resolvedThisSprint: 0, foundThisSprint: 0,
+    epicTotal: 0, epicCompleted: 0, epicTasksTotal: 0, epicTasksResolved: 0,
+  };
+  const activeReadyForQa = activeProjectData?.readyForQa || dashboard?.readyForQa || [];
+
+  // Local pagination for per-project QA table
+  const projectFiltered = activeProjectData
+    ? activeReadyForQa.filter((i) =>
+        !ticketSearch || i.key.toLowerCase().includes(ticketSearch.toLowerCase()) || i.summary.toLowerCase().includes(ticketSearch.toLowerCase())
+      )
+    : [];
+  const projectTotalPages = Math.max(1, Math.ceil(projectFiltered.length / projectRowsPerPage));
+  const projectPaginated = projectFiltered.slice(
+    (projectPage - 1) * projectRowsPerPage,
+    projectPage * projectRowsPerPage
+  );
+
+  // Fetch per-project insight when switching tabs
+  useEffect(() => {
+    if (activeProjectTab === "all" || !activeProjectData) {
+      setProjectInsight(null);
+      return;
+    }
+    setProjectInsightLoading(true);
+    const request: ProjectInsightRequest = {
+      projectKey: activeProjectTab,
+      bugMetrics: activeProjectData.bugMetrics,
+      readyForQa: activeProjectData.readyForQa,
+    };
+    window.qaBuddy.getProjectInsight(request)
+      .then((insight) => setProjectInsight(insight))
+      .catch(() => setProjectInsight(null))
+      .finally(() => setProjectInsightLoading(false));
+  }, [activeProjectTab, activeProjectData]);
+
+  if (loading || activeView !== "dashboard") {
     return null;
   }
 
+  if (!dashboard) {
+    return (
+      <section className="dashboard-layout">
+        <div style={{ display: "flex", flexDirection: "column", gap: 24, padding: "40px 0" }}>
+          <div className="hero-insight-card" style={{ height: 140, opacity: 0.4 }}>
+            <div className="insight-bg-graphic" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="card" style={{ padding: 20, height: 100, opacity: 0.3 }} />
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+            <div className="card" style={{ padding: 24, height: 180, opacity: 0.3 }} />
+            <div className="card" style={{ padding: 24, height: 180, opacity: 0.3 }} />
+          </div>
+        </div>
+        <p style={{ textAlign: "center", color: "var(--on-surface-variant)", fontSize: 14, marginTop: -20 }}>
+          Memuat dashboard...
+        </p>
+      </section>
+    );
+  }
+
   return (
-    <section className="dashboard-layout">
+      <section className="dashboard-layout">
+      <style>{`
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .skeleton {
+          background: linear-gradient(90deg, var(--surface-container-low) 25%, var(--surface-container-high) 50%, var(--surface-container-low) 75%);
+          background-size: 200% 100%;
+          animation: shimmer 1.5s infinite;
+          border-radius: 6px;
+        }
+      `}</style>
+      {/* Dashboard header with settings gear */}
+      <div className="section-header-row" style={{ marginBottom: 0 }}>
+        <div>
+          <h2 className="text-display" style={{ margin: 0 }}>Dashboard</h2>
+        </div>
+        <button className="icon-btn" onClick={() => {
+          const projects = config.dashboard?.projects || [];
+          setDashboardProjects(projects);
+          setLabelExcludeDrafts(projects.map(p => p.excludeLabels.join(", ")));
+          setLabelIncludeDrafts(projects.map(p => p.includeLabels.join(", ")));
+          setStatusExcludeDrafts(projects.map(p => p.excludeStatuses.join(", ")));
+          setStatusIncludeDrafts(projects.map(p => p.includeStatuses.join(", ")));
+          setShowDashboardConfig(true);
+        }} type="button" title="Dashboard Settings">
+          <span className="material-symbols">settings</span>
+        </button>
+      </div>
+
+      {/* Project tabs */}
+      {hasProjects && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            className={`chip ${activeProjectTab === "all" ? "chip-active" : ""}`}
+            onClick={() => { setActiveProjectTab("all"); setProjectPage(1); }}
+            type="button"
+          >
+            All
+          </button>
+          {projectKeys.map((pk) => (
+            <button
+              key={pk}
+              className={`chip ${activeProjectTab === pk ? "chip-active" : ""}`}
+              onClick={() => { setActiveProjectTab(pk); setProjectPage(1); }}
+              type="button"
+            >
+              {pk}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {dashboard.isDemo && (
+        <div style={{ background: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.25)", padding: "10px 16px", borderRadius: 10, marginBottom: 16, display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+          <span className="material-symbols filled" style={{ color: "var(--error)", fontSize: 20 }}>info</span>
+          <span style={{ color: "var(--on-surface)" }}><strong>Data Demo</strong> — Koneksi Jira gagal. Periksa Settings &gt; Jira Configuration.</span>
+        </div>
+      )}
       {updateInfo?.updateAvailable && (
         <div 
           className="card" 
@@ -98,8 +252,15 @@ export default function Dashboard() {
             <span className="material-symbols filled">insights</span>
           </div>
           <div className="insight-copy" style={{ flex: 1 }}>
-            <h3>AI Daily Insight</h3>
-            <p>{(dashboard.insight || "Kualitas aplikasi stabil hari ini. Tidak ada anomali terdeteksi.").replace(/[*#|]/g, "").trim()}</p>
+            <h3>AI Daily Insight{activeProjectTab !== "all" ? ` — ${activeProjectTab}` : ""}</h3>
+            {activeProjectTab !== "all" && projectInsightLoading ? (
+              <p style={{ color: "var(--on-surface-variant)" }}>
+                <span className="material-symbols" style={{ fontSize: 16, animation: "spin 1s linear infinite", verticalAlign: "middle", marginRight: 6 }}>sync</span>
+                Generating insight for {activeProjectTab}...
+              </p>
+            ) : (
+              <p>{(activeProjectTab !== "all" && projectInsight ? projectInsight : dashboard.insight || "Kualitas aplikasi stabil hari ini. Tidak ada anomali terdeteksi.").replace(/[*#|]/g, "").trim()}</p>
+            )}
             <div className="button-row" style={{ marginTop: 16, display: "flex", gap: 8 }}>
               <button className="insight-btn primary" onClick={() => void refreshDashboard()} type="button">
                 <span className="material-symbols" style={{ fontSize: 16 }}>summarize</span>
@@ -130,25 +291,29 @@ export default function Dashboard() {
         <div className="section-header-row">
           <div>
             <h3 className="section-title">Bug Metrics</h3>
-            <p className="section-subtitle">Overview of bug tracker statistics.</p>
+            <p className="section-subtitle">Overview of bug tracker statistics.{activeProjectTab !== "all" ? ` (${activeProjectTab})` : ""}</p>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
           {(() => {
-            const p = config.jira.projectKey;
+            const p = activeProjectTab !== "all" ? activeProjectTab : config.jira.projectKey;
             const base = config.jira.baseUrl.replace(/\/+$/, "");
-            const baseJql = `project = "${p}" AND issuetype = Task AND resolution = Unresolved AND status NOT IN ("DROPPED/CANCELLED", "DEPLOYED") AND labels not in (NOT_DEFECT)`;
+            const baseJql = `project = "${p}" AND status NOT IN ("DROPPED/CANCELLED", "DEPLOYED") AND labels not in (NOT_DEFECT)`;
             return [
-              { label: "Total Open", value: dashboard.bugMetrics.totalOpen, icon: "bug_report", color: "var(--severity-total)", jql: baseJql },
-              { label: "Critical", value: dashboard.bugMetrics.critical, icon: "warning", color: "var(--severity-critical)", jql: `${baseJql} AND priority = Critical` },
-              { label: "High", value: dashboard.bugMetrics.high, icon: "arrow_upward", color: "var(--severity-high)", jql: `${baseJql} AND priority = High` },
-              { label: "Medium", value: dashboard.bugMetrics.medium, icon: "drag_handle", color: "var(--severity-medium)", jql: `${baseJql} AND priority = Medium` },
-              { label: "Low", value: dashboard.bugMetrics.low, icon: "arrow_downward", color: "var(--severity-low)", jql: `${baseJql} AND priority = Low` },
-              { label: "Epic", value: dashboard.bugMetrics.epicTotal, icon: "layers", color: "var(--severity-epic)", jql: `project = "${p}" AND issuetype = Epic` },
+              { label: "Total Open", value: activeBugMetrics.totalOpen, icon: "bug_report", color: "var(--severity-total)", jql: baseJql },
+              { label: "Critical", value: activeBugMetrics.critical, icon: "warning", color: "var(--severity-critical)", jql: `${baseJql} AND priority = Critical` },
+              { label: "High", value: activeBugMetrics.high, icon: "arrow_upward", color: "var(--severity-high)", jql: `${baseJql} AND priority = High` },
+              { label: "Medium", value: activeBugMetrics.medium, icon: "drag_handle", color: "var(--severity-medium)", jql: `${baseJql} AND priority = Medium` },
+              { label: "Low", value: activeBugMetrics.low, icon: "arrow_downward", color: "var(--severity-low)", jql: `${baseJql} AND priority = Low` },
+              { label: "Epic", value: activeBugMetrics.epicTotal, icon: "layers", color: "var(--severity-epic)", jql: `project = "${p}" AND issuetype = Epic` },
             ].map((metric) => (
               <div key={metric.label} className="card" style={{ padding: 20, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: base ? "pointer" : "default" }} onClick={() => { if (base) void window.qaBuddy.openExternal(`${base}/issues/?jql=${encodeURIComponent(metric.jql)}`); }}>
                 <span className="material-symbols filled" style={{ fontSize: 28, color: metric.color }}>{metric.icon}</span>
-                <div style={{ fontSize: 28, fontWeight: 700, color: "var(--on-surface)" }}>{metric.value}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: "var(--on-surface)" }}>
+                  {dashboardLoading
+                    ? <div className="skeleton" style={{ height: 32, width: 60, margin: "0 auto" }} />
+                    : metric.value}
+                </div>
                 <div style={{ fontSize: 12, color: "var(--on-surface-variant)", fontWeight: 500 }}>{metric.label}</div>
               </div>
             ));
@@ -159,41 +324,58 @@ export default function Dashboard() {
       {/* Epic Progress + Quick Actions */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 24 }}>
         <div className="card" style={{ padding: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <div>
-              <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Epic Progress</h4>
-              <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>Completed Epics vs Tasks under open Epics</p>
+            {dashboardLoading ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                <div className="skeleton" style={{ height: 20, width: 160 }} />
+                <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div className="skeleton" style={{ height: 14, width: "100%" }} />
+                    <div className="skeleton" style={{ height: 8, width: "100%" }} />
+                    <div className="skeleton" style={{ height: 14, width: "100%" }} />
+                    <div className="skeleton" style={{ height: 8, width: "100%" }} />
+                    <div className="skeleton" style={{ height: 14, width: "60%" }} />
+                  </div>
+                  <div className="skeleton" style={{ height: 48, width: 64 }} />
+                </div>
+              </div>
+            ) : (<>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Epic Progress</h4>
+                <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>Completed Epics vs Tasks under open Epics</p>
+              </div>
+              <span className="material-symbols" style={{ fontSize: 24, color: "var(--primary)" }}>layers</span>
             </div>
-            <span className="material-symbols" style={{ fontSize: 24, color: "var(--primary)" }}>layers</span>
-          </div>
-          <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
                 <span style={{ color: "var(--on-surface-variant)" }}>Completed Epics</span>
-                <span style={{ fontWeight: 600 }}>{dashboard.bugMetrics.epicCompleted} / {dashboard.bugMetrics.epicTotal}</span>
+                <span style={{ fontWeight: 600 }}>{activeBugMetrics.epicCompleted} / {activeBugMetrics.epicTotal}</span>
               </div>
               <div style={{ height: 8, borderRadius: 4, background: "var(--surface-container-low)", overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 4, background: "var(--severity-epic)", width: `${Math.min(100, (dashboard.bugMetrics.epicCompleted / Math.max(1, dashboard.bugMetrics.epicTotal)) * 100)}%` }} />
+                <div style={{ height: "100%", borderRadius: 4, background: "var(--severity-epic)", width: `${Math.min(100, (activeBugMetrics.epicCompleted / Math.max(1, activeBugMetrics.epicTotal)) * 100)}%` }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 16, marginBottom: 6 }}>
                 <span style={{ color: "var(--on-surface-variant)" }}>Resolved Tasks</span>
-                <span style={{ fontWeight: 600 }}>{dashboard.bugMetrics.epicTasksResolved}</span>
+                <span style={{ fontWeight: 600 }}>{activeBugMetrics.epicTasksResolved}</span>
               </div>
               <div style={{ height: 8, borderRadius: 4, background: "var(--surface-container-low)", overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 4, background: "var(--tertiary)", width: `${Math.min(100, (dashboard.bugMetrics.epicTasksResolved / Math.max(1, dashboard.bugMetrics.epicTasksTotal)) * 100)}%` }} />
+                <div style={{ height: "100%", borderRadius: 4, background: "var(--tertiary)", width: `${Math.min(100, (activeBugMetrics.epicTasksResolved / Math.max(1, activeBugMetrics.epicTasksTotal)) * 100)}%` }} />
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 16, marginBottom: 6 }}>
                 <span style={{ color: "var(--on-surface-variant)" }}>Tasks under Epics</span>
-                <span style={{ fontWeight: 600 }}>{dashboard.bugMetrics.epicTasksTotal} total</span>
+                <span style={{ fontWeight: 600 }}>{activeBugMetrics.epicTasksTotal} total</span>
               </div>
             </div>
             <div style={{ textAlign: "center", padding: "0 8px" }}>
-              <div style={{ fontSize: 36, fontWeight: 700, color: dashboard.bugMetrics.epicCompleted >= dashboard.bugMetrics.epicTotal ? "var(--tertiary)" : "var(--warning)" }}>
-                {dashboard.bugMetrics.epicTotal > 0 ? Math.round((dashboard.bugMetrics.epicCompleted / dashboard.bugMetrics.epicTotal) * 100) : 100}%
+              <div style={{ fontSize: 36, fontWeight: 700, color: activeBugMetrics.epicTotal > 0 && activeBugMetrics.epicCompleted >= activeBugMetrics.epicTotal ? "var(--tertiary)" : "var(--warning)" }}>
+                {activeBugMetrics.epicTotal > 0 ? Math.round((activeBugMetrics.epicCompleted / activeBugMetrics.epicTotal) * 100) : 0}%
               </div>
               <div style={{ fontSize: 11, color: "var(--on-surface-variant)", marginTop: 2 }}>epic completion</div>
             </div>
-          </div>
+            </div>
+          </>
+        )}
         </div>
 
         <div className="card" style={{ padding: 24 }}>
@@ -203,10 +385,10 @@ export default function Dashboard() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {[
-              { label: "New Bug Report", icon: "bug_report", color: "var(--error)", onClick: () => setActiveView("bug-report") },
+              { label: "Add Defect", icon: "bug_report", color: "var(--error)", onClick: () => setActiveView("defect-repository") },
               { label: "Chat Assistant", icon: "chat_spark", color: "var(--severity-epic)", onClick: () => setActiveView("chat-assistant") },
               { label: "Sync Docs", icon: "description", color: "var(--info)", onClick: () => setActiveView("documentation-sync") },
-              { label: "Extract Test Cases", icon: "terminal", color: "var(--tertiary)", onClick: () => setActiveView("test-case-extractor") },
+              { label: "Extract Test Cases", icon: "terminal", color: "var(--tertiary)", onClick: () => setActiveView("manual-test-case") },
             ].map((action) => (
               <button
                 key={action.label}
@@ -229,7 +411,7 @@ export default function Dashboard() {
         <div className="section-header-row">
           <div>
             <h3 className="section-title">Ready for QA</h3>
-            <p className="section-subtitle">Tickets awaiting verification in the active sprint.</p>
+            <p className="section-subtitle">Tickets awaiting verification in the active sprint.{activeProjectTab !== "all" ? ` (${activeProjectTab})` : ""}</p>
           </div>
           <div className="search-box">
             <span className="material-symbols">search</span>
@@ -254,8 +436,18 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {paginatedReadyForQa.length > 0 ? (
-                paginatedReadyForQa.map((issue) => (
+              {dashboardLoading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i}>
+                    <td><div className="skeleton" style={{ height: 16, width: 80 }} /></td>
+                    <td><div className="skeleton" style={{ height: 16, width: "90%" }} /></td>
+                    <td><div className="skeleton" style={{ height: 16, width: 60 }} /></td>
+                    <td><div className="skeleton" style={{ height: 16, width: 100 }} /></td>
+                    <td><div className="skeleton" style={{ height: 16, width: 32, marginLeft: "auto" }} /></td>
+                  </tr>
+                ))
+              ) : (activeProjectData ? projectPaginated : paginatedReadyForQa).length > 0 ? (
+                (activeProjectData ? projectPaginated : paginatedReadyForQa).map((issue) => (
                   <tr key={issue.id}>
                     <td className="key-cell">
                       <button onClick={() => void window.qaBuddy.openExternal(issue.url)} type="button">
@@ -311,6 +503,7 @@ export default function Dashboard() {
                   setCurrentPage(1);
                 }}
                 style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--outline-variant)", background: "var(--surface-container-low)", color: "var(--on-surface)", fontSize: 13 }}
+                disabled={!!activeProjectData}
               >
                 <option value={10}>10</option>
                 <option value={25}>25</option>
@@ -318,45 +511,54 @@ export default function Dashboard() {
                 <option value={100}>100</option>
               </select>
               <span style={{ marginLeft: 8, color: "var(--on-surface-variant)" }}>
-                {(currentPage - 1) * rowsPerPage + 1}–{Math.min(currentPage * rowsPerPage, filteredReadyForQa.length)} of {filteredReadyForQa.length} issues
+                {activeProjectData
+                  ? projectFiltered.length > 0
+                    ? `${(projectPage - 1) * projectRowsPerPage + 1}–${Math.min(projectPage * projectRowsPerPage, projectFiltered.length)} of ${projectFiltered.length} issues`
+                    : "0 of 0 issues"
+                  : filteredReadyForQa.length > 0
+                    ? `${(currentPage - 1) * rowsPerPage + 1}–${Math.min(currentPage * rowsPerPage, filteredReadyForQa.length)} of ${filteredReadyForQa.length} issues`
+                    : "0 of 0 issues"
+                }
               </span>
             </div>
             <div className="pagination" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <button 
-                disabled={currentPage <= 1} 
-                onClick={() => setCurrentPage(1)} 
-                type="button" 
-                title="First page"
-              >
-                <span className="material-symbols">first_page</span>
-              </button>
-              <button 
-                disabled={currentPage <= 1} 
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} 
-                type="button" 
-                title="Previous page"
-              >
-                <span className="material-symbols">chevron_left</span>
-              </button>
-              <span style={{ fontSize: 13, padding: "0 8px", color: "var(--on-surface)" }}>
-                Page {currentPage} of {totalPages}
-              </span>
-              <button 
-                disabled={currentPage >= totalPages} 
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} 
-                type="button" 
-                title="Next page"
-              >
-                <span className="material-symbols">chevron_right</span>
-              </button>
-              <button 
-                disabled={currentPage >= totalPages} 
-                onClick={() => setCurrentPage(totalPages)} 
-                type="button" 
-                title="Last page"
-              >
-                <span className="material-symbols">last_page</span>
-              </button>
+              {activeProjectData ? (
+                <>
+                  <button disabled={projectPage <= 1} onClick={() => setProjectPage(1)} type="button" title="First page">
+                    <span className="material-symbols">first_page</span>
+                  </button>
+                  <button disabled={projectPage <= 1} onClick={() => setProjectPage((p) => Math.max(1, p - 1))} type="button" title="Previous page">
+                    <span className="material-symbols">chevron_left</span>
+                  </button>
+                  <span style={{ fontSize: 13, padding: "0 8px", color: "var(--on-surface)" }}>
+                    Page {projectPage} of {projectTotalPages}
+                  </span>
+                  <button disabled={projectPage >= projectTotalPages} onClick={() => setProjectPage((p) => Math.min(projectTotalPages, p + 1))} type="button" title="Next page">
+                    <span className="material-symbols">chevron_right</span>
+                  </button>
+                  <button disabled={projectPage >= projectTotalPages} onClick={() => setProjectPage(projectTotalPages)} type="button" title="Last page">
+                    <span className="material-symbols">last_page</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button disabled={currentPage <= 1} onClick={() => setCurrentPage(1)} type="button" title="First page">
+                    <span className="material-symbols">first_page</span>
+                  </button>
+                  <button disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} type="button" title="Previous page">
+                    <span className="material-symbols">chevron_left</span>
+                  </button>
+                  <span style={{ fontSize: 13, padding: "0 8px", color: "var(--on-surface)" }}>
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} type="button" title="Next page">
+                    <span className="material-symbols">chevron_right</span>
+                  </button>
+                  <button disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)} type="button" title="Last page">
+                    <span className="material-symbols">last_page</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -453,6 +655,188 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* ── Dashboard Project Config Modal ── */}
+      {showDashboardConfig && createPortal(
+        <div className="dialog-overlay" onClick={() => { document.body.style.overflow = ""; setShowDashboardConfig(false); }}>
+          <div className="dialog" ref={dialogRef} tabIndex={-1} style={{ width: 560, maxWidth: "90vw", outline: "none" }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="dialog-header">
+              <div className="dialog-header-info">
+                <h3 className="dialog-title">Dashboard Project Settings</h3>
+                <p className="dialog-subtitle">Configure additional Jira projects to monitor on the dashboard.</p>
+              </div>
+              <div className="dialog-header-actions">
+                <button className="icon-btn" onClick={() => { document.body.style.overflow = ""; setShowDashboardConfig(false); }} type="button">×</button>
+              </div>
+            </div>
+            <div className="dialog-body" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {dashboardProjects.map((proj, index) => (
+                <div key={index} className="card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12, opacity: proj.enabled ? 1 : 0.5 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <strong style={{ fontSize: 14 }}>Project {index + 1}</strong>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = [...dashboardProjects];
+                          next[index] = { ...next[index], enabled: !next[index].enabled };
+                          setDashboardProjects(next);
+                        }}
+                        style={{
+                          padding: "4px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                          fontSize: 11, fontWeight: 600, transition: "all 0.2s",
+                          background: proj.enabled ? "var(--tertiary)" : "var(--surface-container-low)",
+                          color: proj.enabled ? "#fff" : "var(--on-surface-variant)",
+                        }}
+                      >
+                        {proj.enabled ? "ON" : "OFF"}
+                      </button>
+                      <button
+                        className="chip"
+                        onClick={() => {
+                          setDashboardProjects(dashboardProjects.filter((_, i) => i !== index));
+                          setLabelExcludeDrafts(labelExcludeDrafts.filter((_, i) => i !== index));
+                          setLabelIncludeDrafts(labelIncludeDrafts.filter((_, i) => i !== index));
+                          setStatusExcludeDrafts(statusExcludeDrafts.filter((_, i) => i !== index));
+                          setStatusIncludeDrafts(statusIncludeDrafts.filter((_, i) => i !== index));
+                        }}
+                        type="button"
+                        style={{ color: "var(--error)", borderColor: "var(--error)" }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  <div className="bug-form-row-2col">
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 12 }}>Project Key</span>
+                      <input
+                        value={proj.projectKey}
+                        onChange={(e) => {
+                          const next = [...dashboardProjects];
+                          next[index] = { ...next[index], projectKey: e.target.value.toUpperCase() };
+                          setDashboardProjects(next);
+                        }}
+                        placeholder="e.g. PROJ"
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 12 }}>Issue Type</span>
+                      <input
+                        value={proj.issueType}
+                        onChange={(e) => {
+                          const next = [...dashboardProjects];
+                          next[index] = { ...next[index], issueType: e.target.value };
+                          setDashboardProjects(next);
+                        }}
+                        placeholder='e.g. Bug'
+                      />
+                    </label>
+                  </div>
+                  <div className="bug-form-row-2col">
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 12 }}>Exclude Labels (comma-separated)</span>
+                      <input
+                        value={labelExcludeDrafts[index] || ""}
+                        onChange={(e) => {
+                          const next = [...labelExcludeDrafts];
+                          next[index] = e.target.value;
+                          setLabelExcludeDrafts(next);
+                        }}
+                        onBlur={(e) => {
+                          const next = [...dashboardProjects];
+                          next[index] = { ...next[index], excludeLabels: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) };
+                          setDashboardProjects(next);
+                        }}
+                        placeholder="NOT_DEFECT, automation"
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 12 }}>Include Labels (comma-separated)</span>
+                      <input
+                        value={labelIncludeDrafts[index] || ""}
+                        onChange={(e) => {
+                          const next = [...labelIncludeDrafts];
+                          next[index] = e.target.value;
+                          setLabelIncludeDrafts(next);
+                        }}
+                        onBlur={(e) => {
+                          const next = [...dashboardProjects];
+                          next[index] = { ...next[index], includeLabels: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) };
+                          setDashboardProjects(next);
+                        }}
+                        placeholder="regression, critical"
+                      />
+                    </label>
+                  </div>
+                  <div className="bug-form-row-2col">
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 12 }}>Exclude Statuses (comma-separated)</span>
+                      <input
+                        value={statusExcludeDrafts[index] || ""}
+                        onChange={(e) => {
+                          const next = [...statusExcludeDrafts];
+                          next[index] = e.target.value;
+                          setStatusExcludeDrafts(next);
+                        }}
+                        onBlur={(e) => {
+                          const next = [...dashboardProjects];
+                          next[index] = { ...next[index], excludeStatuses: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) };
+                          setDashboardProjects(next);
+                        }}
+                        placeholder="Closed, Resolved"
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 12 }}>Include Statuses (comma-separated)</span>
+                      <input
+                        value={statusIncludeDrafts[index] || ""}
+                        onChange={(e) => {
+                          const next = [...statusIncludeDrafts];
+                          next[index] = e.target.value;
+                          setStatusIncludeDrafts(next);
+                        }}
+                        onBlur={(e) => {
+                          const next = [...dashboardProjects];
+                          next[index] = { ...next[index], includeStatuses: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) };
+                          setDashboardProjects(next);
+                        }}
+                        placeholder="Open, In Progress, Reopened"
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+              <button
+                className="chip"
+                onClick={() => {
+                  setDashboardProjects([...dashboardProjects, { projectKey: "", issueType: "Bug", excludeLabels: [], includeLabels: [], excludeStatuses: [], includeStatuses: [], enabled: true }]);
+                  setLabelExcludeDrafts([...labelExcludeDrafts, ""]);
+                  setLabelIncludeDrafts([...labelIncludeDrafts, ""]);
+                  setStatusExcludeDrafts([...statusExcludeDrafts, ""]);
+                  setStatusIncludeDrafts([...statusIncludeDrafts, ""]);
+                }}
+                type="button"
+                style={{ alignSelf: "flex-start" }}
+              >
+                + Add Project
+              </button>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+                <button className="secondary-button" onClick={() => { document.body.style.overflow = ""; setShowDashboardConfig(false); }} type="button">Cancel</button>
+                <button className="primary-button" onClick={() => {
+                  const finalProjects = dashboardProjects.map((p, i) => ({
+                    ...p,
+                    excludeLabels: (labelExcludeDrafts[i] || "").split(",").map((s) => s.trim()).filter(Boolean),
+                    includeLabels: (labelIncludeDrafts[i] || "").split(",").map((s) => s.trim()).filter(Boolean),
+                    excludeStatuses: (statusExcludeDrafts[i] || "").split(",").map((s) => s.trim()).filter(Boolean),
+                    includeStatuses: (statusIncludeDrafts[i] || "").split(",").map((s) => s.trim()).filter(Boolean),
+                  }));
+                  void saveDashboardConfig(finalProjects);
+                }} type="button">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>, document.body)}
     </section>
   );
 }
