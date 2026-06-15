@@ -1,6 +1,11 @@
-import { createWorker } from "tesseract.js";
+import { createWorker, createScheduler } from "tesseract.js";
 import { logger } from "./logger";
 import type { OcrResult } from "@shared/types";
+import { app } from "electron";
+import path from "node:path";
+import fs from "node:fs";
+
+const WORKER_PATH = path.join(app.getAppPath(), "node_modules", "tesseract.js", "dist", "worker.min.js");
 
 export class OcrService {
   private worker: Tesseract.Worker | null = null;
@@ -8,7 +13,15 @@ export class OcrService {
 
   private async getWorker(): Promise<Tesseract.Worker> {
     if (!this.worker) {
-      this.worker = await createWorker("eng+ind");
+      const workerOptions: any = {
+        langPath: path.join(app.getAppPath(), "node_modules", "tesseract.js", "dist"),
+      };
+
+      if (fs.existsSync(WORKER_PATH)) {
+        workerOptions.workerPath = WORKER_PATH;
+      }
+
+      this.worker = await createWorker("eng+ind", 1, workerOptions);
     }
     return this.worker;
   }
