@@ -125,7 +125,11 @@ export default function Dashboard() {
     ? activeReadyForQa.filter((i) =>
         !ticketSearch || i.key.toLowerCase().includes(ticketSearch.toLowerCase()) || i.summary.toLowerCase().includes(ticketSearch.toLowerCase())
       )
-    : [];
+    : activeProjectTab === "all" && hasProjects
+      ? activeReadyForQa.filter((i) =>
+          !ticketSearch || i.key.toLowerCase().includes(ticketSearch.toLowerCase()) || i.summary.toLowerCase().includes(ticketSearch.toLowerCase())
+        )
+      : [];
   const projectTotalPages = Math.max(1, Math.ceil(projectFiltered.length / projectRowsPerPage));
   const projectPaginated = projectFiltered.slice(
     (projectPage - 1) * projectRowsPerPage,
@@ -497,8 +501,8 @@ export default function Dashboard() {
                     <td><div className="skeleton" style={{ height: 16, width: 32, marginLeft: "auto" }} /></td>
                   </tr>
                 ))
-              ) : (activeProjectData ? projectPaginated : paginatedReadyForQa).length > 0 ? (
-                (activeProjectData ? projectPaginated : paginatedReadyForQa).map((issue) => (
+              ) : projectPaginated.length > 0 ? (
+                projectPaginated.map((issue) => (
                   <tr key={issue.id}>
                     <td className="key-cell">
                       <button onClick={() => void window.qaBuddy.openExternal(issue.url)} type="button">
@@ -554,7 +558,7 @@ export default function Dashboard() {
                   setCurrentPage(1);
                 }}
                 style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--outline-variant)", background: "var(--surface-container-low)", color: "var(--on-surface)", fontSize: 13 }}
-                disabled={!!activeProjectData}
+                disabled={!!activeProjectData || activeProjectTab === "all"}
               >
                 <option value={10}>10</option>
                 <option value={25}>25</option>
@@ -562,7 +566,7 @@ export default function Dashboard() {
                 <option value={100}>100</option>
               </select>
               <span style={{ marginLeft: 8, color: "var(--on-surface-variant)" }}>
-                {activeProjectData
+                {(activeProjectData || activeProjectTab === "all")
                   ? projectFiltered.length > 0
                     ? `${(projectPage - 1) * projectRowsPerPage + 1}–${Math.min(projectPage * projectRowsPerPage, projectFiltered.length)} of ${projectFiltered.length} issues`
                     : "0 of 0 issues"
@@ -573,7 +577,7 @@ export default function Dashboard() {
               </span>
             </div>
             <div className="pagination" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {activeProjectData ? (
+              {(activeProjectData || activeProjectTab === "all") ? (
                 <>
                   <button disabled={projectPage <= 1} onClick={() => setProjectPage(1)} type="button" title="First page">
                     <span className="material-symbols">first_page</span>
