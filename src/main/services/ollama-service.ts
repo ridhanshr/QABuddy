@@ -444,10 +444,12 @@ export class OllamaService {
 
   private async generateJson<T>(prompt: string, temperature?: number, modelOverride?: string): Promise<T | null> {
     let response = await this.client.generateText(prompt, "json", temperature, modelOverride);
+    let usedFormat = "json";
     
     if (!response) {
       logger.warn("Ollama", "JSON format request failed, falling back to standard text...");
       response = await this.client.generateText(prompt, undefined, temperature, modelOverride);
+      usedFormat = "text";
     }
 
     if (!response) {
@@ -455,11 +457,15 @@ export class OllamaService {
     }
 
     // ponies: log response length for debugging
-    logger.info("Ollama", `Generated response: ${response.length} chars`);
+    logger.info("Ollama", `Generated response: ${response.length} chars (format: ${usedFormat})`);
     
     const parsed = extractJsonBlock<T>(response);
     if (!parsed) {
-      logger.warn("Ollama", "Failed to parse JSON from response", response.slice(0, 200));
+      logger.warn("Ollama", "Failed to parse JSON from response", { 
+        length: response.length,
+        format: usedFormat,
+        preview: response.slice(0, 500) 
+      });
     }
     
     return parsed;
