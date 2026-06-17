@@ -379,17 +379,17 @@ export class OllamaService {
 
         if (testCases && testCases.length > 0) {
           const ids = testCases.map(tc => tc.id || 'unknown').join(', ');
-          logger.info("Ollama", `Extracted ${testCases.length} test cases`, {
-            ids: ids,
-            foundKey: foundKey
-          });
-          return testCases;
+          logger.info("Ollama", `Extracted ${testCases.length} test cases`);
         }
 
+        // ponies: log full parsed structure when extraction fails
         if (attempt < maxRetries) {
           const keys = response ? Object.keys(response).join(',') : 'null';
           const preview = foundKey && response[foundKey] ? response[foundKey].slice(0, 3) : null;
-          logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying... (keys: ${keys}, isArray: ${Array.isArray(response)}, foundKey: ${foundKey}, preview: ${JSON.stringify(preview)})`);
+          const structure = response && typeof response === 'object' ? JSON.stringify(response, null, 2) : 'not an object';
+          logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying... (keys: ${keys}, isArray: ${Array.isArray(response)}, foundKey: ${foundKey})`, {
+            preview: structure.slice(0, 1000)
+          });
         }
       } catch (err) {
         if (attempt < maxRetries) {
