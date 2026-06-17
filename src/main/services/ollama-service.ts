@@ -8,6 +8,7 @@ import type {
   JiraIssueSummary,
   OllamaConfig,
 } from "@shared/types";
+import { VALID_PRIORITIES, VALID_CATEGORIES } from "@shared/types";
 import { extractJsonBlock, fallbackBugPreview, validateBugPreview, fallbackTestCases } from "./utils";
 import { logger } from "./logger";
 import { OllamaClient } from "./ollama/ollama-client";
@@ -424,13 +425,13 @@ export class OllamaService {
             foundKey = testCaseKey;
             const rawCases = response[testCaseKey] as any[];
             testCases = rawCases.map((item: any, i: number) => ({
-              id: item.id || item.test_case_id || item.TestCaseID || item.testCaseId || `TC-${String(i + 1).padStart(3, "0")}`,
+              id: `TC-${String(i + 1).padStart(3, "0")}`,  // Always generate proper format
               title: item.title || item.test_case_name || item.TestCaseName || item.testCaseName || `Test Case ${i + 1}`,
               objective: item.objective || item.expected_result || item.ExpectedResult || 
                          (Array.isArray(item.steps) ? item.steps.join('; ') : item.steps) ||
                          item.description || item.Description || `Test case ${i + 1}`,
-              priority: item.priority || item.Priority || 'P2',
-              category: item.category || item.Category || 'Functional',
+              priority: VALID_PRIORITIES.includes(item.priority) ? item.priority : "P2",
+              category: VALID_CATEGORIES.includes(item.category) ? item.category : "Functional",
               selected: true,
             }));
           } else if (relaxedKey) {
