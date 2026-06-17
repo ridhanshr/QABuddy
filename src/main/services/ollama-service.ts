@@ -360,25 +360,34 @@ export class OllamaService {
         );
 
         let testCases: ExtractedTestCase[] | null = null;
+        let foundKey: string | null = null;
 
         if (Array.isArray(response)) {
           testCases = response;
+          foundKey = 'direct-array';
         } else if (response && typeof response === 'object') {
-          const arrayKey = Object.keys(response).find(k => {
+          const possibleKey = Object.keys(response).find(k => {
             const arr = response[k];
             return Array.isArray(arr) && arr.length > 0 && 
                    arr[0]?.id && arr[0]?.title && arr[0]?.objective;
           });
-          if (arrayKey) testCases = response[arrayKey];
+          if (possibleKey) {
+            foundKey = possibleKey;
+            testCases = response[possibleKey];
+          }
         }
 
         if (testCases && testCases.length > 0) {
+          const ids = testCases.map(tc => tc.id || 'unknown').join(', ');
+          logger.info("Ollama", `Extracted ${testCases.length} test cases`, {
+            ids: ids,
+            foundKey: foundKey
+          });
           return testCases;
         }
 
         if (attempt < maxRetries) {
           const keys = response ? Object.keys(response).join(',') : 'null';
-          const foundKey = Object.keys(response || {}).find(k => Array.isArray(response[k]) && response[k].length > 0);
           const preview = foundKey && response[foundKey] ? response[foundKey].slice(0, 3) : null;
           logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying... (keys: ${keys}, isArray: ${Array.isArray(response)}, foundKey: ${foundKey}, preview: ${JSON.stringify(preview)})`);
         }
@@ -471,6 +480,13 @@ export class OllamaService {
         length: response.length,
         format: usedFormat,
         preview: response.slice(0, 500) 
+      });
+    } else {
+      // ponies: log the actual parsed structure for debugging
+      logger.info("Ollama", `JSON parsed successfully`, { 
+        keys: Object.keys(parsed).join(','),
+        isArray: Array.isArray(parsed),
+        sample: JSON.stringify(parsed).slice(0, 200)
       });
     }
     
