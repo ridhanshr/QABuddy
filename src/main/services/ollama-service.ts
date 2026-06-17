@@ -364,7 +364,11 @@ export class OllamaService {
         if (Array.isArray(response)) {
           testCases = response;
         } else if (response && typeof response === 'object') {
-          const arrayKey = Object.keys(response).find(k => Array.isArray(response[k]) && response[k].length > 0);
+          const arrayKey = Object.keys(response).find(k => {
+            const arr = response[k];
+            return Array.isArray(arr) && arr.length > 0 && 
+                   arr[0]?.id && arr[0]?.title && arr[0]?.objective;
+          });
           if (arrayKey) testCases = response[arrayKey];
         }
 
@@ -374,7 +378,9 @@ export class OllamaService {
 
         if (attempt < maxRetries) {
           const keys = response ? Object.keys(response).join(',') : 'null';
-          logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying... (keys: ${keys}, isArray: ${Array.isArray(response)})`);
+          const foundKey = Object.keys(response || {}).find(k => Array.isArray(response[k]) && response[k].length > 0);
+          const preview = foundKey && response[foundKey] ? response[foundKey].slice(0, 3) : null;
+          logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying... (keys: ${keys}, isArray: ${Array.isArray(response)}, foundKey: ${foundKey}, preview: ${JSON.stringify(preview)})`);
         }
       } catch (err) {
         if (attempt < maxRetries) {
