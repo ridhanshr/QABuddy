@@ -2,8 +2,8 @@ import type { BugFormDraft, BugPreview, ExtractedTestCase } from "@shared/types"
 import { sanitizeExtractedTestCase } from "@shared/types";
 
 // ponies: Content chunking for large Confluence pages
-const CHUNK_SIZE = 15000; // Leave room for prompt template (~1-2k chars)
-const OVERLAP_SIZE = 200; // Context overlap between chunks
+const CHUNK_SIZE = 12000; // Reduced: leave room for prompt template (~3-4k chars) + safety margin
+const MAX_OVERLAP = 300;  // Max overlap window to search for sentence boundary
 
 export function chunkContent(text: string, maxChunkSize: number = CHUNK_SIZE): string[] {
   if (text.length <= maxChunkSize) {
@@ -15,27 +15,44 @@ export function chunkContent(text: string, maxChunkSize: number = CHUNK_SIZE): s
 
   while (start < text.length) {
     let end = Math.min(start + maxChunkSize, text.length);
-    
-    // Try to break at paragraph boundary (\n\n)
+
+    // Try to break at paragraph boundary (\n\n) first
     if (end < text.length) {
       const lastParagraph = text.lastIndexOf("\n\n", end);
       if (lastParagraph > start + maxChunkSize * 0.5) {
-        end = lastParagraph;
+        end = lastParagraph + 2; // include the newlines so next chunk starts clean
       } else {
-        // Try sentence boundary (. ! ?)
-        const lastSentence = text.lastIndexOf(". ", end);
+        // Try sentence boundary (. or ? or !)
+        const lastPeriod = text.lastIndexOf(". ", end);
+        const lastQuestion = text.lastIndexOf("? ", end);
+        const lastExclaim = text.lastIndexOf("! ", end);
+        const lastSentence = Math.max(lastPeriod, lastQuestion, lastExclaim);
         if (lastSentence > start + maxChunkSize * 0.5) {
-          end = lastSentence + 1;
+          end = lastSentence + 1; // include the punctuation, exclude the space
         }
       }
     }
 
-    chunks.push(text.slice(start, end));
-    
-    // Move start with overlap for context continuity
-    start = end - OVERLAP_SIZE;
-    if (start < 0) start = 0;
-    if (start >= text.length - OVERLAP_SIZE) break;
+    chunks.push(text.slice(start, end).trim());
+
+    // Sentence-aware overlap: find the last sentence boundary near `end` and
+    // only accept it if it falls within the overlap window, so the next chunk
+    // starts at a clean sentence boundary. lastIndexOf searches leftward from
+    // `end` across the entire string, but the guard `>= minOverlapPos` ensures
+    // we only accept boundaries within [end - MAX_OVERLAP, end].
+    if (end >= text.length) break;
+    const minOverlapPos = Math.max(end - MAX_OVERLAP, start + 1);
+    const lastPeriodBeforeEnd = text.lastIndexOf(". ", end);
+    const lastNewlineBeforeEnd = text.lastIndexOf("\n", end);
+    const sentenceBoundary = Math.max(lastPeriodBeforeEnd, lastNewlineBeforeEnd);
+
+    if (sentenceBoundary >= minOverlapPos) {
+      // Found a clean boundary inside the overlap window — start next chunk there
+      start = sentenceBoundary + 1;
+    } else {
+      // No clean boundary inside the window — continue from end (no overlap)
+      start = end;
+    }
   }
 
   return chunks;
@@ -120,8 +137,9 @@ export function extractJsonBlock<T>(value: string): T | null {
     }
   }
 
-  // Try to extract JSON object (non-greedy: match first { ... } block)
-  const objectMatch = trimmed.match(/\{[\s\S]*?\}/);
+  // Try to extract JSON object — greedy match to capture the full outer object,
+  // not just the first inner nested object (non-greedy would stop at the first '}')
+  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
   if (objectMatch) {
     const objectValue = tryJsonParse<T>(objectMatch[0]);
     if (objectValue) {
@@ -129,19 +147,28 @@ export function extractJsonBlock<T>(value: string): T | null {
     }
   }
 
-  // Try to extract JSON array (non-greedy: match first [ ... ] block)
-  const arrayMatch = trimmed.match(/\[[\s\S]*?\]/);
+  // Try to extract JSON array — greedy match to capture the full outer array
+  const arrayMatch = trimmed.match(/\[[\s\S]*\]/);
   if (arrayMatch) {
-    return tryJsonParse<T>(arrayMatch[0]);
+    const arrayValue = tryJsonParse<T>(arrayMatch[0]);
+    if (arrayValue) {
+      return arrayValue;
+    }
   }
 
-  // Try with trailing comma removal
+  // Last resort: clean trailing commas and control chars, then re-attempt greedy match
   const cleaned = trimmed
-    .replace(/,\s*([}\]])/g, "$1")  // Remove trailing commas
+    .replace(/,\s*([}\]])/g, "$1")   // Remove trailing commas
     .replace(/[\x00-\x1F\x7F]/g, " "); // Remove control characters
   const cleanedObjectMatch = cleaned.match(/\{[\s\S]*\}/);
   if (cleanedObjectMatch) {
     return tryJsonParse<T>(cleanedObjectMatch[0]);
+  }
+
+  // Final fallback: cleaned array
+  const cleanedArrayMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (cleanedArrayMatch) {
+    return tryJsonParse<T>(cleanedArrayMatch[0]);
   }
 
   return null;

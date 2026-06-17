@@ -311,7 +311,7 @@ export class ConfluenceService {
     const content = page.body?.storage?.value || "";
     
     const plainText = stripHtml(content);
-    const needsChunking = plainText.length > 15000;
+    const needsChunking = plainText.length > 12000; // sync with CHUNK_SIZE in utils.ts
 
     let testCases: ExtractedTestCase[] = [];
     let isFallback = false;
@@ -327,13 +327,14 @@ export class ConfluenceService {
           for (let i = 0; i < chunks.length; i++) {
             logger.info("Confluence", `Extracting part ${i + 1}/${chunks.length}...`);
             let extracted: ExtractedTestCase[] | null = null;
-            
+            const chunkInfo = { index: i, total: chunks.length };
+
             if (ragContext && typeof ollama.extractTestCasesRagEnriched === "function") {
-              extracted = await ollama.extractTestCasesRagEnriched(chunks[i], ocrText, ragContext, depth as ExtractionDepth);
+              extracted = await ollama.extractTestCasesRagEnriched(chunks[i], ocrText, ragContext, depth as ExtractionDepth, chunkInfo);
             } else if (ocrText && typeof ollama.extractTestCasesOcrGrounded === "function") {
-              extracted = await ollama.extractTestCasesOcrGrounded(chunks[i], ocrText, depth as ExtractionDepth, ragContext);
+              extracted = await ollama.extractTestCasesOcrGrounded(chunks[i], ocrText, depth as ExtractionDepth, ragContext, chunkInfo);
             } else if (typeof ollama.extractTestCases === "function") {
-              extracted = await ollama.extractTestCases(chunks[i], depth as ExtractionDepth, ragContext, ocrText);
+              extracted = await ollama.extractTestCases(chunks[i], depth as ExtractionDepth, ragContext, ocrText, chunkInfo);
             }
             
             if (extracted && extracted.length > 0) {
