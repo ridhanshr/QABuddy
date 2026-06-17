@@ -8,7 +8,7 @@ import type {
   JiraIssueSummary,
   OllamaConfig,
 } from "@shared/types";
-import { extractJsonBlock, fallbackBugPreview, validateBugPreview } from "./utils";
+import { extractJsonBlock, fallbackBugPreview, validateBugPreview, fallbackTestCases } from "./utils";
 import { logger } from "./logger";
 import { OllamaClient } from "./ollama/ollama-client";
 import {
@@ -380,6 +380,38 @@ export class OllamaService {
         if (testCases && testCases.length > 0) {
           const ids = testCases.map(tc => tc.id || 'unknown').join(', ');
           logger.info("Ollama", `Extracted ${testCases.length} test cases`);
+          return testCases;
+        }
+
+        // ponies: detect narrative project descriptions and log for fallback
+        if (response && typeof response === 'object') {
+          const narrativeKeys = ['activityType', 'projectDescription', 'mainFeatures', 'additionalNotes', 'useCaseTitle', 'actors', 'useCaseSteps', 'acceptanceCriteria'];
+          const hasNarrativePattern = Object.keys(response).some(k => 
+            narrativeKeys.includes(k) || typeof response[k] === 'string'
+          );
+          
+          if (hasNarrativePattern) {
+            logger.warn("Ollama", `Narrative project description detected, falling back to rule-based extraction`, {
+              keys: Object.keys(response).join(', '),
+              sample: JSON.stringify(response).slice(0, 500)
+            });
+            
+            // ponies: attempt rule-based fallback for this chunk
+            const bodyText = Object.entries(response)
+              .filter(([k, v]) => typeof v === 'string')
+              .map(([k, v]) => `${k}: ${v}`)
+              .join('\n\n');
+            
+            const fallbackCases = await fallbackTestCases(
+              bodyText, // Convert object to text for fallback
+              'comprehensive'  // Default depth for fallback
+            );
+            
+            if (fallbackCases && fallbackCases.length > 0) {
+              logger.info("Ollama", `Fallback extraction successful: ${fallbackCases.length} test cases extracted`);
+              return fallbackCases;
+            }
+          }
         }
 
         // ponies: log full parsed structure when extraction fails
@@ -393,7 +425,7 @@ export class OllamaService {
         }
       } catch (err) {
         if (attempt < maxRetries) {
-          logger.warn("Ollama", `Extraction attempt ${attempt + 1} failed, retrying...`, err);
+          logger.warn("Ollama", `Extraction attempt ${attempt + 1} failed, retrying...`);
         } else {
           throw err;
         }
