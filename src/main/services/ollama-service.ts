@@ -323,10 +323,11 @@ export class OllamaService {
     content: string,
     depth: ExtractionDepth,
     ragContext?: string,
-    ocrText?: string
+    ocrText?: string,
+    chunkInfo?: { index: number; total: number }
   ): Promise<ExtractedTestCase[] | null> {
-    const prompt = buildExtractionPrompt({ content, depth, mode: "standard", ragContext, ocrText });
-    return this.extractTestCasesWithRetry(prompt);
+    const prompt = buildExtractionPrompt({ content, depth, mode: "standard", ragContext, ocrText, chunkInfo });
+    return this.extractTestCasesWithRetry(prompt, depth);
   }
 
   async extractTestCasesOcrGrounded(
@@ -334,9 +335,10 @@ export class OllamaService {
     ocrText: string,
     depth: ExtractionDepth,
     ragContext?: string,
+    chunkInfo?: { index: number; total: number }
   ): Promise<ExtractedTestCase[] | null> {
-    const prompt = buildExtractionPrompt({ content: textContent, depth, mode: "ocr", ocrText, ragContext });
-    return this.extractTestCasesWithRetry(prompt);
+    const prompt = buildExtractionPrompt({ content: textContent, depth, mode: "ocr", ocrText, ragContext, chunkInfo });
+    return this.extractTestCasesWithRetry(prompt, depth);
   }
 
   async extractTestCasesRagEnriched(
@@ -344,20 +346,46 @@ export class OllamaService {
     ocrText: string | undefined,
     ragContext: string,
     depth: ExtractionDepth,
+    chunkInfo?: { index: number; total: number }
   ): Promise<ExtractedTestCase[] | null> {
-    const prompt = buildExtractionPrompt({ content: textContent, depth, mode: "rag", ocrText, ragContext });
-    return this.extractTestCasesWithRetry(prompt);
+    const prompt = buildExtractionPrompt({ content: textContent, depth, mode: "rag", ocrText, ragContext, chunkInfo });
+    return this.extractTestCasesWithRetry(prompt, depth);
   }
 
   // ponies: retry logic for extraction
-  private async extractTestCasesWithRetry(prompt: string, maxRetries: number = 1): Promise<ExtractedTestCase[] | null> {
+  // attempt 0: temperature 0.15 (low, for deterministic JSON)
+  // attempt 1: temperature 0.05 (even lower) + brief format reminder appended to prompt
+  // attempt 2: temperature 0.02 (near-zero) + stronger format reminder
+  private async extractTestCasesWithRetry(
+    prompt: string,
+    depth: ExtractionDepth = 'comprehensive',
+    maxRetries: number = 2
+  ): Promise<ExtractedTestCase[] | null> {
+    // Temperature schedule: lower on each retry for more deterministic output
+    const temperatureSchedule = [0.15, 0.05, 0.02];
+    // Format reminders appended on retry — increasingly explicit
+    const retryFormatReminders = [
+      '', // attempt 0: no reminder
+      '\n\n[IMPORTANT] You MUST output ONLY a JSON object with this EXACT shape:\n' +
+        '{"testCases":[{"id":"TC-001","title":"Verify ...","objective":"...","priority":"P1","category":"Functional","selected":true}]}\n' +
+        'Do NOT summarize the document. Do NOT create categories. Extract TESTABLE SCENARIOS as test cases.',
+      '\n\n[CRITICAL RETRY] Your previous responses were in the WRONG format. ' +
+        'You returned a document summary, but I need TEST CASES.\n' +
+        'A test case describes a SPECIFIC action a QA tester should perform and what the expected result is.\n' +
+        'Example: {"testCases":[{"id":"TC-001","title":"Verifikasi login dengan kredensial valid","objective":"Pengguna memasukkan email dan password yang valid, lalu klik Login. Sistem harus menampilkan halaman dashboard.","priority":"P1","category":"Functional","selected":true}]}\n' +
+        'Output ONLY the JSON object. First character MUST be { and last character MUST be }.',
+    ];
+
+    // Track the last wrong response's body text for eventual rule-based fallback
+    let lastNarrativeBodyText: string | null = null;
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const temperature = temperatureSchedule[attempt] ?? temperatureSchedule[temperatureSchedule.length - 1];
+      const reminder = retryFormatReminders[attempt] ?? retryFormatReminders[retryFormatReminders.length - 1];
+      const effectivePrompt = prompt + reminder;
+
       try {
-        const response = await this.generateJson<any>(
-          prompt,
-          0.7,
-          this.modelFor("extraction")
-        );
+        const response = await this.generateJson<any>(effectivePrompt, temperature, this.modelFor("extraction"));
 
         let testCases: ExtractedTestCase[] | null = null;
         let foundKey: string | null = null;
@@ -366,50 +394,115 @@ export class OllamaService {
           testCases = response;
           foundKey = 'direct-array';
         } else if (response && typeof response === 'object') {
-          const possibleKey = Object.keys(response).find(k => {
+          // Fix 1a: strict match — array entries with id + title + objective (expected format)
+          const strictKey = Object.keys(response).find(k => {
             const arr = response[k];
-            return Array.isArray(arr) && arr.length > 0 && 
+            return Array.isArray(arr) && arr.length > 0 &&
                    arr[0]?.id && arr[0]?.title && arr[0]?.objective;
           });
-          if (possibleKey) {
-            foundKey = possibleKey;
-            testCases = response[possibleKey];
+
+          // Fix 1b: relaxed match — array entries with at least title or objective (partial format)
+          const relaxedKey = !strictKey
+            ? Object.keys(response).find(k => {
+                const arr = response[k];
+                return Array.isArray(arr) && arr.length > 0 &&
+                       (arr[0]?.title || arr[0]?.objective);
+              })
+            : undefined;
+
+          // Fix 1c: also check for test_cases (snake_case) and testCases (camelCase) keys
+          // and normalize field names like test_case_name -> title, expected_result -> objective
+          const knownTestCaseKeys = ['testCases', 'test_cases', 'TestCases', 'test_cases'];
+          const testCaseKey = knownTestCaseKeys.find(k => Array.isArray(response[k]) && response[k].length > 0);
+
+          if (strictKey) {
+            foundKey = strictKey;
+            testCases = response[strictKey];
+          } else if (testCaseKey) {
+            // Fix 2: Normalize field names from AI output variations
+            logger.info("Ollama", `Normalizing field names from key: '${testCaseKey}'`);
+            foundKey = testCaseKey;
+            const rawCases = response[testCaseKey] as any[];
+            testCases = rawCases.map((item: any, i: number) => ({
+              id: item.id || item.test_case_id || item.TestCaseID || item.testCaseId || `TC-${String(i + 1).padStart(3, "0")}`,
+              title: item.title || item.test_case_name || item.TestCaseName || item.testCaseName || `Test Case ${i + 1}`,
+              objective: item.objective || item.expected_result || item.ExpectedResult || 
+                         (Array.isArray(item.steps) ? item.steps.join('; ') : item.steps) ||
+                         item.description || item.Description || `Test case ${i + 1}`,
+              priority: item.priority || item.Priority || 'P2',
+              category: item.category || item.Category || 'Functional',
+              selected: true,
+            }));
+          } else if (relaxedKey) {
+            logger.warn("Ollama", `Using relaxed key match for test case extraction: '${relaxedKey}'`);
+            foundKey = relaxedKey;
+            // Map partial entries to full ExtractedTestCase shape
+            testCases = (response[relaxedKey] as any[]).map((item: any, i: number) => ({
+              id: item.id || `TC-${String(i + 1).padStart(3, "0")}`,
+              title: item.title || item.Feature || item.feature || `Test Case ${i + 1}`,
+              objective: item.objective || item.Functionality || item.functionality || item.description || "",
+              priority: item.priority || "P2",
+              category: item.category || "Functional",
+              selected: true,
+            }));
           }
         }
 
         if (testCases && testCases.length > 0) {
-          const ids = testCases.map(tc => tc.id || 'unknown').join(', ');
-          logger.info("Ollama", `Extracted ${testCases.length} test cases`);
+          logger.info("Ollama", `Extracted ${testCases.length} test cases (key: ${foundKey}) on attempt ${attempt + 1}`);
           return testCases;
         }
 
-        // ponies: detect narrative project descriptions and log for fallback
+        // Detect wrong-format JSON — AI returned categorized summary instead of testCases[]
         if (response && typeof response === 'object') {
+          const responseKeys = Object.keys(response);
           const narrativeKeys = ['activityType', 'projectDescription', 'mainFeatures', 'additionalNotes', 'useCaseTitle', 'actors', 'useCaseSteps', 'acceptanceCriteria'];
-          const hasNarrativePattern = Object.keys(response).some(k => 
-            narrativeKeys.includes(k) || typeof response[k] === 'string'
-          );
-          
-          if (hasNarrativePattern) {
-            logger.warn("Ollama", `Narrative project description detected, falling back to rule-based extraction`, {
-              keys: Object.keys(response).join(', '),
-              sample: JSON.stringify(response).slice(0, 500)
-            });
-            
-            // ponies: attempt rule-based fallback for this chunk
-            const bodyText = Object.entries(response)
-              .filter(([k, v]) => typeof v === 'string')
-              .map(([k, v]) => `${k}: ${v}`)
-              .join('\n\n');
-            
-            const fallbackCases = await fallbackTestCases(
-              bodyText, // Convert object to text for fallback
-              'comprehensive'  // Default depth for fallback
+
+          // Detect narrative pattern: known narrative keys, string values, OR
+          // all values are arrays (AI returned a categorized summary structure)
+          const hasNarrativePattern =
+            responseKeys.some(k =>
+              narrativeKeys.includes(k) || typeof response[k] === 'string'
+            ) ||
+            (
+              !responseKeys.includes('testCases') &&
+              responseKeys.length > 0 &&
+              responseKeys.every(k => Array.isArray(response[k]))
             );
-            
-            if (fallbackCases && fallbackCases.length > 0) {
-              logger.info("Ollama", `Fallback extraction successful: ${fallbackCases.length} test cases extracted`);
-              return fallbackCases;
+
+          if (hasNarrativePattern) {
+            // Serialize the wrong response to text for eventual rule-based fallback
+            lastNarrativeBodyText = Object.entries(response)
+              .map(([k, v]) => {
+                if (typeof v === 'string') return `${k}: ${v}`;
+                if (Array.isArray(v)) {
+                  const items = (v as any[]).map(item =>
+                    typeof item === 'object' && item !== null
+                      ? Object.entries(item)
+                          .map(([ik, iv]) => `  ${ik}: ${iv}`)
+                          .join('\n')
+                      : String(item)
+                  ).join('\n');
+                  return `${k}:\n${items}`;
+                }
+                return null;
+              })
+              .filter(Boolean)
+              .join('\n\n');
+
+            if (attempt < maxRetries) {
+              // DON'T fall back yet — retry with format reminder
+              logger.warn("Ollama", `Attempt ${attempt + 1}: Wrong response format (AI returned summary/narrative instead of testCases[]), retrying with format reminder...`, {
+                keys: responseKeys.join(', '),
+                sample: JSON.stringify(response).slice(0, 300)
+              });
+              continue; // ← KEY FIX: retry instead of returning fallback
+            } else {
+              // Final attempt also failed — NOW fall back to rule-based
+              logger.warn("Ollama", `All ${maxRetries + 1} attempts returned wrong format. Falling back to rule-based extraction.`, {
+                keys: responseKeys.join(', '),
+                sample: JSON.stringify(response).slice(0, 500)
+              });
             }
           }
         }
@@ -417,7 +510,6 @@ export class OllamaService {
         // ponies: log full parsed structure when extraction fails
         if (attempt < maxRetries) {
           const keys = response ? Object.keys(response).join(',') : 'null';
-          const preview = foundKey && response[foundKey] ? response[foundKey].slice(0, 3) : null;
           const structure = response && typeof response === 'object' ? JSON.stringify(response, null, 2) : 'not an object';
           logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying... (keys: ${keys}, isArray: ${Array.isArray(response)}, foundKey: ${foundKey})`, {
             preview: structure.slice(0, 1000)
@@ -431,6 +523,16 @@ export class OllamaService {
         }
       }
     }
+
+    // All retries exhausted — use rule-based fallback on the last narrative body text if available
+    if (lastNarrativeBodyText) {
+      const fallbackCases = fallbackTestCases(lastNarrativeBodyText, depth);
+      if (fallbackCases && fallbackCases.length > 0) {
+        logger.info("Ollama", `Rule-based fallback extraction after all retries: ${fallbackCases.length} test cases`);
+        return fallbackCases;
+      }
+    }
+
     return null;
   }
 

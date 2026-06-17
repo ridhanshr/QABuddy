@@ -535,7 +535,7 @@ export function buildExtractionPrompt(params: ExtractionPromptParams): string {
       "",
       "=== INPUT PRIORITY ===",
       "1. HTML requirement text — primary source",
-      "2. RAG context from Knowledge Base — tertiary source, for reference only",
+      "2. RAG context from Knowledge Base — secondary source, for reference only",
     ],
     ocr: [
       "Anda adalah Senior QA Engineer yang mengekstrak test case dari gabungan teks requirement dan hasil OCR.",
@@ -567,24 +567,36 @@ export function buildExtractionPrompt(params: ExtractionPromptParams): string {
     "- Do NOT invent features or requirements that are not present in any source.",
     "",
     "=== OUTPUT FORMAT ===",
-    "Return ONLY valid JSON with this exact shape:",
+    "Return ONLY valid JSON with this EXACT shape — no other structure is acceptable:",
     '{"testCases":[{"id":"TC-001","title":"...","objective":"...","priority":"P1|P2|P3","category":"...","selected":true}]}',
-    "CRITICAL: The output must be exactly one JSON object. It must NOT be:",
-    "  - A plain array",
-    "  - An object with keys like 'useCaseTitle', 'actors', etc.",
-    "  - A narrative text description",
-    "  - Markdown code blocks (```json ... ```)",
-    "  - Wrapped in explanatory text or headers",
-    "WARNING: Keluarkan HANYA raw JSON. Karakter pertama output HARUS '{' dan karakter terakhir HARUS '}'.",
+    "",
+    "=== STRICTLY FORBIDDEN OUTPUT FORMATS ===",
+    "❌ DO NOT return a categorized summary like: {\"Summary of Key Features\":[...], \"System Integration\":[...]}",
+    "❌ DO NOT return feature descriptions like: [{\"Feature\":\"...\",\"Functionality\":\"...\"}]",
+    "❌ DO NOT return plain arrays: [{\"id\":\"TC-001\"}] — must be wrapped in {\"testCases\":[...]}",
+    "❌ DO NOT return objects with keys like: useCaseTitle, actors, mainFeatures, projectDescription",
+    "❌ DO NOT use snake_case keys: test_cases, test_case_name, expected_result, test_steps",
+    "❌ DO NOT use markdown code blocks (```json ... ```)",
+    "❌ DO NOT add any explanatory text before or after the JSON",
+    "✅ The ONLY valid first character is '{' and the ONLY valid last character is '}'",
+    "✅ The ONLY valid top-level key is 'testCases' (camelCase)",
+    "✅ Every test case MUST have exactly these 6 fields: id, title, objective, priority, category, selected",
+    "",
+    "=== BAHASA INDONESIA ENFORCEMENT (WAJIB) ===",
+    "⚠️  SEMUA Teks title DAN objective HARUS dalam Bahasa Indonesia — NO ENGLISH, NO PORTUGUESE",
+    "✅ CONTOH BENAR:",
+    '  {"testCases":[{"id":"TC-001","title":"Verifikasi login dengan kredensial valid","objective":"Pengguna memasukkan email dan password yang valid, lalu klik Login. Sistem harus menampilkan halaman dashboard.","priority":"P1","category":"Functional","selected":true}]}',
+    "",
+    "❌ CONTOH SALAH (DILARANG):",
+    '  {"test_cases":[{"test_case_name":"Verify login","expected_result":"User can login"}]}',
+    '  {"testCases":[{"title":"Verify login with valid credentials","objective":"User enters valid email and password..."}]}',
+    '  {"testCases":[{"test_case_name":"Verificar fluxo de cliente","expected_result":"O sistema deve..."}]}',
     "",
     "=== FIELD GUIDELINES ===",
-    "- id: Sequential ID starting from TC-001",
-    "- title: Short, actionable title starting with a verb (e.g. 'Verify login with valid credentials', 'Validate error message for empty email field')",
-    "- objective: Clear, measurable description of WHAT is being tested and WHAT the expected outcome is. Include preconditions if relevant. For OCR-derived items, mention '(dari screenshot)'.",
-    "- priority:",
-    "  P1 = Critical business flow, blocks release if failing (login, payment, core CRUD)",
-    "  P2 = Important functionality, significant user impact (filters, search, notifications)",
-    "  P3 = Minor feature, cosmetic, nice-to-have (tooltips, sorting preferences, UI polish)",
+    "- id: Sequential ID starting from TC-001 (format: TC-001, TC-002, ...)",
+    "- title: Short, actionable title in Bahasa Indonesia starting with a verb (contoh: 'Verifikasi login dengan kredensial valid', 'Validasi error message untuk email kosong')",
+    "- objective: Clear, measurable description in Bahasa Indonesia of WHAT is being tested and WHAT the expected outcome is. Include preconditions if relevant. For OCR-derived items, mention '(dari screenshot)'.",
+    "- priority: P1 (Critical business flow), P2 (Important functionality), P3 (Minor feature)",
     "- category: One of: Functional, UI/UX, Security, Performance, Integration, Data Validation, Accessibility, Error Handling",
     "- selected: Always set to true",
     "",
@@ -596,7 +608,8 @@ export function buildExtractionPrompt(params: ExtractionPromptParams): string {
     "- Jika requirement tidak jelas atau ambigu, buat test case minimal dan tandai di objective bahwa requirement perlu diklarifikasi.",
     "- Jangan menambah skenario yang tidak didukung bukti dari teks, OCR, atau RAG.",
     "- Jika OCR tidak meyakinkan (confidence rendah), gunakan hanya bagian yang paling pasti.",
-    "- Output HANYA JSON format di atas. JANGAN menghasilkan struktur JSON apapun yang berbeda.",
+    "- DILARANG KERAS menghasilkan JSON dengan struktur selain {\"testCases\":[...]}. Ini akan menyebabkan error sistem.",
+    "- DILARANG merangkum dokumen dalam format kategori/fitur. Tugas Anda adalah MENGEKSTRAK test case, bukan merangkum.",
     "",
     "=== RULES ===",
     "1. Each test case must be UNIQUE — no duplicate or overlapping scenarios",
@@ -607,10 +620,18 @@ export function buildExtractionPrompt(params: ExtractionPromptParams): string {
     "6. Separate happy path, negative path, and edge cases clearly.",
   ];
 
+  // Truncate supplementary context to prevent context window overflow
+  // Combined budget: ~8000 chars for RAG+OCR, leaving room for the main content (12000) + prompt template (~4000)
+  const MAX_RAG_CHARS = 4000;
+  const MAX_OCR_CHARS = 4000;
+
   if (ragContext) {
     promptParts.push("");
     promptParts.push("=== EXISTING PROJECT CONTEXT (from Knowledge Base / RAG) ===");
-    promptParts.push(ragContext);
+    if (ragContext.length > MAX_RAG_CHARS) {
+      console.warn(`[Prompt] RAG context truncated from ${ragContext.length} to ${MAX_RAG_CHARS} chars`);
+    }
+    promptParts.push(ragContext.slice(0, MAX_RAG_CHARS));
     promptParts.push("=== END CONTEXT ===");
     promptParts.push("Use the context above ONLY for: (1) avoiding duplicate test cases, (2) aligning terminology, (3) reference. Do NOT add test cases based solely on RAG context.");
   }
@@ -618,18 +639,45 @@ export function buildExtractionPrompt(params: ExtractionPromptParams): string {
   if (ocrText) {
     promptParts.push("");
     promptParts.push("=== OCR TEXT (from screenshot / image attachment) ===");
-    promptParts.push(ocrText);
+    if (ocrText.length > MAX_OCR_CHARS) {
+      console.warn(`[Prompt] OCR text truncated from ${ocrText.length} to ${MAX_OCR_CHARS} chars`);
+    }
+    promptParts.push(ocrText.slice(0, MAX_OCR_CHARS));
     promptParts.push("=== END OCR TEXT ===");
     promptParts.push("Use OCR text as secondary source. Mark any OCR-derived items in the objective.");
   }
 
   promptParts.push("");
   if (chunkInfo) {
-    promptParts.push(`=== REQUIREMENT TEXT TO ANALYZE (Part ${chunkInfo.index + 1}/${chunkInfo.total}) ===`);
+    promptParts.push(`=== REQUIREMENT TEXT TO ANALYZE (Part ${chunkInfo.index + 1} of ${chunkInfo.total}) ===`);
+    promptParts.push(`IMPORTANT: This is part ${chunkInfo.index + 1} of ${chunkInfo.total} from a larger document.`);
+    promptParts.push("- Extract test cases ONLY from the content in THIS part.");
+    promptParts.push("- Do NOT try to cover the entire document — focus ONLY on what is in this section.");
+    if (chunkInfo.index > 0) {
+      promptParts.push("- The first sentence(s) may be a continuation from the previous part — skip them if they seem incomplete.");
+    }
   } else {
     promptParts.push("=== REQUIREMENT TEXT TO ANALYZE ===");
   }
-  promptParts.push(content);
+
+  // Safety guard: truncate content to prevent context window overflow
+  const MAX_CONTENT_CHARS = 12000;
+  if (content.length > MAX_CONTENT_CHARS) {
+    console.warn(`[Prompt] Content truncated from ${content.length} to ${MAX_CONTENT_CHARS} chars`);
+  }
+  promptParts.push(content.slice(0, MAX_CONTENT_CHARS));
+  promptParts.push("=== END REQUIREMENT TEXT ===");
+
+  // Format reinforcement: repeat the critical output instruction at the END of the prompt.
+  // LLMs pay more attention to instructions at the beginning and end of the context window.
+  // Without this, models often "forget" the format after reading 12000+ chars of content.
+  promptParts.push("");
+  promptParts.push("=== REMINDER: OUTPUT FORMAT (MUST FOLLOW) ===");
+  promptParts.push("Now generate test cases from the requirement text above.");
+  promptParts.push("Your response MUST be a JSON object with exactly ONE key: \"testCases\"");
+  promptParts.push("Each test case MUST have: id, title, objective, priority, category, selected");
+  promptParts.push('Example: {"testCases":[{"id":"TC-001","title":"Verifikasi ...","objective":"...","priority":"P1","category":"Functional","selected":true}]}');
+  promptParts.push("DO NOT summarize. DO NOT categorize. DO NOT create meeting minutes. EXTRACT TEST CASES.");
 
   return promptParts.join("\n");
 }
