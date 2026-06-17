@@ -353,18 +353,29 @@ export class OllamaService {
   private async extractTestCasesWithRetry(prompt: string, maxRetries: number = 1): Promise<ExtractedTestCase[] | null> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const response = await this.generateJson<{ testCases: ExtractedTestCase[] }>(
+        const response = await this.generateJson<any>(
           prompt,
           0.7,
           this.modelFor("extraction")
         );
-        
-        if (response?.testCases && response.testCases.length > 0) {
-          return response.testCases;
+
+        let testCases: ExtractedTestCase[] | null = null;
+
+        if (Array.isArray(response)) {
+          testCases = response;
+        } else if (response?.testCases?.length > 0) {
+          testCases = response.testCases;
+        } else if (response && typeof response === 'object') {
+          testCases = response.test_cases ?? response.TestCases ?? null;
         }
-        
+
+        if (testCases && testCases.length > 0) {
+          return testCases;
+        }
+
         if (attempt < maxRetries) {
-          logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying...`);
+          const keys = response ? Object.keys(response).join(',') : 'null';
+          logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying... (keys: ${keys}, isArray: ${Array.isArray(response)})`);
         }
       } catch (err) {
         if (attempt < maxRetries) {
