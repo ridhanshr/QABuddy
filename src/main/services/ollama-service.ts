@@ -363,10 +363,9 @@ export class OllamaService {
 
         if (Array.isArray(response)) {
           testCases = response;
-        } else if (response?.testCases?.length > 0) {
-          testCases = response.testCases;
         } else if (response && typeof response === 'object') {
-          testCases = response.test_cases ?? response.TestCases ?? null;
+          const arrayKey = Object.keys(response).find(k => Array.isArray(response[k]) && response[k].length > 0);
+          if (arrayKey) testCases = response[arrayKey];
         }
 
         if (testCases && testCases.length > 0) {
