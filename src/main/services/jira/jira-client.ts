@@ -25,6 +25,7 @@ export interface JiraSearchResponse {
 export interface XrayFolder {
   id: number;
   name: string;
+  parentId?: number;
   children?: XrayFolder[];
 }
 
@@ -89,15 +90,89 @@ export class JiraClient {
 
   /**
    * Fetch all Xray test-repository folders for a project.
+   * Handles both nested tree (children array) and flat list (parentId) formats.
+   * Xray Server uses "folders" field for children — we map it to "children".
    */
   async getXrayFolders(projectKey: string): Promise<XrayFolder[]> {
     const res = await this.xray.get<any>(`/testrepository/${projectKey}/folders`);
     const data = res.data;
-    if (Array.isArray(data)) return data;
-    if (data?.results && Array.isArray(data.results)) return data.results;
-    if (data?.data && Array.isArray(data.data)) return data.data;
-    if (data?.folders && Array.isArray(data.folders)) return data.folders;
-    throw new Error(`Unexpected Xray folders response format: ${JSON.stringify(data).slice(0, 200)}`);
+
+    logger.info("Xray", `Folders response: ${JSON.stringify(data).slice(0, 500)}`);
+
+    let rawFolders: any[];
+
+    if (Array.isArray(data)) {
+      rawFolders = data;
+    } else if (data?.results && Array.isArray(data.results)) {
+      rawFolders = data.results;
+    } else if (data?.data && Array.isArray(data.data)) {
+      rawFolders = data.data;
+    } else if (data?.folders && Array.isArray(data.folders)) {
+      rawFolders = data.folders;
+    } else {
+      throw new Error(`Unexpected Xray folders response format: ${JSON.stringify(data).slice(0, 200)}`);
+    }
+
+    // ponies: Xray Server returns "folders" field for children, map to "children"
+    const mapFolders = (items: any[]): XrayFolder[] =>
+      items.map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        parentId: f.parentId,
+        children: Array.isArray(f.children) ? mapFolders(f.children)
+               : Array.isArray(f.folders) ? mapFolders(f.folders)
+               : undefined,
+      }));
+
+    const folders = mapFolders(rawFolders);
+
+    // ponies: if flat list with parentId, convert to nested tree
+    const flatList = rawFolders.some(f => typeof f.parentId === "number");
+    const noNested = rawFolders.every(f => !Array.isArray(f.children) && !Array.isArray(f.folders));
+
+    if (flatList && noNested) {
+      logger.info("Xray", `Flat list detected (${rawFolders.length} folders with parentId), converting to tree`);
+      return this.buildFolderTree(folders);
+    }
+
+    logger.info("Xray", `Tree format: ${folders.length} root folders`);
+    return folders;
+  }
+
+  /**
+   * ponies: Convert flat folder list with parentId into nested tree.
+   */
+  private buildFolderTree(flatFolders: XrayFolder[]): XrayFolder[] {
+    const map = new Map<number, XrayFolder>();
+    const roots: XrayFolder[] = [];
+
+    for (const f of flatFolders) {
+      map.set(f.id, { ...f, children: [] });
+    }
+
+    for (const f of flatFolders) {
+      const node = map.get(f.id)!;
+      if (f.parentId && map.has(f.parentId)) {
+        map.get(f.parentId)!.children!.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+
+    // Clean up empty children arrays
+    const cleanEmpty = (nodes: XrayFolder[]) => {
+      for (const n of nodes) {
+        if (n.children && n.children.length === 0) {
+          delete n.children;
+        } else if (n.children) {
+          cleanEmpty(n.children);
+        }
+      }
+    };
+    cleanEmpty(roots);
+
+    logger.info("Xray", `Built tree: ${roots.length} root folders`);
+    return roots;
   }
 
   /**

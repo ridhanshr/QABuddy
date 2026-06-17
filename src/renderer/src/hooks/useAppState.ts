@@ -276,6 +276,16 @@ export function useAppState() {
   const [jiraStatuses, setJiraStatuses] = useState<JiraStatus[]>([]);
   const [jiraIssueTypes, setJiraIssueTypes] = useState<string[]>([]);
   const [jiraCustomFields, setJiraCustomFields] = useState<{ id: string; name: string; type: string; isCustom: boolean }[]>([]);
+  // ponies: cache for Jira metadata to avoid re-fetching on tab switch
+  const jiraMetadataCache = useRef<{
+    data: {
+      projects: JiraProject[];
+      statuses: JiraStatus[];
+      issueTypes: string[];
+      customFields: { id: string; name: string; type: string; isCustom: boolean }[];
+    } | null;
+    timestamp: number;
+  }>({ data: null, timestamp: 0 });
   const [jqlProject, setJqlProject] = useState<string[]>([]);
   const [jqlBoard, setJqlBoard] = useState<string[]>([]);
   const [jqlSprint, setJqlSprint] = useState<string[]>([]);
@@ -534,6 +544,18 @@ export function useAppState() {
     if (!needsProjects) return;
     if (!config.jira.baseUrl || !config.jira.token) return;
 
+    // ponies: check cache first (5 minutes TTL)
+    const CACHE_TTL = 5 * 60 * 1000;
+    const cache = jiraMetadataCache.current;
+    if (cache.data && Date.now() - cache.timestamp < CACHE_TTL) {
+      setJiraProjects(cache.data.projects);
+      setJiraStatuses(cache.data.statuses);
+      setJiraIssueTypes(cache.data.issueTypes);
+      setJiraCustomFields(cache.data.customFields);
+      setFiltersLoading(false);
+      return;
+    }
+
     setFiltersLoading(true);
     Promise.all([
       window.qaBuddy.getJiraProjects().catch(() => [] as JiraProject[]),
@@ -541,6 +563,11 @@ export function useAppState() {
       window.qaBuddy.getJiraIssueTypes().catch(() => [] as string[]),
       window.qaBuddy.getJiraCustomFields().catch(() => [] as { id: string; name: string; type: string; isCustom: boolean }[]),
     ]).then(([projects, statuses, issueTypes, customFields]) => {
+      // ponies: store in cache
+      jiraMetadataCache.current = {
+        data: { projects, statuses, issueTypes, customFields },
+        timestamp: Date.now(),
+      };
       setJiraProjects(projects);
       setJiraStatuses(statuses);
       setJiraIssueTypes(issueTypes);

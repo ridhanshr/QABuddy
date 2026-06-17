@@ -1154,35 +1154,37 @@ export default function ManualTestCaseScreen() {
         >
           <div
             className="card"
-            style={{ maxWidth: 520, width: '90%', padding: 32 }}
+            style={{ maxWidth: 520, width: '90%', padding: 32, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="material-symbols" style={{ color: 'var(--warning, #f59e0b)' }}>warning</span>
-              Duplicate Test Cases Detected
-            </h3>
-            <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 16 }}>
-              Test case berikut memiliki judul yang mirip dengan issue yang sudah ada di Jira:
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
-              {Object.entries(manualPendingDuplicates)
-                .filter(([, matches]) => matches.length > 0)
-                .map(([id, matches]) => {
-                  const c = manualCases.find(c => c.id === id);
-                  return (
-                    <div key={id} style={{ fontSize: 13, background: 'var(--surface-container)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--outline-variant)' }}>
-                      <div style={{ fontWeight: 600, marginBottom: 4 }}>{c?.title || 'Unknown'}</div>
-                      <div style={{ color: 'var(--warning)', fontSize: 12 }}>
-                        {matches.map(m => `${m.key}: ${m.summary}`).join(', ')}
+            <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="material-symbols" style={{ color: 'var(--warning, #f59e0b)' }}>warning</span>
+                Duplicate Test Cases Detected
+              </h3>
+              <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 16 }}>
+                Test case berikut memiliki judul yang mirip dengan issue yang sudah ada di Jira:
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                {Object.entries(manualPendingDuplicates)
+                  .filter(([, matches]) => matches.length > 0)
+                  .map(([id, matches]) => {
+                    const c = manualCases.find(c => c.id === id);
+                    return (
+                      <div key={id} style={{ fontSize: 13, background: 'var(--surface-container)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--outline-variant)' }}>
+                        <div style={{ fontWeight: 600, marginBottom: 4 }}>{c?.title || 'Unknown'}</div>
+                        <div style={{ color: 'var(--warning)', fontSize: 12 }}>
+                          {matches.map(m => `${m.key}: ${m.summary}`).join(', ')}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+              </div>
+              <p style={{ fontSize: 14, color: 'var(--on-surface-variant)' }}>
+                Tetap buat test case baru meskipun ada kemiripan?
+              </p>
             </div>
-            <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 24 }}>
-              Tetap buat test case baru meskipun ada kemiripan?
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 24, flexShrink: 0 }}>
               <button
                 className="primary-button"
                 onClick={confirmManualSubmitWithDuplicates}

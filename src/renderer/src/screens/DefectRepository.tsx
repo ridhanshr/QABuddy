@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
 import type { JiraProjectSource, DuplicateCandidate, DefectCreateDraft, BugFormDraft, BugPreview } from "@shared/types";
@@ -85,10 +85,10 @@ function buildDuplicateFiltersFromDraft(draft: DefectCreateDraft) {
 
 export default function DefectRepository() {
   const app = useApp();
-  const [searchInput, setSearchInput] = useState("");
-  const [selectedProjectFilter, setSelectedProjectFilter] = useState<string[]>([]);
-  const [selectedTypeFilter, setSelectedTypeFilter] = useState<string[]>([]);
-  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string[]>([]);
+  const [tableSearchInput, setTableSearchInput] = useState("");
+  const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>("");
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>("");
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>("");
   const [showDuplicateFor, setShowDuplicateFor] = useState<string | null>(null);
   const [showCreateDefect, setShowCreateDefect] = useState(false);
   const [createDraft, setCreateDraft] = useState<DefectCreateDraft>(createEmptyDraft());
@@ -102,6 +102,9 @@ export default function DefectRepository() {
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [polishing, setPolishing] = useState(false);
   const [polishPreview, setPolishPreview] = useState<BugPreview | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [isSearchActive, setIsSearchActive] = useState(false);
 
   useEffect(() => {
     app.loadDefectSources();
@@ -143,6 +146,79 @@ export default function DefectRepository() {
   const allTypes = [...new Set(app.defectSearchResults.map(d => d.issueType))];
   const allStatuses = [...new Set(app.defectSearchResults.map(d => d.status))];
   const visibleCandidates = app.defectCandidates.filter(c => c.score >= duplicateCandidateThreshold);
+
+  const doTableSearch = () => {
+    const q = tableSearchInput.trim();
+    if (!q) {
+      setIsSearchActive(false);
+      app.loadAllDefects();
+      return;
+    }
+    setIsSearchActive(true);
+    const filters: Record<string, unknown> = {
+      query: q,
+      projectKeys: selectedProjectFilter ? [selectedProjectFilter] : undefined,
+      issueTypes: selectedTypeFilter ? [selectedTypeFilter] : undefined,
+      statuses: selectedStatusFilter ? [selectedStatusFilter] : undefined,
+    };
+    app.handleDefectSearch(q, filters as any);
+    setCurrentPage(1);
+  };
+
+  const filteredDefects = useMemo(() => {
+    let results = app.defectSearchResults;
+    if (selectedProjectFilter) {
+      results = results.filter(d => d.sourceProjectKey === selectedProjectFilter);
+    }
+    if (selectedTypeFilter) {
+      results = results.filter(d => d.issueType === selectedTypeFilter);
+    }
+    if (selectedStatusFilter) {
+      results = results.filter(d => d.status === selectedStatusFilter);
+    }
+    if (tableSearchInput.trim()) {
+      const query = tableSearchInput.toLowerCase();
+      results = results.filter(d =>
+        d.sourceIssueKey.toLowerCase().includes(query) ||
+        d.normalizedTitle.toLowerCase().includes(query) ||
+        (d.component && d.component.toLowerCase().includes(query))
+      );
+    }
+    return results;
+  }, [app.defectSearchResults, selectedProjectFilter, selectedTypeFilter, selectedStatusFilter, tableSearchInput]);
+
+  const totalPages = Math.ceil(filteredDefects.length / itemsPerPage);
+  const paginatedDefects = filteredDefects.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const getSeverityIcon = (severity: string) => {
+    switch (severity?.toLowerCase()) {
+      case "critical": return "keyboard_double_arrow_up";
+      case "high": return "keyboard_double_arrow_up";
+      case "medium": return "remove";
+      case "low": return "keyboard_arrow_down";
+      default: return "remove";
+    }
+  };
+
+  const getSeverityColor = (severity: string) => {
+    switch (severity?.toLowerCase()) {
+      case "critical": return "var(--error)";
+      case "high": return "var(--error)";
+      case "medium": return "var(--tertiary)";
+      case "low": return "var(--outline)";
+      default: return "var(--tertiary)";
+    }
+  };
+
+  const getStatusDotColor = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case "open": return "var(--error)";
+      case "in progress": return "var(--primary)";
+      case "resolved": return "var(--outline)";
+      case "closed": return "var(--outline)";
+      default: return "var(--outline)";
+    }
+  };
 
   const openCreateDefect = () => {
     const firstProject = defectProjectOptions[0]?.projectKey || "";
@@ -319,124 +395,153 @@ export default function DefectRepository() {
     }
   };
 
-  const doSearch = () => {
-    const filters = {
-      query: searchInput,
-      projectKeys: selectedProjectFilter.length > 0 ? selectedProjectFilter : undefined,
-      issueTypes: selectedTypeFilter.length > 0 ? selectedTypeFilter : undefined,
-      statuses: selectedStatusFilter.length > 0 ? selectedStatusFilter : undefined,
-    };
-    app.setDefectFilters(filters);
-    app.setDefectSearchQuery(searchInput);
-    app.handleDefectSearch(searchInput, filters);
-  };
-
   if (app.defectTab === "sources") {
     return (
       <section className="defect-repo-section">
-        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h3 style={{ margin: 0 }}>Jira Source Configuration</h3>
-            <button className="ghost-button" onClick={() => app.setDefectTab("repository")} type="button">
-              <span className="material-symbols" style={{ fontSize: 16 }}>arrow_back</span> Back
+        {/* Page Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "var(--on-surface)", lineHeight: "28px" }}>Jira Source Configuration</h2>
+          <button
+            onClick={() => app.setDefectTab("repository")}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "var(--on-surface-variant)", fontSize: 14, cursor: "pointer", padding: "8px 0" }}
+            type="button"
+          >
+            <span className="material-symbols" style={{ fontSize: 18 }}>arrow_back</span>
+            Back
+          </button>
+        </div>
+
+        {/* Add Source Button */}
+        <div style={{ marginBottom: 24 }}>
+          <button
+            onClick={() => openSourceEditor()}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "8px 16px", height: 40,
+              background: "var(--surface)", color: "var(--primary)",
+              border: "1px solid var(--outline-variant)", borderRadius: 8,
+              fontSize: 14, fontWeight: 500, cursor: "pointer",
+              transition: "border-color 0.15s"
+            }}
+            type="button"
+          >
+            <span className="material-symbols" style={{ fontSize: 18 }}>add</span>
+            Add Source
+          </button>
+        </div>
+
+        {/* Source Cards */}
+        {app.defectSources.length === 0 ? (
+          <div style={{ padding: "48px 0", textAlign: "center" }}>
+            <span className="material-symbols filled" style={{ fontSize: 48, color: "var(--on-surface-variant)", marginBottom: 12, display: "block", opacity: 0.4 }}>source</span>
+            <p style={{ color: "var(--on-surface-variant)", margin: "0 0 16px" }}>No Jira project sources configured yet.</p>
+            <button
+              onClick={() => openSourceEditor()}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 8,
+                padding: "8px 16px",
+                background: "var(--primary)", color: "var(--on-primary)",
+                border: "none", borderRadius: 4,
+                fontSize: 13, fontWeight: 500, cursor: "pointer"
+              }}
+              type="button"
+            >
+              <span className="material-symbols" style={{ fontSize: 16 }}>add</span>
+              Add Source
             </button>
           </div>
-
-          <div style={{ marginBottom: 12 }}>
-            {app.defectSources.length === 0 ? (
-              <div className="empty-state" style={{ padding: "40px 0", textAlign: "center" }}>
-                <span className="material-symbols filled" style={{ fontSize: 40, color: "var(--on-surface-variant)", marginBottom: 8, display: "block" }}>source</span>
-                <p style={{ color: "var(--on-surface-variant)", margin: 0 }}>No Jira project sources configured yet.</p>
-                <button className="insight-btn primary" style={{ marginTop: 12 }} onClick={() => openSourceEditor()} type="button">
-                  <span className="material-symbols" style={{ fontSize: 16 }}>add</span> Add Source
-                </button>
-              </div>
-            ) : (
-              <>
-                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                  <button className="insight-btn primary" onClick={() => openSourceEditor()} type="button">
-                    <span className="material-symbols" style={{ fontSize: 16 }}>add</span> Add Source
-                  </button>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {app.defectSources.map(source => (
+              <div
+                key={source.id}
+                style={{
+                  background: "var(--surface-container-lowest)",
+                  border: "1px solid var(--outline-variant)",
+                  borderRadius: 12,
+                  padding: 24,
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                  transition: "border-color 0.15s"
+                }}
+              >
+                {/* Row 1: Project Key + Badge + Actions */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <h4 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "var(--on-surface)" }}>{source.projectKey}</h4>
+                    {source.projectName && <span style={{ fontSize: 14, color: "var(--on-surface-variant)" }}>{source.projectName}</span>}
+                    <span style={{
+                      display: "inline-flex", alignItems: "center",
+                      padding: "4px 10px", borderRadius: 999,
+                      fontSize: 12, fontWeight: 500,
+                      background: source.isActive ? "rgba(37, 99, 235, 0.1)" : "rgba(107, 114, 128, 0.1)",
+                      color: source.isActive ? "var(--primary)" : "var(--on-surface-variant)",
+                      border: `1px solid ${source.isActive ? "rgba(37, 99, 235, 0.2)" : "var(--outline-variant)"}`
+                    }}>
+                      {source.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                    <button
+                      onClick={() => openSourceEditor(source)}
+                      style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: "var(--on-surface-variant)", fontSize: 13, cursor: "pointer", padding: 0 }}
+                      type="button"
+                    >
+                      <span className="material-symbols" style={{ fontSize: 16 }}>edit</span>
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => app.handleDefectSync(source.projectKey)}
+                      disabled={app.defectSyncing === source.projectKey}
+                      style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: "var(--on-surface-variant)", fontSize: 13, cursor: "pointer", padding: 0 }}
+                      type="button"
+                    >
+                      <span className="material-symbols" style={{ fontSize: 16, animation: app.defectSyncing === source.projectKey ? "spin 1s linear infinite" : "none" }}>sync</span>
+                      {app.defectSyncing === source.projectKey ? "Syncing..." : "Sync"}
+                    </button>
+                    <button
+                      onClick={() => app.handleDefectDeleteSource(source.id)}
+                      style={{ display: "flex", alignItems: "center", background: "none", border: "none", color: "var(--error)", cursor: "pointer", padding: 0 }}
+                      type="button"
+                    >
+                      <span className="material-symbols" style={{ fontSize: 16 }}>delete</span>
+                    </button>
+                  </div>
                 </div>
 
-                {app.defectSources.map(source => (
-                  <div key={source.id} className="card" style={{ padding: 16, marginBottom: 8 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <strong style={{ fontSize: 15 }}>{source.projectKey}</strong>
-                          {source.projectName && <span style={{ color: "var(--on-surface-variant)" }}>({source.projectName})</span>}
-                          <span
-                            className="defect-score-badge"
-                            style={{
-                              background: source.isActive ? "rgba(34, 197, 94, 0.12)" : "rgba(107, 114, 128, 0.12)",
-                              color: source.isActive ? "#15803d" : "var(--font-secondary)",
-                            }}
-                          >
-                            {source.isActive ? "Active" : "Inactive"}
-                          </span>
-                        </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8, fontSize: 12, color: "var(--on-surface-variant)" }}>
-                          <span>Sync: {source.syncStatus === "success" ? "Success" : source.syncStatus === "syncing" ? "Syncing..." : source.syncStatus === "error" ? "Error" : "Idle"}</span>
-                          {source.lastSyncedAt && <span>Last sync: {new Date(source.lastSyncedAt).toLocaleString()}</span>}
-                          {source.lastAutoSyncAt && <span>Last auto sync: {new Date(source.lastAutoSyncAt).toLocaleString()}</span>}
-                          {source.errorMessage && <span style={{ color: "var(--error)" }}>{source.errorMessage}</span>}
-                        </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                          <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "var(--surface-container-high)" }}>
-                            Auto sync: {source.autoSyncEnabled ? "Enabled" : "Disabled"}
-                          </span>
-                          {source.autoSyncEnabled && (
-                            <>
-                              <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "var(--surface-container-high)" }}>
-                                Days: {source.autoSyncDays?.length ? formatAutoSyncDays(source.autoSyncDays) : "None"}
-                              </span>
-                              <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "var(--surface-container-high)" }}>
-                                Time: {source.autoSyncTime || "-"}
-                              </span>
-                            </>
-                          )}
-                          <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, background: "var(--surface-container-high)" }}>
-                            Issue types: {formatIssueTypes(source.issueTypes || [])}
-                          </span>
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <button
-                          className="ghost-button"
-                          onClick={() => openSourceEditor(source)}
-                          type="button"
-                          style={{ display: "flex", alignItems: "center", gap: 4 }}
-                        >
-                          <span className="material-symbols" style={{ fontSize: 16 }}>edit</span>
-                          Edit
-                        </button>
-                        <button
-                          className="ghost-button"
-                          onClick={() => app.handleDefectSync(source.projectKey)}
-                          disabled={app.defectSyncing === source.projectKey}
-                          type="button"
-                          style={{ display: "flex", alignItems: "center", gap: 4 }}
-                        >
-                          <span className="material-symbols" style={{ fontSize: 16, animation: app.defectSyncing === source.projectKey ? "spin 1s linear infinite" : "none" }}>sync</span>
-                          {app.defectSyncing === source.projectKey ? "Syncing..." : "Sync"}
-                        </button>
-                        <button
-                          className="ghost-button"
-                          style={{ color: "var(--error)" }}
-                          onClick={() => app.handleDefectDeleteSource(source.id)}
-                          type="button"
-                        >
-                          <span className="material-symbols" style={{ fontSize: 16 }}>delete</span>
-                        </button>
-                      </div>
-                    </div>
+                {/* Row 2: Sync Status */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 24, marginBottom: 16, fontSize: 13, color: "var(--on-surface-variant)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span className="material-symbols" style={{ fontSize: 16, color: source.syncStatus === "success" ? "#16a34a" : source.syncStatus === "error" ? "var(--error)" : "var(--outline)" }}>check_circle</span>
+                    Sync: {source.syncStatus === "success" ? "Success" : source.syncStatus === "syncing" ? "Syncing..." : source.syncStatus === "error" ? "Error" : "Idle"}
                   </div>
-                ))}
-              </>
-            )}
+                  {source.lastSyncedAt && <div>Last sync: {new Date(source.lastSyncedAt).toLocaleString()}</div>}
+                  {source.lastAutoSyncAt && <div>Last auto sync: {new Date(source.lastAutoSyncAt).toLocaleString()}</div>}
+                  {source.errorMessage && <div style={{ color: "var(--error)" }}>{source.errorMessage}</div>}
+                </div>
+
+                {/* Row 3: Tags */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontFamily: "monospace", padding: "4px 12px", borderRadius: 999, background: "var(--surface-container-high)", color: "var(--on-surface-variant)" }}>
+                    Auto sync: {source.autoSyncEnabled ? "Enabled" : "Disabled"}
+                  </span>
+                  {source.autoSyncEnabled && (
+                    <>
+                      <span style={{ fontSize: 13, fontFamily: "monospace", padding: "4px 12px", borderRadius: 999, background: "var(--surface-container-high)", color: "var(--on-surface-variant)" }}>
+                        Days: {source.autoSyncDays?.length ? formatAutoSyncDays(source.autoSyncDays) : "None"}
+                      </span>
+                      <span style={{ fontSize: 13, fontFamily: "monospace", padding: "4px 12px", borderRadius: 999, background: "var(--surface-container-high)", color: "var(--on-surface-variant)" }}>
+                        Time: {source.autoSyncTime || "-"}
+                      </span>
+                    </>
+                  )}
+                  <span style={{ fontSize: 13, fontFamily: "monospace", padding: "4px 12px", borderRadius: 999, background: "var(--surface-container-high)", color: "var(--on-surface-variant)" }}>
+                    Issue types: {formatIssueTypes(source.issueTypes || [])}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+        )}
 
         {sourceEditorOpen && sourceDraft && createPortal(
           <div className="dialog-overlay" onClick={closeSourceEditor} style={{ zIndex: 320 }}>
@@ -686,359 +791,541 @@ export default function DefectRepository() {
     const stats = app.defectStats;
     return (
       <section className="defect-repo-section">
-        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h3 style={{ margin: 0 }}>Defect Repository Statistics</h3>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="ghost-button" onClick={() => app.loadDefectStats()} type="button">
-                <span className="material-symbols" style={{ fontSize: 16 }}>refresh</span> Refresh
-              </button>
-              <button className="ghost-button" onClick={() => app.setDefectTab("repository")} type="button">
-                <span className="material-symbols" style={{ fontSize: 16 }}>arrow_back</span> Back
-              </button>
-            </div>
+        {/* Page Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "var(--on-surface)", lineHeight: "28px" }}>Defect Repository Statistics</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <button
+              onClick={() => app.loadDefectStats()}
+              disabled={app.defectSearching}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "var(--on-surface-variant)", fontSize: 13, cursor: "pointer", padding: "8px 0" }}
+              type="button"
+            >
+              <span className="material-symbols" style={{ fontSize: 16, animation: app.defectSearching ? "spin 1s linear infinite" : "none" }}>refresh</span>
+              Refresh
+            </button>
+            <button
+              onClick={() => app.setDefectTab("repository")}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "var(--on-surface-variant)", fontSize: 13, cursor: "pointer", padding: "8px 0" }}
+              type="button"
+            >
+              <span className="material-symbols" style={{ fontSize: 18 }}>arrow_back</span>
+              Back
+            </button>
           </div>
-
-          {!stats ? (
-            <p>Loading stats...</p>
-          ) : (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
-                <div className="stat-card" style={{ padding: 16, background: "var(--surface-container)", borderRadius: 8, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700 }}>{stats.totalDefects}</div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Total Defects</div>
-                </div>
-                <div className="stat-card" style={{ padding: 16, background: "var(--surface-container)", borderRadius: 8, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700 }}>{stats.totalDuplicates}</div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Total Duplicates</div>
-                </div>
-                <div className="stat-card" style={{ padding: 16, background: "var(--surface-container)", borderRadius: 8, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700 }}>{stats.defectsPerProject.length}</div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Projects</div>
-                </div>
-                <div className="stat-card" style={{ padding: 16, background: "var(--surface-container)", borderRadius: 8, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700 }}>{stats.topComponents.length}</div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Components</div>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  <h4 style={{ margin: "0 0 8px" }}>Defects per Project</h4>
-                  <table className="table" style={{ width: "100%", fontSize: 13 }}>
-                    <thead>
-                      <tr><th>Project</th><th style={{ textAlign: "right" }}>Count</th></tr>
-                    </thead>
-                    <tbody>
-                      {stats.defectsPerProject.map(p => (
-                        <tr key={p.projectKey}><td>{p.projectKey}</td><td style={{ textAlign: "right" }}>{p.count}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div>
-                  <h4 style={{ margin: "0 0 8px" }}>Duplicates per Project</h4>
-                  <table className="table" style={{ width: "100%", fontSize: 13 }}>
-                    <thead>
-                      <tr><th>Project</th><th style={{ textAlign: "right" }}>Count</th></tr>
-                    </thead>
-                    <tbody>
-                      {stats.duplicatesPerProject.map(p => (
-                        <tr key={p.projectKey}><td>{p.projectKey}</td><td style={{ textAlign: "right" }}>{p.count}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div>
-                  <h4 style={{ margin: "0 0 8px" }}>Top Components</h4>
-                  <table className="table" style={{ width: "100%", fontSize: 13 }}>
-                    <thead>
-                      <tr><th>Component</th><th style={{ textAlign: "right" }}>Count</th></tr>
-                    </thead>
-                    <tbody>
-                      {stats.topComponents.map(c => (
-                        <tr key={c.component}><td>{c.component}</td><td style={{ textAlign: "right" }}>{c.count}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div>
-                  <h4 style={{ margin: "0 0 8px" }}>Issue Types</h4>
-                  <table className="table" style={{ width: "100%", fontSize: 13 }}>
-                    <thead>
-                      <tr><th>Type</th><th style={{ textAlign: "right" }}>Count</th></tr>
-                    </thead>
-                    <tbody>
-                      {stats.topIssueTypes.map(t => (
-                        <tr key={t.issueType}><td>{t.issueType}</td><td style={{ textAlign: "right" }}>{t.count}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
         </div>
+
+        {!stats ? (
+          <div style={{ padding: "48px 0", textAlign: "center", color: "var(--on-surface-variant)" }}>Loading stats...</div>
+        ) : (
+          <>
+            {/* KPI Cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 24, marginBottom: 24 }}>
+              {[
+                { label: "Total Defects", value: stats.totalDefects, icon: "bug_report", color: "var(--primary)" },
+                { label: "Total Duplicates", value: stats.totalDuplicates, icon: "content_copy", color: "var(--on-surface-variant)" },
+                { label: "Projects", value: stats.defectsPerProject.length, icon: "folder_open", color: "var(--tertiary)" },
+                { label: "Components", value: stats.topComponents.length, icon: "widgets", color: "var(--primary)" },
+              ].map(card => (
+                <div
+                  key={card.label}
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--outline-variant)",
+                    borderRadius: 8,
+                    padding: 24,
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                    <span style={{ fontSize: 12, fontWeight: 500, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{card.label}</span>
+                    <span className="material-symbols" style={{ fontSize: 20, color: card.color }}>{card.icon}</span>
+                  </div>
+                  <div style={{ fontSize: 32, fontWeight: 700, color: "var(--on-surface)", lineHeight: 1 }}>{card.value.toLocaleString()}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Data Grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24 }}>
+              {/* Issue Types - Bar Chart */}
+              <div style={{ background: "var(--surface)", border: "1px solid var(--outline-variant)", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+                <h4 style={{ margin: "0 0 24px", fontSize: 16, fontWeight: 600, color: "var(--on-surface)", borderBottom: "1px solid var(--outline-variant)", paddingBottom: 8 }}>Issue Types</h4>
+                <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                  {stats.topIssueTypes.map((item, i) => {
+                    const total = stats.totalDefects || 1;
+                    const pct = Math.round((item.count / total) * 100);
+                    const colors = ["var(--error)", "var(--primary)", "var(--tertiary)"];
+                    const color = colors[i % colors.length];
+                    return (
+                      <div key={item.issueType}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--on-surface)" }}>
+                            <span style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0 }}></span>
+                            {item.issueType}
+                          </span>
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>{item.count.toLocaleString()}</span>
+                        </div>
+                        <div style={{ width: "100%", height: 8, background: "var(--surface-container-high)", borderRadius: 4, overflow: "hidden" }}>
+                          <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 4, transition: "width 0.3s" }}></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Defects per Project */}
+              <div style={{ background: "var(--surface)", border: "1px solid var(--outline-variant)", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+                <h4 style={{ margin: "0 0 24px", fontSize: 16, fontWeight: 600, color: "var(--on-surface)", borderBottom: "1px solid var(--outline-variant)", paddingBottom: 8 }}>Defects per Project</h4>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {stats.defectsPerProject.map((item, i) => {
+                    const isTop = i === 0;
+                    return (
+                      <div
+                        key={item.projectKey}
+                        style={{
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: "12px 16px", borderRadius: 4,
+                          border: "1px solid var(--outline-variant)",
+                          background: "var(--surface-container-low)"
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span className="material-symbols" style={{ fontSize: 20, color: isTop ? "var(--primary)" : "var(--on-surface-variant)" }}>folder</span>
+                          <span style={{ fontSize: 14, fontWeight: 500 }}>{item.projectKey}</span>
+                        </div>
+                        <span style={{
+                          fontFamily: "monospace", fontSize: 13, fontWeight: 500,
+                          padding: "2px 10px", borderRadius: 4,
+                          background: isTop ? "var(--primary-container)" : "var(--secondary-container)",
+                          color: isTop ? "var(--on-primary-container)" : "var(--on-secondary-container)"
+                        }}>
+                          {item.count.toLocaleString()}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Top Components */}
+              <div style={{ background: "var(--surface)", border: "1px solid var(--outline-variant)", borderRadius: 8, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, borderBottom: "1px solid var(--outline-variant)", paddingBottom: 8 }}>
+                  <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "var(--on-surface)" }}>Top Components</h4>
+                  <span className="material-symbols" style={{ fontSize: 20, color: "var(--on-surface-variant)" }}>sort</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", overflow: "auto", maxHeight: 300 }}>
+                  {stats.topComponents.length === 0 ? (
+                    <div style={{ color: "var(--on-surface-variant)", fontSize: 13, padding: "12px 0" }}>No components found.</div>
+                  ) : (
+                    stats.topComponents.map((item, i) => (
+                      <div key={item.component}>
+                        {i > 0 && <div style={{ height: 1, background: "var(--surface-container-highest)", margin: "12px 0" }}></div>}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 14, color: "var(--on-surface)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 16 }}>{item.component}</span>
+                          <span style={{ fontFamily: "monospace", fontSize: 13, color: "var(--on-surface-variant)", flexShrink: 0 }}>{item.count}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </section>
     );
   }
 
   return (
     <section className="defect-repo-section">
-      {/* Tab bar */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <button
-          className={`insight-btn ${(app.defectTab as string) === "repository" ? "primary" : "secondary"}`}
-          onClick={() => app.setDefectTab("repository")}
-          type="button"
-        >
-          <span className="material-symbols" style={{ fontSize: 16 }}>search</span> Repository
-        </button>
-        <button
-          className={`insight-btn ${(app.defectTab as string) === "sources" ? "primary" : "secondary"}`}
-          onClick={() => app.setDefectTab("sources")}
-          type="button"
-        >
-          <span className="material-symbols" style={{ fontSize: 16 }}>source</span> Sources
-        </button>
-        <button
-          className={`insight-btn ${(app.defectTab as string) === "stats" ? "primary" : "secondary"}`}
-          onClick={() => { app.setDefectTab("stats"); app.loadDefectStats(); }}
-          type="button"
-        >
-          <span className="material-symbols" style={{ fontSize: 16 }}>bar_chart</span> Stats
-        </button>
-      </div>
-
-      {/* Search bar */}
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-          <input
-            type="text"
-            className="input"
-            placeholder="Search defects by title, description, steps..."
-            value={searchInput}
-            onChange={e => setSearchInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && doSearch()}
-            style={{ flex: 1 }}
-          />
-          <button className="insight-btn primary" onClick={doSearch} disabled={app.defectSearching} type="button">
-            <span className="material-symbols" style={{ fontSize: 16 }}>search</span>
-            {app.defectSearching ? "Searching..." : "Search"}
+      {/* Page Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 4, background: "rgba(0, 74, 198, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)" }}>
+            <span className="material-symbols filled" style={{ fontSize: 24 }}>bug_report</span>
+          </div>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 24, fontWeight: 600, color: "var(--on-surface)", lineHeight: "32px", letterSpacing: "-0.01em" }}>Defect Repository</h2>
+            <p style={{ margin: 0, fontSize: 14, color: "var(--on-surface-variant)", lineHeight: "20px" }}>Manage and track all system anomalies and test failures.</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 12 }}>
+          <button
+            className="ghost-button"
+            onClick={() => { app.loadAllDefects(); }}
+            disabled={app.defectSearching}
+            type="button"
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", border: "1px solid var(--outline-variant)", borderRadius: 4, fontSize: 13, fontWeight: 500 }}
+          >
+            <span className="material-symbols" style={{ fontSize: 18, animation: app.defectSearching ? "spin 1s linear infinite" : "none" }}>refresh</span>
+            Refresh
           </button>
-          <button className="insight-btn secondary" onClick={openCreateDefect} type="button" disabled={defectProjectOptions.length === 0}>
-            <span className="material-symbols" style={{ fontSize: 16 }}>add</span>
+          <button
+            className="insight-btn primary"
+            onClick={openCreateDefect}
+            type="button"
+            disabled={defectProjectOptions.length === 0}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 4, fontSize: 13, fontWeight: 500 }}
+          >
+            <span className="material-symbols" style={{ fontSize: 18 }}>add</span>
             Add Defect
           </button>
-          <button className="ghost-button" onClick={() => { app.loadAllDefects(); }} disabled={app.defectSearching} type="button" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <span className="material-symbols" style={{ fontSize: 16, animation: app.defectSearching ? "spin 1s linear infinite" : "none" }}>refresh</span>
-            All
-          </button>
         </div>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <select
-            className="input"
-            style={{ width: "auto", minWidth: 150, fontSize: 12 }}
-            value=""
-            onChange={e => {
-              if (!e.target.value) return;
-              setSelectedProjectFilter(prev =>
-                prev.includes(e.target.value) ? prev : [...prev, e.target.value]
-              );
-            }}
-          >
-            <option value="">Filter by project...</option>
-            {allProjects.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <select
-            className="input"
-            style={{ width: "auto", minWidth: 150, fontSize: 12 }}
-            value=""
-            onChange={e => {
-              if (!e.target.value) return;
-              setSelectedTypeFilter(prev =>
-                prev.includes(e.target.value) ? prev : [...prev, e.target.value]
-              );
-            }}
-          >
-            <option value="">Filter by type...</option>
-            {allTypes.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <select
-            className="input"
-            style={{ width: "auto", minWidth: 150, fontSize: 12 }}
-            value=""
-            onChange={e => {
-              if (!e.target.value) return;
-              setSelectedStatusFilter(prev =>
-                prev.includes(e.target.value) ? prev : [...prev, e.target.value]
-              );
-            }}
-          >
-            <option value="">Filter by status...</option>
-            {allStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-
-        {(selectedProjectFilter.length > 0 || selectedTypeFilter.length > 0 || selectedStatusFilter.length > 0) && (
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 8 }}>
-            {[...selectedProjectFilter, ...selectedTypeFilter, ...selectedStatusFilter].map(f => (
-              <span key={f} style={{
-                padding: "2px 8px",
-                borderRadius: 12,
-                fontSize: 11,
-                background: "var(--surface-container-high)",
-                display: "flex", alignItems: "center", gap: 4
-              }}>
-                {f}
-                <span style={{ cursor: "pointer" }} onClick={() => {
-                  setSelectedProjectFilter(prev => prev.filter(p => p !== f));
-                  setSelectedTypeFilter(prev => prev.filter(t => t !== f));
-                  setSelectedStatusFilter(prev => prev.filter(s => s !== f));
-                }}>&times;</span>
-              </span>
-            ))}
-            <button className="ghost-button" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => {
-              setSelectedProjectFilter([]);
-              setSelectedTypeFilter([]);
-              setSelectedStatusFilter([]);
-            }} type="button">Clear</button>
-          </div>
-        )}
       </div>
 
-      {/* Candidates / Duplicate suggestions */}
-      {visibleCandidates.length > 0 && (
-        <div className="card" style={{ padding: 16, marginBottom: 16, borderLeft: "4px solid var(--warning)" }}>
-          <h4 style={{ margin: "0 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
-            <span className="material-symbols filled" style={{ fontSize: 18 }}>warning</span>
-            Duplicate Candidates Found ({visibleCandidates.length})
-          </h4>
-
-          {visibleCandidates.map((c, i) => (
-            <div key={c.defect.id} style={{
-              padding: "8px 0",
-              borderBottom: i < visibleCandidates.length - 1 ? "1px solid var(--surface-container-high)" : "none"
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>
-                    <a href="#" onClick={(e) => { e.preventDefault(); app.handleDefectViewDetail(c.defect.id); }}
-                      style={{ color: "var(--primary)", textDecoration: "none" }}>
-                      {c.defect.sourceIssueKey}
-                    </a>
-                    <span style={{ marginLeft: 8, fontWeight: 400 }}>{c.defect.normalizedTitle}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, fontSize: 11, marginTop: 4, flexWrap: "wrap" }}>
-                    <span style={{ background: c.score > 70 ? "rgba(239,68,68,0.1)" : "rgba(249,115,22,0.1)", color: c.score > 70 ? "var(--error)" : "var(--warning)", padding: "1px 6px", borderRadius: 4, fontWeight: 600 }}>
-                      Score: {c.score}%
-                    </span>
-                    <span>{c.defect.sourceProjectKey}</span>
-                    <span>{c.defect.issueType}</span>
-                    <span>{c.defect.status}</span>
-                    {c.defect.component && <span>{c.defect.component}</span>}
-                  </div>
-                  {c.reasons.length > 0 && (
-                    <div style={{ fontSize: 11, color: "var(--on-surface-variant)", marginTop: 4 }}>
-                      {c.reasons.map((r, ri) => <span key={ri} style={{ marginRight: 8 }}>&bull; {r}</span>)}
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {showDuplicateFor === c.defect.id ? (
-                    <>
-                      <button className="ghost-button" style={{ fontSize: 11, color: "var(--error)" }}
-                        onClick={() => {
-                          app.handleDefectMarkDuplicate(c.defect.id, c.defect.id, "manual");
-                          setShowDuplicateFor(null);
-                        }} type="button">Mark as Dup</button>
-                      <button className="ghost-button" style={{ fontSize: 11 }}
-                        onClick={() => setShowDuplicateFor(null)} type="button">Cancel</button>
-                    </>
-                  ) : (
-                    <button className="ghost-button" style={{ fontSize: 11 }}
-                      onClick={() => setShowDuplicateFor(c.defect.id)} type="button">
-                      <span className="material-symbols" style={{ fontSize: 14 }}>link</span> Mark Dup
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {app.defectCandidates.length > 0 && visibleCandidates.length === 0 && (
-        <div className="card" style={{ padding: 16, marginBottom: 16, borderLeft: "4px solid var(--surface-container-high)" }}>
-          <h4 style={{ margin: "0 0 8px" }}>Duplicate Candidates Found ({app.defectCandidates.length})</h4>
-          <p style={{ margin: 0, color: "var(--on-surface-variant)", fontSize: 13 }}>
-            Tidak ada kandidat yang melewati ambang skor minimum {duplicateCandidateThreshold}%. Ini sengaja agar kandidat lemah tidak mengganggu triage.
-          </p>
-        </div>
-      )}
-
-      {/* Defect list */}
-      <div className="card" style={{ padding: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <h4 style={{ margin: 0 }}>Defect Records</h4>
-          <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
-            {app.defectSearchResults.length} total
-          </span>
-        </div>
-
-        {app.defectSearchResults.length === 0 ? (
-          <div className="empty-state" style={{ padding: "40px 0", textAlign: "center" }}>
-            <span className="material-symbols filled" style={{ fontSize: 40, color: "var(--on-surface-variant)", marginBottom: 8, display: "block" }}>inventory_2</span>
-            <p style={{ color: "var(--on-surface-variant)", margin: 0 }}>
-              {app.defectSearching ? "Searching..." : "No defect records. Sync a Jira project source first."}
-            </p>
-            {!app.defectSearching && (
-              <button className="insight-btn secondary" style={{ marginTop: 12 }} onClick={() => app.setDefectTab("sources")} type="button">
-                Go to Sources
+      {/* Secondary Navigation (Tabs) */}
+      <div style={{ borderBottom: "1px solid var(--outline-variant)", marginBottom: 24 }}>
+        <nav style={{ display: "flex", gap: 24 }}>
+          {(["repository", "sources", "stats"] as const).map(tab => {
+            const isActive = (app.defectTab as string) === tab;
+            const label = tab === "repository" ? "Repository" : tab === "sources" ? "Sources" : "Stats";
+            return (
+              <button
+                key={tab}
+                onClick={() => {
+                  app.setDefectTab(tab);
+                  if (tab === "stats") app.loadDefectStats();
+                }}
+                style={{
+                  paddingBottom: 12,
+                  color: isActive ? "var(--primary)" : "var(--on-surface-variant)",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  background: "none",
+                  border: "none",
+                  borderBottom: `2px solid ${isActive ? "var(--primary)" : "transparent"}`,
+                  cursor: "pointer",
+                  transition: "color 0.15s"
+                }}
+                type="button"
+              >
+                {label}
               </button>
-            )}
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* Main Card Container */}
+      <div style={{ background: "var(--surface-container-lowest)", borderRadius: 8, border: "1px solid var(--outline-variant)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {/* Filter Toolbar */}
+        <div style={{ padding: 16, borderBottom: "1px solid var(--outline-variant)", background: "var(--surface-bright)", display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ position: "relative" }}>
+              <select
+                style={{
+                  appearance: "none",
+                  background: "var(--surface)",
+                  border: "1px solid var(--outline-variant)",
+                  color: "var(--on-surface)",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  borderRadius: 4,
+                  padding: "8px 32px 8px 12px",
+                  height: 36,
+                  cursor: "pointer"
+                }}
+                value={selectedProjectFilter}
+                onChange={e => { setSelectedProjectFilter(e.target.value); setCurrentPage(1); }}
+              >
+                <option value="">Project: All</option>
+                {allProjects.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <span className="material-symbols" style={{ position: "absolute", right: 8, top: 8, fontSize: 18, color: "var(--outline)", pointerEvents: "none" }}>expand_more</span>
+            </div>
+            <div style={{ position: "relative" }}>
+              <select
+                style={{
+                  appearance: "none",
+                  background: "var(--surface)",
+                  border: "1px solid var(--outline-variant)",
+                  color: "var(--on-surface)",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  borderRadius: 4,
+                  padding: "8px 32px 8px 12px",
+                  height: 36,
+                  cursor: "pointer"
+                }}
+                value={selectedTypeFilter}
+                onChange={e => { setSelectedTypeFilter(e.target.value); setCurrentPage(1); }}
+              >
+                <option value="">Type: All</option>
+                {allTypes.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <span className="material-symbols" style={{ position: "absolute", right: 8, top: 8, fontSize: 18, color: "var(--outline)", pointerEvents: "none" }}>expand_more</span>
+            </div>
+            <div style={{ position: "relative" }}>
+              <select
+                style={{
+                  appearance: "none",
+                  background: "var(--surface)",
+                  border: "1px solid var(--outline-variant)",
+                  color: "var(--on-surface)",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  borderRadius: 4,
+                  padding: "8px 32px 8px 12px",
+                  height: 36,
+                  cursor: "pointer"
+                }}
+                value={selectedStatusFilter}
+                onChange={e => { setSelectedStatusFilter(e.target.value); setCurrentPage(1); }}
+              >
+                <option value="">Status: All</option>
+                {allStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <span className="material-symbols" style={{ position: "absolute", right: 8, top: 8, fontSize: 18, color: "var(--outline)", pointerEvents: "none" }}>expand_more</span>
+            </div>
           </div>
-        ) : (
-          <div style={{ maxHeight: 500, overflow: "auto" }}>
-            <table className="table" style={{ width: "100%", fontSize: 12 }}>
-              <thead>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ position: "relative", width: 256 }}>
+              <span className="material-symbols" style={{ position: "absolute", left: 8, top: 8, fontSize: 18, color: "var(--outline)" }}>search</span>
+              <input
+                type="text"
+                placeholder="Search key, summary, status..."
+                value={tableSearchInput}
+                onChange={e => { setTableSearchInput(e.target.value); setCurrentPage(1); }}
+                onKeyDown={e => { if (e.key === "Enter") doTableSearch(); }}
+                style={{
+                  width: "100%",
+                  background: "var(--surface)",
+                  border: "1px solid var(--outline-variant)",
+                  borderRadius: 4,
+                  padding: "8px 12px 8px 32px",
+                  fontSize: 14,
+                  color: "var(--on-surface)",
+                  height: 36
+                }}
+              />
+            </div>
+            <button
+              onClick={doTableSearch}
+              disabled={app.defectSearching}
+              type="button"
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "8px 16px", height: 36,
+                background: "var(--primary)", color: "var(--on-primary)",
+                border: "none", borderRadius: 4,
+                fontSize: 13, fontWeight: 500, cursor: "pointer"
+              }}
+            >
+              <span className="material-symbols" style={{ fontSize: 16, animation: app.defectSearching ? "spin 1s linear infinite" : "none" }}>search</span>
+              {app.defectSearching ? "Searching..." : "Search"}
+            </button>
+          </div>
+        </div>
+
+        {/* Duplicate Candidates Section */}
+        {visibleCandidates.length > 0 && (
+          <div style={{ padding: 16, borderBottom: "1px solid var(--outline-variant)", borderLeft: "4px solid var(--warning)", background: "rgba(249, 115, 22, 0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span className="material-symbols filled" style={{ fontSize: 18, color: "var(--warning)" }}>warning</span>
+              <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Potential Duplicates Found ({visibleCandidates.length})</h4>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {visibleCandidates.map(c => (
+                <div key={c.defect.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "10px 12px", borderRadius: 6, background: "var(--surface-container-lowest)", border: "1px solid var(--outline-variant)" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <a
+                        href="#"
+                        onClick={e => {
+                          e.preventDefault();
+                          const base = app.config.jira.baseUrl?.replace(/\/+$/, "");
+                          if (base) void window.qaBuddy.openExternal(`${base}/browse/${c.defect.sourceIssueKey}`);
+                        }}
+                        style={{ color: "var(--primary)", fontWeight: 600, fontSize: 13, textDecoration: "none", fontFamily: "monospace" }}
+                      >
+                        {c.defect.sourceIssueKey}
+                      </a>
+                      <span style={{
+                        padding: "1px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600,
+                        background: c.score > 70 ? "rgba(239,68,68,0.1)" : "rgba(249,115,22,0.1)",
+                        color: c.score > 70 ? "var(--error)" : "var(--warning)"
+                      }}>
+                        Score: {c.score}%
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--on-surface)", marginBottom: 4 }}>{c.defect.normalizedTitle}</div>
+                    <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--on-surface-variant)", flexWrap: "wrap" }}>
+                      <span>{c.defect.sourceProjectKey}</span>
+                      <span>{c.defect.issueType}</span>
+                      <span>{c.defect.status}</span>
+                      {c.defect.component && <span>{c.defect.component}</span>}
+                    </div>
+                    {c.reasons.length > 0 && (
+                      <div style={{ fontSize: 11, color: "var(--on-surface-variant)", marginTop: 4 }}>
+                        {c.reasons.map((r, ri) => <span key={ri} style={{ marginRight: 8 }}>&bull; {r}</span>)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Data Table */}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "var(--surface-container-low)", borderBottom: "1px solid var(--outline-variant)" }}>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap", width: 96 }}>Issue Key</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)" }}>Summary</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>Project</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>Type</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>Status</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>Severity</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>Component</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap", textAlign: "right" }}>Action</th>
+              </tr>
+            </thead>
+            <tbody style={{ background: "var(--surface-container-lowest)" }}>
+              {paginatedDefects.length === 0 ? (
                 <tr>
-                  <th>Issue Key</th>
-                  <th>Summary</th>
-                  <th>Project</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Severity</th>
-                  <th>Component</th>
-                  <th>Action</th>
+                  <td colSpan={8} style={{ padding: "40px 16px", textAlign: "center", color: "var(--on-surface-variant)" }}>
+                    {app.defectSearching ? "Searching..." : "No defect records. Sync a Jira project source first."}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {app.defectSearchResults.map(d => (
-                  <tr key={d.id} style={{ cursor: "pointer" }} onClick={() => app.handleDefectViewDetail(d.id)}>
-                    <td style={{ fontWeight: 600 }}>{d.sourceIssueKey}</td>
-                    <td style={{ maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.normalizedTitle}</td>
-                    <td>{d.sourceProjectKey}</td>
-                    <td>{d.issueType}</td>
-                    <td><span className={`status-badge ${d.status?.toLowerCase()}`}>{d.status}</span></td>
-                    <td>{d.severity}</td>
-                    <td>{d.component || "-"}</td>
-                    <td>
-                      <button className="ghost-button" style={{ fontSize: 11 }}
-                        onClick={(e) => { e.stopPropagation(); app.handleDefectViewDetail(d.id); }} type="button">
-                        Detail
+              ) : (
+                paginatedDefects.map(d => (
+                  <tr
+                    key={d.id}
+                    style={{ cursor: "pointer", borderBottom: "1px solid rgba(115, 118, 134, 0.2)" }}
+                    onClick={() => app.handleDefectViewDetail(d.id)}
+                    onMouseEnter={e => (e.currentTarget.style.background = "rgba(242, 244, 246, 0.5)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <td style={{ padding: "12px 16px" }}>
+                      <a
+                        href="#"
+                        onClick={e => {
+                          e.stopPropagation();
+                          const base = app.config.jira.baseUrl?.replace(/\/+$/, "");
+                          if (base) void window.qaBuddy.openExternal(`${base}/browse/${d.sourceIssueKey}`);
+                        }}
+                        style={{ color: "var(--primary)", fontFamily: "monospace", fontSize: 13, fontWeight: 600, textDecoration: "none" }}
+                      >
+                        {d.sourceIssueKey}
+                      </a>
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "var(--on-surface)", fontWeight: 500, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={d.normalizedTitle}>{d.normalizedTitle}</td>
+                    <td style={{ padding: "12px 16px", color: "var(--on-surface-variant)" }}>{d.sourceProjectKey}</td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--error-container)", color: "var(--on-error-container)", padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 500 }}>
+                        <span className="material-symbols" style={{ fontSize: 14 }}>bug_report</span>
+                        {d.issueType}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--outline-variant)", padding: "2px 8px", borderRadius: 999, fontSize: 12, color: "var(--on-surface-variant)", background: "var(--surface)" }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: getStatusDotColor(d.status) }}></span>
+                        {d.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ color: getSeverityColor(d.severity), fontWeight: 600, display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+                        <span className="material-symbols" style={{ fontSize: 16 }}>{getSeverityIcon(d.severity)}</span>
+                        {d.severity}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "var(--on-surface-variant)", fontFamily: "monospace", fontSize: 13 }}>{d.component || "-"}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                      <button
+                        style={{ background: "none", border: "none", padding: 4, borderRadius: 4, cursor: "pointer", color: "var(--outline)" }}
+                        onClick={e => { e.stopPropagation(); app.handleDefectViewDetail(d.id); }}
+                        onMouseEnter={e => (e.currentTarget.style.color = "var(--primary)")}
+                        onMouseLeave={e => (e.currentTarget.style.color = "var(--outline)")}
+                        type="button"
+                      >
+                        <span className="material-symbols" style={{ fontSize: 20 }}>visibility</span>
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination Footer */}
+        <div style={{ padding: 16, borderTop: "1px solid var(--outline-variant)", background: "var(--surface-bright)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <p style={{ fontSize: 13, color: "var(--on-surface-variant)", margin: 0 }}>
+              Showing {filteredDefects.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} to {Math.min(currentPage * itemsPerPage, filteredDefects.length)} of {filteredDefects.length} entries
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 13, color: "var(--on-surface-variant)" }}>Rows:</span>
+              <select
+                value={itemsPerPage}
+                onChange={e => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                style={{
+                  appearance: "none",
+                  background: "var(--surface)",
+                  border: "1px solid var(--outline-variant)",
+                  borderRadius: 4,
+                  padding: "4px 24px 4px 8px",
+                  fontSize: 12,
+                  color: "var(--on-surface)",
+                  cursor: "pointer",
+                  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23737686'%3E%3Cpath d='M2 4l4 4 4-4'/%3E%3C/svg%3E\")",
+                  backgroundRepeat: "no-repeat",
+                  backgroundPosition: "right 6px center"
+                }}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
           </div>
-        )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 4, border: "1px solid var(--outline-variant)", background: "transparent", color: "var(--outline)", cursor: "pointer" }}
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              type="button"
+            >
+              <span className="material-symbols" style={{ fontSize: 18 }}>chevron_left</span>
+            </button>
+            {Array.from({ length: Math.min(totalPages, 3) }, (_, i) => i + 1).map(page => (
+              <button
+                key={page}
+                style={{
+                  width: 32,
+                  height: 32,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: 4,
+                  border: page === currentPage ? "none" : "1px solid var(--outline-variant)",
+                  background: page === currentPage ? "var(--primary)" : "transparent",
+                  color: page === currentPage ? "var(--on-primary)" : "var(--on-surface)",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 500
+                }}
+                onClick={() => setCurrentPage(page)}
+                type="button"
+              >
+                {page}
+              </button>
+            ))}
+            {totalPages > 3 && <span style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--outline)" }}>...</span>}
+            <button
+              style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 4, border: "1px solid var(--outline-variant)", background: "transparent", color: "var(--on-surface)", cursor: "pointer" }}
+              disabled={currentPage === totalPages || totalPages === 0}
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              type="button"
+            >
+              <span className="material-symbols" style={{ fontSize: 18 }}>chevron_right</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {showCreateDefect && createPortal(
@@ -1315,7 +1602,7 @@ export default function DefectRepository() {
               </div>
             </div>
 
-            <div className="dialog-body defect-warning-dialog-body">
+            <div className="dialog-body defect-warning-dialog-body" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
               <div className="defect-warning-list">
                 {createDuplicateCandidates.map((candidate) => (
                   <div key={candidate.defect.id} className="defect-warning-card">
@@ -1356,29 +1643,29 @@ export default function DefectRepository() {
                   </div>
                 ))}
               </div>
+            </div>
 
-              <div className="defect-warning-actions">
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => {
-                    setShowDuplicateWarning(false);
-                    setCreateDuplicateCandidates([]);
-                  }}
-                  disabled={createSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="insight-btn primary"
-                  type="button"
-                  onClick={() => void submitCreateDefect(true)}
-                  disabled={createSubmitting}
-                >
-                  <span className="material-symbols" style={{ fontSize: 16 }}>done</span>
-                  Continue & Create
-                </button>
-              </div>
+            <div className="defect-warning-actions" style={{ flexShrink: 0 }}>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  setShowDuplicateWarning(false);
+                  setCreateDuplicateCandidates([]);
+                }}
+                disabled={createSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                className="insight-btn primary"
+                type="button"
+                onClick={() => void submitCreateDefect(true)}
+                disabled={createSubmitting}
+              >
+                <span className="material-symbols" style={{ fontSize: 16 }}>done</span>
+                Continue & Create
+              </button>
             </div>
           </div>
         </div>,

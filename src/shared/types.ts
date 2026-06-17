@@ -621,6 +621,7 @@ export interface UpdateProgress {
 export interface XrayFolder {
   id: number;
   name: string;
+  parentId?: number;
   children?: XrayFolder[];
 }
 
