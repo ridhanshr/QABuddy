@@ -11,6 +11,7 @@ export function escapeHtmlAttribute(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
@@ -27,7 +28,7 @@ export function toListItems(text: string): string {
     .split("\n")
     .map((s) => s.trim())
     .filter((s) => s)
-    .map((s) => `<li>${s}</li>`)
+    .map((s) => `<li>${escapeHtmlText(s)}</li>`)
     .join("");
 }
 
@@ -54,10 +55,14 @@ export function linkifyJiraKeys(text: string, jiraBaseUrl?: string, jiraServerId
 export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraServerId?: string): string {
   const tables: string[] = [];
   for (const entry of entries) {
+    const safeTestCaseNo = escapeHtmlText(entry.testCaseNo);
+    const safeFunctionName = escapeHtmlText(entry.functionName);
+    const safeCategory = escapeHtmlText(entry.category);
+    const safeScenario = escapeHtmlText(entry.scenario);
     const inputItems = toListItems(entry.inputData);
     const stepsItems = toListItems(entry.steps);
     const expectedItems = toListItems(entry.expectedResult);
-    const scenarioLinked = linkifyJiraKeys(entry.scenario, jiraBaseUrl, jiraServerId);
+    const scenarioLinked = linkifyJiraKeys(safeScenario, jiraBaseUrl, jiraServerId);
 
     const orderedAttachments = normalizeAttachmentOrder(entry.images || []);
     let previousNote = "";
@@ -70,18 +75,19 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
               .join("")
           : "";
         previousNote = att.note || previousNote;
+        const safeName = escapeHtmlAttribute(att.name);
         if (att.data && att.data.startsWith("data:image/")) {
-          return `${noteHtml}<li data-qa-attachment-order="${att.order}" data-qa-attachment-name="${escapeHtmlAttribute(att.name)}" data-qa-attachment-note="${escapeHtmlAttribute(att.note || "")}"><ac:image ac:height="400"><ri:attachment ri:filename="${att.name}" /></ac:image></li>`;
+          return `${noteHtml}<li data-qa-attachment-order="${att.order}" data-qa-attachment-name="${safeName}" data-qa-attachment-note="${escapeHtmlAttribute(att.note || "")}"><ac:image ac:height="400"><ri:attachment ri:filename="${safeName}" /></ac:image></li>`;
         }
-        return `${noteHtml}<li data-qa-attachment-order="${att.order}" data-qa-attachment-name="${escapeHtmlAttribute(att.name)}" data-qa-attachment-note="${escapeHtmlAttribute(att.note || "")}"><ac:link><ri:attachment ri:filename="${att.name}" /></ac:link></li>`;
+        return `${noteHtml}<li data-qa-attachment-order="${att.order}" data-qa-attachment-name="${safeName}" data-qa-attachment-note="${escapeHtmlAttribute(att.note || "")}"><ac:link><ri:attachment ri:filename="${safeName}" /></ac:link></li>`;
       })
       .join("");
 
-    const kategoriRow = entry.category
+    const kategoriRow = safeCategory
       ? `
         <tr>
           <td class="confluenceTd"><strong>Kategori</strong></td>
-          <td class="confluenceTd">${entry.category}</td>
+          <td class="confluenceTd">${safeCategory}</td>
         </tr>`
       : "";
 
@@ -94,11 +100,11 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
         <tbody>
           <tr>
             <td class="confluenceTd"><strong>No. Test Case</strong></td>
-            <td class="confluenceTd">${entry.testCaseNo}</td>
+            <td class="confluenceTd">${safeTestCaseNo}</td>
           </tr>
           <tr>
             <td class="confluenceTd"><strong>Function</strong></td>
-            <td class="confluenceTd">${entry.functionName}</td>
+            <td class="confluenceTd">${safeFunctionName}</td>
           </tr>
           <tr>
             <td class="confluenceTd"><strong>Scenario</strong></td>

@@ -560,6 +560,27 @@ export class JiraService {
       const issueKey = response.data.key as string;
       created.push({ key: issueKey, url: this.client.issueUrl(issueKey) });
 
+      // Add test steps to Xray (single step with all content, like update from confluence)
+      if (item.steps?.trim()) {
+        try {
+          const formatBullets = (text: string) =>
+            text
+              .split("\n")
+              .map((line) => `- ${line.trim()}`)
+              .join("\n");
+
+          const step = {
+            step: formatBullets(item.steps),
+            data: "",
+            result: item.expectedResult ? formatBullets(item.expectedResult) : "",
+          };
+
+          await this.client.xray.put(`/test/${issueKey}/step`, step);
+        } catch (err) {
+          logger.error("Jira", `Failed to add test steps for ${issueKey}:`, err);
+        }
+      }
+
       // Move to Xray folder if specified
       if (item.xrayFolder?.trim()) {
         try {
@@ -569,10 +590,7 @@ export class JiraService {
           const pathParts = this.client.splitFolderPath(item.xrayFolder);
           const folderId = this.client.findFolderId(allFolders, pathParts);
           if (folderId) {
-            await this.client.xray.post(
-              `/testrepository/${projectKey}/folders/${folderId}/tests`,
-              { add: [issueKey] }
-            );
+            await this.client.addTestsToFolder(projectKey, folderId, [issueKey]);
           }
         } catch (err) {
           logger.error(

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
-import type { DashboardProjectConfig, DashboardProjectData, ProjectInsightRequest } from "@shared/types";
+import type { DashboardProjectConfig, DashboardProjectData, JiraIssueSummary, ProjectInsightRequest } from "@shared/types";
 
 import jiraIcon from "../assets/jira.png";
 import confluenceIcon from "../assets/confluence.png";
@@ -65,12 +65,60 @@ export default function Dashboard() {
   const activeProjectData: DashboardProjectData | undefined = activeProjectTab !== "all"
     ? dashboard?.projects?.[activeProjectTab]
     : undefined;
-  const activeBugMetrics = activeProjectData?.bugMetrics || dashboard?.bugMetrics || {
+
+  // For "all" tab: aggregate bugMetrics and readyForQa from all projects
+  const zeroMetrics = {
     totalOpen: 0, critical: 0, high: 0, medium: 0, low: 0,
     resolvedThisSprint: 0, foundThisSprint: 0,
     epicTotal: 0, epicCompleted: 0, epicTasksTotal: 0, epicTasksResolved: 0,
   };
-  const activeReadyForQa = activeProjectData?.readyForQa || dashboard?.readyForQa || [];
+  const activeBugMetrics = activeProjectTab === "all" && hasProjects
+    ? projectKeys.reduce((acc, pk) => {
+        const bm = dashboard?.projects?.[pk]?.bugMetrics;
+        if (!bm) return acc;
+        return {
+          totalOpen: acc.totalOpen + bm.totalOpen,
+          critical: acc.critical + bm.critical,
+          high: acc.high + bm.high,
+          medium: acc.medium + bm.medium,
+          low: acc.low + bm.low,
+          resolvedThisSprint: acc.resolvedThisSprint + bm.resolvedThisSprint,
+          foundThisSprint: acc.foundThisSprint + bm.foundThisSprint,
+          epicTotal: acc.epicTotal + bm.epicTotal,
+          epicCompleted: acc.epicCompleted + bm.epicCompleted,
+          epicTasksTotal: acc.epicTasksTotal + bm.epicTasksTotal,
+          epicTasksResolved: acc.epicTasksResolved + bm.epicTasksResolved,
+        };
+      }, { ...zeroMetrics })
+    : activeProjectData?.bugMetrics || dashboard?.bugMetrics || zeroMetrics;
+
+  const activeReadyForQa = activeProjectTab === "all" && hasProjects
+    ? (() => {
+        const seen = new Set<string>();
+        const merged: JiraIssueSummary[] = [];
+        for (const pk of projectKeys) {
+          const issues = dashboard?.projects?.[pk]?.readyForQa || [];
+          for (const issue of issues) {
+            if (!seen.has(issue.key)) {
+              seen.add(issue.key);
+              merged.push(issue);
+            }
+          }
+        }
+        return merged;
+      })()
+    : activeProjectData?.readyForQa || dashboard?.readyForQa || [];
+
+  // Generate insight text for "all" tab from aggregated data
+  const allProjectsInsight = activeProjectTab === "all" && hasProjects
+    ? (() => {
+        const sprint = dashboard?.sprintReport;
+        if (sprint) {
+          return `Dashboard All Projects — Sprint ${sprint.sprintName}: ${sprint.completionPercent}% selesai (${sprint.completedIssues}/${sprint.totalIssues} issue). ${activeBugMetrics.totalOpen} bug terbuka (${activeBugMetrics.critical} kritis, ${activeBugMetrics.high} high). ${activeReadyForQa.length} issue siap QA di ${projectKeys.length} project.`;
+        }
+        return `Dashboard All Projects — ${activeBugMetrics.totalOpen} bug terbuka (${activeBugMetrics.critical} kritis, ${activeBugMetrics.high} high). ${activeReadyForQa.length} issue siap QA di ${projectKeys.length} project.`;
+      })()
+    : null;
 
   // Local pagination for per-project QA table
   const projectFiltered = activeProjectData
@@ -259,7 +307,7 @@ export default function Dashboard() {
                 Generating insight for {activeProjectTab}...
               </p>
             ) : (
-              <p>{(activeProjectTab !== "all" && projectInsight ? projectInsight : dashboard.insight || "Kualitas aplikasi stabil hari ini. Tidak ada anomali terdeteksi.").replace(/[*#|]/g, "").trim()}</p>
+              <p>{(activeProjectTab !== "all" && projectInsight ? projectInsight : allProjectsInsight || dashboard.insight || "Kualitas aplikasi stabil hari ini. Tidak ada anomali terdeteksi.").replace(/[*#|]/g, "").trim()}</p>
             )}
             <div className="button-row" style={{ marginTop: 16, display: "flex", gap: 8 }}>
               <button className="insight-btn primary" onClick={() => void refreshDashboard()} type="button">
@@ -269,7 +317,10 @@ export default function Dashboard() {
               <button
                 className="insight-btn secondary"
                 onClick={() => {
-                  const reportText = `QA Daily Insight:\n${dashboard.insight}\n\nBug Metrics:\nTotal Open: ${dashboard.bugMetrics.totalOpen}\nCritical: ${dashboard.bugMetrics.critical}\nHigh: ${dashboard.bugMetrics.high}\nMedium: ${dashboard.bugMetrics.medium}\nLow: ${dashboard.bugMetrics.low}\nEpics total: ${dashboard.bugMetrics.epicTotal}\nEpics completed: ${dashboard.bugMetrics.epicCompleted}`;
+                  const insightText = activeProjectTab !== "all" && projectInsight
+                    ? projectInsight
+                    : allProjectsInsight || dashboard.insight;
+                  const reportText = `QA Daily Insight:\n${insightText}\n\nBug Metrics:\nTotal Open: ${activeBugMetrics.totalOpen}\nCritical: ${activeBugMetrics.critical}\nHigh: ${activeBugMetrics.high}\nMedium: ${activeBugMetrics.medium}\nLow: ${activeBugMetrics.low}\nEpics total: ${activeBugMetrics.epicTotal}\nEpics completed: ${activeBugMetrics.epicCompleted}`;
                   navigator.clipboard.writeText(reportText).then(() => {
                     setBanner({ tone: "success", text: "Report disalin ke clipboard." });
                   }).catch(() => {

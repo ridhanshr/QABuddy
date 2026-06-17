@@ -416,6 +416,52 @@ export class JiraClient {
   }
 
   /**
+   * Add test issue keys to a specific Xray folder ID, trying multiple payload structures for compatibility.
+   */
+  async addTestsToFolder(
+    projectKey: string,
+    folderId: number,
+    issueKeys: string[]
+  ): Promise<void> {
+    // Xray Server (Raven) CollectionBean — dari error logs:
+    //   - { testKeys }  → 500 Unrecognized field "testKeys"
+    //   - { id }        → 500 Unrecognized field "id"
+    //   - [ array ]     → 500 Can not deserialize out of START_ARRAY token
+    // CollectionBean adalah object dengan field tertentu. Coba "testIssueKeys" (Xray Server API docs)
+    // kemudian fallback ke "keys" dan "add".
+    const payloads: any[] = [
+      { testIssueKeys: issueKeys },  // Xray Server REST API docs
+      { keys: issueKeys },           // alternatif umum
+      { add: issueKeys },            // alternatif lain
+    ];
+
+    let lastError: any = null;
+    for (const payload of payloads) {
+      try {
+        await this.xray.put(
+          `/testrepository/${projectKey}/folders/${folderId}/tests`,
+          payload
+        );
+        return;
+      } catch (err: any) {
+        lastError = err;
+        const status = err?.response?.status;
+        // Hanya stop retry jika bukan error field/deserialization
+        if (status === 401 || status === 403) break;
+        // Jika bukan 500 deserialization error, stop juga
+        const msg = err?.response?.data?.message || "";
+        if (status !== 500 || !msg.includes("CollectionBean")) break;
+      }
+    }
+
+    const errorData = lastError?.response?.data;
+    const errorMsg = errorData
+      ? (typeof errorData === "object" ? JSON.stringify(errorData) : errorData)
+      : lastError?.message || lastError;
+    throw new Error(errorMsg);
+  }
+
+  /**
    * Move a set of test issue keys into an Xray folder.
    * Throws if the folder cannot be found.
    */
@@ -432,11 +478,9 @@ export class JiraClient {
       throw new Error(`Folder tidak ditemukan: ${folderPath}`);
     }
 
-    await this.xray.put(
-      `/testrepository/${projectKey}/folders/${folderId}/tests`,
-      { add: issueKeys }
-    );
+    await this.addTestsToFolder(projectKey, folderId, issueKeys);
   }
+
 
   /**
    * Get issue links from a Jira issue, filtering for Test Execution type.
