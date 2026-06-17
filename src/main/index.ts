@@ -33,6 +33,28 @@ import type {
 } from "@shared/types";
 import { testCaseExecutionSchema } from "@shared/types";
 
+// ─── Global error handlers to prevent uncaught errors from crashing the app ──
+// Tesseract.js v7 may throw synchronous errors (e.g. "addEventListener is not a function")
+// that bypass async try-catch. These handlers prevent the Electron error dialog.
+process.on("uncaughtException", (error) => {
+  const msg = error?.message || String(error);
+  // Log but don't crash for known Tesseract/OCR worker errors
+  if (msg.includes("addEventListener") || msg.includes("is not a function") || msg.includes("worker")) {
+    logger.error("Process", `Suppressed OCR-related uncaught exception: ${msg}`);
+    return;
+  }
+  logger.error("Process", `Uncaught exception: ${msg}`, error);
+});
+
+process.on("unhandledRejection", (reason: any) => {
+  const msg = reason?.message || String(reason);
+  if (msg.includes("addEventListener") || msg.includes("is not a function")) {
+    logger.error("Process", `Suppressed OCR-related unhandled rejection: ${msg}`);
+    return;
+  }
+  logger.error("Process", `Unhandled rejection: ${msg}`, reason);
+});
+
 const store = new ConfigStore();
 const ragService = new RagService();
 const qaService = new QaService(ragService);

@@ -1,4 +1,75 @@
 import type { BugFormDraft, BugPreview, ExtractedTestCase } from "@shared/types";
+import { sanitizeExtractedTestCase } from "@shared/types";
+
+// ponies: Content chunking for large Confluence pages
+const CHUNK_SIZE = 15000; // Leave room for prompt template (~1-2k chars)
+const OVERLAP_SIZE = 200; // Context overlap between chunks
+
+export function chunkContent(text: string, maxChunkSize: number = CHUNK_SIZE): string[] {
+  if (text.length <= maxChunkSize) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let start = 0;
+
+  while (start < text.length) {
+    let end = Math.min(start + maxChunkSize, text.length);
+    
+    // Try to break at paragraph boundary (\n\n)
+    if (end < text.length) {
+      const lastParagraph = text.lastIndexOf("\n\n", end);
+      if (lastParagraph > start + maxChunkSize * 0.5) {
+        end = lastParagraph;
+      } else {
+        // Try sentence boundary (. ! ?)
+        const lastSentence = text.lastIndexOf(". ", end);
+        if (lastSentence > start + maxChunkSize * 0.5) {
+          end = lastSentence + 1;
+        }
+      }
+    }
+
+    chunks.push(text.slice(start, end));
+    
+    // Move start with overlap for context continuity
+    start = end - OVERLAP_SIZE;
+    if (start < 0) start = 0;
+    if (start >= text.length - OVERLAP_SIZE) break;
+  }
+
+  return chunks;
+}
+
+export function deduplicateTestCases(cases: ExtractedTestCase[]): ExtractedTestCase[] {
+  const seen: ExtractedTestCase[] = [];
+  
+  for (const tc of cases) {
+    const duplicate = seen.find(s => titleSimilarity(s.title, tc.title) > 0.7);
+    if (duplicate) {
+      // Keep the one with longer objective (more detail)
+      if (tc.objective.length > duplicate.objective.length) {
+        seen.splice(seen.indexOf(duplicate), 1, tc);
+      }
+    } else {
+      seen.push(tc);
+    }
+  }
+  
+  // Re-number
+  return seen.map((tc, i) => ({
+    ...tc,
+    id: `TC-${String(i + 1).padStart(3, "0")}`
+  }));
+}
+
+function titleSimilarity(a: string, b: string): number {
+  const wordsA = new Set(a.toLowerCase().split(/\s+/));
+  const wordsB = new Set(b.toLowerCase().split(/\s+/));
+  const intersection = new Set([...wordsA].filter(x => wordsB.has(x)));
+  const union = new Set([...wordsA, ...wordsB]);
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
 
 export function normalizeUrl(value: string): string {
   let url = value.trim().replace(/\/+$/, "");
@@ -33,12 +104,24 @@ export function stripHtml(html: string): string {
 
 export function extractJsonBlock<T>(value: string): T | null {
   const trimmed = value.trim();
+  
+  // Try direct parse first
   const direct = tryJsonParse<T>(trimmed);
   if (direct) {
     return direct;
   }
 
-  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
+  // Try to extract from markdown code blocks: ```json ... ```
+  const codeBlockMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (codeBlockMatch) {
+    const fromBlock = tryJsonParse<T>(codeBlockMatch[1].trim());
+    if (fromBlock) {
+      return fromBlock;
+    }
+  }
+
+  // Try to extract JSON object (non-greedy: match first { ... } block)
+  const objectMatch = trimmed.match(/\{[\s\S]*?\}/);
   if (objectMatch) {
     const objectValue = tryJsonParse<T>(objectMatch[0]);
     if (objectValue) {
@@ -46,9 +129,19 @@ export function extractJsonBlock<T>(value: string): T | null {
     }
   }
 
-  const arrayMatch = trimmed.match(/\[[\s\S]*\]/);
+  // Try to extract JSON array (non-greedy: match first [ ... ] block)
+  const arrayMatch = trimmed.match(/\[[\s\S]*?\]/);
   if (arrayMatch) {
     return tryJsonParse<T>(arrayMatch[0]);
+  }
+
+  // Try with trailing comma removal
+  const cleaned = trimmed
+    .replace(/,\s*([}\]])/g, "$1")  // Remove trailing commas
+    .replace(/[\x00-\x1F\x7F]/g, " "); // Remove control characters
+  const cleanedObjectMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (cleanedObjectMatch) {
+    return tryJsonParse<T>(cleanedObjectMatch[0]);
   }
 
   return null;
@@ -155,13 +248,50 @@ export function fallbackTestCases(
   bodyText: string,
   depth: string
 ): ExtractedTestCase[] {
-  const sentences = bodyText
+  // ponies: deduplicated keywords, weighted categories
+  const highWeightKeywords = [
+    "harus", "dapat", "validasi", "error", "gagal", "berhasil",
+    "must", "should", "validate", "fail", "invalid", "verify", "successful"
+  ];
+  const lowWeightKeywords = [
+    "klik", "sistem", "menampilkan", "bisa", "tekan", "masukkan", "pengguna", "admin", "salah",
+    "click", "system", "display", "user", "input", "enter", "select", "allow"
+  ];
+
+  const scoredSentences = bodyText
     .split(/(?<=[.!?])\s+/)
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 20)
-    .slice(0, depth === "happy-path" ? 4 : 8);
+    .map((sentence, index) => {
+      const lower = sentence.toLowerCase();
+      let score = 0;
+      for (const kw of highWeightKeywords) {
+        const regex = new RegExp(`\\b${kw}\\b`, "i");
+        if (regex.test(lower)) {
+          score += 3;
+        }
+      }
+      for (const kw of lowWeightKeywords) {
+        const regex = new RegExp(`\\b${kw}\\b`, "i");
+        if (regex.test(lower)) {
+          score += 1;
+        }
+      }
+      // Position bonus: earlier sentences are more important
+      score += Math.max(0, 10 - index * 0.5);
+      // Length bonus: longer = more detailed requirement
+      score += Math.min(sentence.length / 200, 3);
+      return { sentence, score, index };
+    });
 
-  if (sentences.length === 0) {
+  scoredSentences.sort((a, b) => b.score - a.score);
+
+  const threshold = depth === "happy-path" ? 4 : 8;
+  const selected = scoredSentences
+    .filter((item) => item.score > 0)
+    .slice(0, threshold);
+
+  if (selected.length === 0) {
     return [
       {
         id: "TC-001",
@@ -174,12 +304,12 @@ export function fallbackTestCases(
     ];
   }
 
-  return sentences.map((sentence, index) => ({
+  return selected.map((item, index) => ({
     id: `TC-${String(index + 1).padStart(3, "0")}`,
-    title: sentence.slice(0, 72),
-    objective: sentence,
+    title: item.sentence.length > 72 ? `${item.sentence.slice(0, 69)}...` : item.sentence,
+    objective: item.sentence,
     priority: index < 2 ? "P1" : "P2",
     category: depth === "edge-case" ? "Edge Case" : "Functional",
-    selected: index < 5,
+    selected: true,
   }));
 }

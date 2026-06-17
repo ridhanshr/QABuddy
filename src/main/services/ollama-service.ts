@@ -24,6 +24,7 @@ import {
   getJiraFirstChatPrompt,
   getKnowledgeBaseChatPrompt,
   getHybridChatPrompt,
+  buildExtractionPrompt,
 } from "./ollama/prompts";
 
 export class OllamaService {
@@ -324,43 +325,56 @@ export class OllamaService {
     ragContext?: string,
     ocrText?: string
   ): Promise<ExtractedTestCase[] | null> {
-    const prompt = getTestCaseExtractionPrompt(content, depth, ragContext, ocrText);
-    const response = await this.generateJson<{ testCases: ExtractedTestCase[] }>(
-      prompt,
-      0.7,
-      this.modelFor("extraction")
-    );
-    return response?.testCases ?? null;
+    const prompt = buildExtractionPrompt({ content, depth, mode: "standard", ragContext, ocrText });
+    return this.extractTestCasesWithRetry(prompt);
   }
 
   async extractTestCasesOcrGrounded(
-    htmlContent: string,
+    textContent: string,
     ocrText: string,
     depth: ExtractionDepth,
     ragContext?: string,
   ): Promise<ExtractedTestCase[] | null> {
-    const prompt = getOcrGroundedExtractionPrompt(htmlContent, ocrText, depth, ragContext);
-    const response = await this.generateJson<{ testCases: ExtractedTestCase[] }>(
-      prompt,
-      0.7,
-      this.modelFor("extraction")
-    );
-    return response?.testCases ?? null;
+    const prompt = buildExtractionPrompt({ content: textContent, depth, mode: "ocr", ocrText, ragContext });
+    return this.extractTestCasesWithRetry(prompt);
   }
 
   async extractTestCasesRagEnriched(
-    htmlContent: string,
+    textContent: string,
     ocrText: string | undefined,
     ragContext: string,
     depth: ExtractionDepth,
   ): Promise<ExtractedTestCase[] | null> {
-    const prompt = getRagEnrichedExtractionPrompt(htmlContent, ocrText, ragContext, depth);
-    const response = await this.generateJson<{ testCases: ExtractedTestCase[] }>(
-      prompt,
-      0.7,
-      this.modelFor("extraction")
-    );
-    return response?.testCases ?? null;
+    const prompt = buildExtractionPrompt({ content: textContent, depth, mode: "rag", ocrText, ragContext });
+    return this.extractTestCasesWithRetry(prompt);
+  }
+
+  // ponies: retry logic for extraction
+  private async extractTestCasesWithRetry(prompt: string, maxRetries: number = 1): Promise<ExtractedTestCase[] | null> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await this.generateJson<{ testCases: ExtractedTestCase[] }>(
+          prompt,
+          0.7,
+          this.modelFor("extraction")
+        );
+        
+        if (response?.testCases && response.testCases.length > 0) {
+          return response.testCases;
+        }
+        
+        if (attempt < maxRetries) {
+          logger.warn("Ollama", `Extraction attempt ${attempt + 1} returned empty, retrying...`);
+        }
+      } catch (err) {
+        if (attempt < maxRetries) {
+          logger.warn("Ollama", `Extraction attempt ${attempt + 1} failed, retrying...`, err);
+        } else {
+          throw err;
+        }
+      }
+    }
+    return null;
   }
 
   async chatJiraFirst(
@@ -429,7 +443,16 @@ export class OllamaService {
     if (!response) {
       return null;
     }
-    return extractJsonBlock<T>(response);
+
+    // ponies: log response length for debugging
+    logger.info("Ollama", `Generated response: ${response.length} chars`);
+    
+    const parsed = extractJsonBlock<T>(response);
+    if (!parsed) {
+      logger.warn("Ollama", "Failed to parse JSON from response", response.slice(0, 200));
+    }
+    
+    return parsed;
   }
 }
 export type { ProjectContext };

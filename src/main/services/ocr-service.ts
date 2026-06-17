@@ -1,4 +1,4 @@
-import { createWorker, createScheduler } from "tesseract.js";
+import { createWorker } from "tesseract.js";
 import { logger } from "./logger";
 import type { OcrResult } from "@shared/types";
 import { app } from "electron";
@@ -7,6 +7,11 @@ import fs from "node:fs";
 
 const WORKER_PATH = path.join(app.getAppPath(), "node_modules", "tesseract.js", "dist", "worker.min.js");
 
+/**
+ * OCR service using Tesseract.js v5 (Node.js native worker support).
+ * v5 uses Node.js worker_threads instead of Web Workers, so it runs
+ * correctly in Electron's main process without DOM API issues.
+ */
 export class OcrService {
   private worker: Tesseract.Worker | null = null;
   private busy = false;
@@ -20,15 +25,12 @@ export class OcrService {
     if (!this.worker) {
       try {
         const workerOptions: any = {
-          langPath: path.join(app.getAppPath(), "node_modules", "tesseract.js", "dist"),
+          langPath: "https://tessdata.projectnaptha.com/4.0.0/",
           logger: (m: any) => logger.debug("Tesseract", m),
         };
 
-        if (fs.existsSync(WORKER_PATH)) {
-          workerOptions.workerPath = WORKER_PATH;
-        }
-
         this.worker = await createWorker("eng+ind", 1, workerOptions);
+        logger.info("OCR", "Tesseract worker created successfully");
       } catch (error: any) {
         logger.error("OCR", "Failed to create Tesseract worker:", error);
         this.workerInitError = error;
@@ -46,7 +48,6 @@ export class OcrService {
     }
 
     if (this.workerInitError) {
-      logger.warn("OCR", "Skipping OCR due to worker initialization error:", this.workerInitError.message);
       return null;
     }
 
@@ -58,7 +59,13 @@ export class OcrService {
         return null;
       }
 
-      const { data } = await worker.recognize(imageBuffer);
+      // Add a 10-second timeout to prevent OCR from hanging the IPC thread
+      const recognizePromise = worker.recognize(imageBuffer);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("OCR operation timed out")), 10000)
+      );
+
+      const { data } = await Promise.race([recognizePromise, timeoutPromise]);
 
       const text = data.text?.trim() || "";
       const confidence = data.confidence || 0;
@@ -78,8 +85,8 @@ export class OcrService {
       };
     } catch (error: any) {
       logger.error("OCR", `Failed to OCR ${attachmentName}:`, error);
-      // If worker fails, mark it as failed for future calls
-      if (error.message?.includes("addEventListener") || error.message?.includes("worker")) {
+      // If worker fails fatally, mark it as failed for future calls
+      if (error.message?.includes("worker") || error.message?.includes("terminated") || error.message?.includes("timeout")) {
         this.workerInitError = error;
         this.worker = null;
       }

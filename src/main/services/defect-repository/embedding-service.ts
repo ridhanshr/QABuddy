@@ -19,7 +19,7 @@ export class EmbeddingService {
   }
 
   async getEmbedding(text: string, model = "embeddinggemma"): Promise<number[]> {
-    if (!this.enabled) return [];
+    if (!this.enabled || !this.endpoint || !this.endpoint.startsWith("http")) return [];
 
     try {
       const response = await fetch(`${this.endpoint}/api/embed`, {

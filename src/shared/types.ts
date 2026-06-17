@@ -271,6 +271,37 @@ export interface ExtractedTestCase {
   priority: string;
   category: string;
   selected: boolean;
+  confidence?: number;
+}
+
+export const VALID_PRIORITIES = ["P1", "P2", "P3"] as const;
+export const VALID_CATEGORIES = [
+  "Functional", "UI/UX", "Security", "Performance", "Integration",
+  "Data Validation", "Accessibility", "Error Handling", "Edge Case", "Manual Review"
+] as const;
+
+export function validateExtractedTestCase(tc: any): tc is ExtractedTestCase {
+  if (!tc || typeof tc !== "object") return false;
+  if (typeof tc.id !== "string" || !/^TC-\d{3,}$/.test(tc.id)) return false;
+  if (typeof tc.title !== "string" || tc.title.trim().length === 0) return false;
+  if (typeof tc.objective !== "string" || tc.objective.trim().length === 0) return false;
+  if (!VALID_PRIORITIES.includes(tc.priority as any)) return false;
+  if (typeof tc.category !== "string" || tc.category.trim().length === 0) return false;
+  if (typeof tc.selected !== "boolean") return false;
+  return true;
+}
+
+export function sanitizeExtractedTestCase(tc: any): ExtractedTestCase | null {
+  if (!validateExtractedTestCase(tc)) return null;
+  return {
+    id: tc.id,
+    title: tc.title.trim(),
+    objective: tc.objective.trim(),
+    priority: tc.priority,
+    category: tc.category.trim(),
+    selected: tc.selected,
+    confidence: typeof tc.confidence === "number" ? tc.confidence : undefined,
+  };
 }
 
 export interface ExtractedTestCaseResult {

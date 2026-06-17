@@ -187,7 +187,7 @@ export class DefectRepositoryService {
         }));
 
         const explanationModel = config.ollama.defectExplanationModel?.trim();
-        if (explanationModel) {
+        if (explanationModel && config.ollama.endpoint && config.ollama.endpoint.startsWith("http")) {
           try {
             const llmResponse = await fetch(`${config.ollama.endpoint}/api/generate`, {
               method: "POST",

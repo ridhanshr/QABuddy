@@ -1,19 +1,23 @@
 import type {
   ConfluenceConfig,
+  ExtractedTestCase,
+  ExtractionDepth,
   ParseConfluenceEntriesOptions,
   ParseConfluenceParseDebugChunk,
   ParseConfluenceParseDebugReport,
   ParseConfluenceParseDebugRow,
   ParseConfluenceParseDebugTable,
 } from "@shared/types";
+import { sanitizeExtractedTestCase } from "@shared/types";
 import { ConfluenceClient } from "./confluence/confluence-client";
 import {
   generateXhtmlTable,
   generateSingleTable,
   normalizeAttachmentOrder,
 } from "./confluence/table-formatter";
-import { stripHtml, parseConfluenceDisplayUrl, fallbackTestCases } from "./utils";
+import { stripHtml, parseConfluenceDisplayUrl, fallbackTestCases, chunkContent, deduplicateTestCases } from "./utils";
 import { logger } from "./logger";
+import type { OllamaService } from "./ollama-service";
 
 function normalizeFilename(name: string): string {
   if (!name) return "";
@@ -302,26 +306,64 @@ export class ConfluenceService {
     return this.rawClient.downloadAttachment(downloadUrl);
   }
 
-  async extractTestCases(url: string, depth: string, ollama?: any, ragContext?: string, ocrText?: string, pageOverride?: any) {
+  async extractTestCases(url: string, depth: string, ollama?: OllamaService, ragContext?: string, ocrText?: string, pageOverride?: any) {
     const page = pageOverride || await this.getPageByUrl(url);
     const content = page.body?.storage?.value || "";
     
-    let testCases: any[] = [];
+    const plainText = stripHtml(content);
+    const needsChunking = plainText.length > 15000;
+
+    let testCases: ExtractedTestCase[] = [];
     let isFallback = false;
 
     if (ollama) {
       try {
-        let extracted: any[] | null = null;
-        if (ragContext && typeof ollama.extractTestCasesRagEnriched === "function") {
-          extracted = await ollama.extractTestCasesRagEnriched(stripHtml(content), ocrText, ragContext, depth as any);
-        } else if (ocrText && typeof ollama.extractTestCasesOcrGrounded === "function") {
-          extracted = await ollama.extractTestCasesOcrGrounded(stripHtml(content), ocrText, depth as any, ragContext);
-        } else if (typeof ollama.extractTestCases === "function") {
-          extracted = await ollama.extractTestCases(stripHtml(content), depth as any, ragContext, ocrText);
-        }
+        if (needsChunking) {
+          // ponies: chunked extraction for large content
+          const chunks = chunkContent(plainText);
+          logger.info("Confluence", `Content chunked into ${chunks.length} parts for extraction`);
+          
+          const allExtracted: ExtractedTestCase[] = [];
+          for (let i = 0; i < chunks.length; i++) {
+            logger.info("Confluence", `Extracting part ${i + 1}/${chunks.length}...`);
+            let extracted: ExtractedTestCase[] | null = null;
+            
+            if (ragContext && typeof ollama.extractTestCasesRagEnriched === "function") {
+              extracted = await ollama.extractTestCasesRagEnriched(chunks[i], ocrText, ragContext, depth as ExtractionDepth);
+            } else if (ocrText && typeof ollama.extractTestCasesOcrGrounded === "function") {
+              extracted = await ollama.extractTestCasesOcrGrounded(chunks[i], ocrText, depth as ExtractionDepth, ragContext);
+            } else if (typeof ollama.extractTestCases === "function") {
+              extracted = await ollama.extractTestCases(chunks[i], depth as ExtractionDepth, ragContext, ocrText);
+            }
+            
+            if (extracted && extracted.length > 0) {
+              const sanitized = extracted.map(sanitizeExtractedTestCase).filter((tc): tc is ExtractedTestCase => tc !== null);
+              allExtracted.push(...sanitized);
+            }
+          }
+          
+          // Deduplicate across chunks
+          if (allExtracted.length > 0) {
+            testCases = deduplicateTestCases(allExtracted);
+            logger.info("Confluence", `Extracted ${allExtracted.length} test cases, ${testCases.length} after deduplication`);
+          }
+        } else {
+          // Standard extraction for small content
+          let extracted: ExtractedTestCase[] | null = null;
+          if (ragContext && typeof ollama.extractTestCasesRagEnriched === "function") {
+            extracted = await ollama.extractTestCasesRagEnriched(plainText, ocrText, ragContext, depth as ExtractionDepth);
+          } else if (ocrText && typeof ollama.extractTestCasesOcrGrounded === "function") {
+            extracted = await ollama.extractTestCasesOcrGrounded(plainText, ocrText, depth as ExtractionDepth, ragContext);
+          } else if (typeof ollama.extractTestCases === "function") {
+            extracted = await ollama.extractTestCases(plainText, depth as ExtractionDepth, ragContext, ocrText);
+          }
 
-        if (extracted && extracted.length > 0) {
-          testCases = extracted;
+          if (extracted && extracted.length > 0) {
+            const sanitized = extracted.map(sanitizeExtractedTestCase).filter((tc): tc is ExtractedTestCase => tc !== null);
+            if (sanitized.length > 0) {
+              testCases = sanitized;
+            }
+          }
         }
       } catch (err) {
         logger.error("Confluence", "Ollama extraction failed, falling back to rule-based...", err);

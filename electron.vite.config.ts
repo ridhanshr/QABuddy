@@ -36,6 +36,13 @@ export default defineConfig({
   main: {
     build: {
       outDir: "out/main",
+      rollupOptions: {
+        // Externalize tesseract.js so it's loaded from node_modules at runtime.
+        // Vite resolves the `browser` field in package.json by default, which
+        // redirects tesseract's Node.js worker_threads to browser Web Workers —
+        // causing "addEventListener is not a function" in Electron main process.
+        external: ["tesseract.js"],
+      },
     },
     resolve: {
       alias: {

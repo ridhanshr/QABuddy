@@ -42,6 +42,7 @@ export default function Dashboard() {
   const [projectPage, setProjectPage] = useState(1);
   const projectRowsPerPage = 10;
   const dialogRef = useRef<HTMLDivElement>(null);
+  const insightCache = useRef<Map<string, string>>(new Map());
   const [projectInsight, setProjectInsight] = useState<string | null>(null);
   const [projectInsightLoading, setProjectInsightLoading] = useState(false);
   const [labelExcludeDrafts, setLabelExcludeDrafts] = useState<string[]>([]);
@@ -136,10 +137,16 @@ export default function Dashboard() {
     projectPage * projectRowsPerPage
   );
 
-  // Fetch per-project insight when switching tabs
+  // Fetch per-project insight when switching tabs (with cache)
   useEffect(() => {
     if (activeProjectTab === "all" || !activeProjectData) {
-      setProjectInsight(null);
+      return;
+    }
+    // Check cache first
+    const cached = insightCache.current.get(activeProjectTab);
+    if (cached) {
+      setProjectInsight(cached);
+      setProjectInsightLoading(false);
       return;
     }
     setProjectInsightLoading(true);
@@ -149,7 +156,10 @@ export default function Dashboard() {
       readyForQa: activeProjectData.readyForQa,
     };
     window.qaBuddy.getProjectInsight(request)
-      .then((insight) => setProjectInsight(insight))
+      .then((insight) => {
+        insightCache.current.set(activeProjectTab, insight);
+        setProjectInsight(insight);
+      })
       .catch(() => setProjectInsight(null))
       .finally(() => setProjectInsightLoading(false));
   }, [activeProjectTab, activeProjectData]);

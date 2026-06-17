@@ -1144,6 +1144,23 @@ export class JiraService {
           }
         }
 
+        // ponies: DELETE existing steps before PUT to actually replace
+        if (mode === "replace") {
+          try {
+            const res = await this.client.xray.get(`/test/${entry.issueKey}/step`);
+            const existing = res.data;
+            if (Array.isArray(existing)) {
+              for (const step of existing) {
+                if (step.id) {
+                  await this.client.xray.delete(`/test/${entry.issueKey}/step/${step.id}`);
+                }
+              }
+            }
+          } catch {
+            // ignore - might not have existing steps
+          }
+        }
+
         const step = {
           step: newStepText,
           data: "",

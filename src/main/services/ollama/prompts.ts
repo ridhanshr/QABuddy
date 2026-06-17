@@ -404,7 +404,7 @@ export function getTestCaseExtractionPrompt(
 }
 
 export function getOcrGroundedExtractionPrompt(
-  htmlContent: string,
+  textContent: string,
   ocrText: string,
   depth: ExtractionDepth,
   ragContext?: string,
@@ -417,12 +417,12 @@ export function getOcrGroundedExtractionPrompt(
 
   return [
     "SYSTEM:",
-    "Anda adalah Senior QA Engineer yang mengekstrak test case dari gabungan teks HTML dan hasil OCR.",
+    "Anda adalah Senior QA Engineer yang mengekstrak test case dari gabungan teks requirement dan hasil OCR.",
     "",
     "ATURAN UTAMA:",
     "1. Informasi dari OCR dianggap setara dengan teks requirement jika terlihat jelas.",
     "2. Jika informasi hanya muncul di OCR, tandai sebagai OCR-derived pada objective.",
-    "3. Jangan menghapus fakta penting hanya karena tidak ada di HTML.",
+    "3. Jangan menghapus fakta penting hanya karena tidak ada di teks requirement.",
     "4. Jangan mengarang teks yang tidak terbaca jelas oleh OCR.",
     "5. Jika OCR tidak meyakinkan, gunakan hanya bagian yang paling pasti.",
     "",
@@ -433,8 +433,8 @@ export function getOcrGroundedExtractionPrompt(
     'Return ONLY valid JSON: {"testCases":[{"id":"TC-001","title":"...","objective":"...","priority":"P1|P2|P3","category":"...","selected":true}]}',
     "WARNING: Keluarkan HANYA raw JSON. Jangan gunakan markdown block.",
     "",
-    "KONTEKS HTML:",
-    htmlContent.slice(0, 15000),
+    "KONTEKS REQUIREMENT (TEKS):",
+    textContent.slice(0, 20000),
     "",
     "KONTEKS OCR:",
     ocrText,
@@ -444,7 +444,7 @@ export function getOcrGroundedExtractionPrompt(
 }
 
 export function getRagEnrichedExtractionPrompt(
-  htmlContent: string,
+  textContent: string,
   ocrText: string | undefined,
   ragContext: string,
   depth: ExtractionDepth,
@@ -473,14 +473,158 @@ export function getRagEnrichedExtractionPrompt(
     'Return ONLY valid JSON: {"testCases":[{"id":"TC-001","title":"...","objective":"...","priority":"P1|P2|P3","category":"...","selected":true}]}',
     "WARNING: Keluarkan HANYA raw JSON. Jangan gunakan markdown block.",
     "",
-    "KONTEKS HTML:",
-    htmlContent.slice(0, 15000),
+    "KONTEKS REQUIREMENT (TEKS):",
+    textContent,
     "",
     "KONTEKS OCR:" + (ocrText ? "\n" + ocrText : "\n(Tidak tersedia)"),
     "",
     "KONTEKS RAG:",
     ragContext,
   ].join("\n");
+}
+
+// ponies: Unified prompt builder for all extraction strategies
+interface ExtractionPromptParams {
+  content: string;
+  depth: ExtractionDepth;
+  mode: "standard" | "ocr" | "rag";
+  ocrText?: string;
+  ragContext?: string;
+  chunkInfo?: { index: number; total: number };
+}
+
+export function buildExtractionPrompt(params: ExtractionPromptParams): string {
+  const { content, depth, mode, ocrText, ragContext, chunkInfo } = params;
+  
+  const depthInstructions: Record<ExtractionDepth, string> = {
+    "comprehensive": [
+      "Generate a COMPLETE set of test cases covering ALL scenarios:",
+      "- Happy path / positive flows",
+      "- Negative / error handling flows",
+      "- Boundary value and edge cases",
+      "- Input validation (empty, max length, special chars, SQL injection)",
+      "- Permission / role-based access scenarios",
+      "- Concurrent / race condition scenarios if applicable",
+      "- Data integrity and state transitions",
+      "Aim for 10-25 test cases depending on complexity.",
+    ].join("\n"),
+    "happy-path": [
+      "Focus ONLY on the main successful user flows:",
+      "- Core business logic working correctly",
+      "- Standard user journeys from start to finish",
+      "- Expected inputs producing expected outputs",
+      "- Key integration points functioning normally",
+      "Aim for 5-10 test cases covering the primary scenarios.",
+    ].join("\n"),
+    "edge-case": [
+      "Focus ONLY on edge cases, boundaries, and failure scenarios:",
+      "- Boundary values (min, max, zero, negative, overflow)",
+      "- Invalid / malformed inputs",
+      "- Empty states, null values, missing required fields",
+      "- Timeout and network failure handling",
+      "- Race conditions and concurrent access",
+      "- Security edge cases (XSS, injection, unauthorized access)",
+      "Aim for 8-15 test cases targeting potential breaking points.",
+    ].join("\n"),
+  };
+
+  const modeInstructions: Record<string, string[]> = {
+    standard: [
+      "You are a Senior QA Engineer with 10+ years of experience in software testing.",
+      "Your task is to extract well-structured test cases from the requirement text provided below.",
+      "",
+      "=== INPUT PRIORITY ===",
+      "1. HTML requirement text — primary source",
+      "2. RAG context from Knowledge Base — tertiary source, for reference only",
+    ],
+    ocr: [
+      "Anda adalah Senior QA Engineer yang mengekstrak test case dari gabungan teks requirement dan hasil OCR.",
+      "",
+      "=== ATURAN UTAMA ===",
+      "1. Informasi dari OCR dianggap setara dengan teks requirement jika terlihat jelas.",
+      "2. Jika informasi hanya muncul di OCR, tandai sebagai OCR-derived pada objective.",
+      "3. Jangan menghapus fakta penting hanya karena tidak ada di teks requirement.",
+      "4. Jangan mengarang teks yang tidak terbaca jelas oleh OCR.",
+      "5. Jika OCR tidak meyakinkan, gunakan hanya bagian yang paling pasti.",
+    ],
+    rag: [
+      "Anda adalah Senior QA Engineer yang mengekstrak test case baru dengan referensi knowledge base untuk menghindari duplikasi.",
+      "",
+      "=== ATURAN UTAMA ===",
+      "1. Test case baru harus berdasarkan requirement saat ini.",
+      "2. RAG hanya dipakai untuk referensi konteks dan terminologi.",
+      "3. Jangan menyalin test case lama jika tidak relevan.",
+      "4. Jika konteks RAG bertentangan dengan requirement sumber, prioritaskan requirement sumber.",
+      "5. Gunakan struktur output JSON yang konsisten.",
+    ],
+  };
+
+  const promptParts: string[] = [
+    ...modeInstructions[mode],
+    "",
+    "=== SOURCE GROUNDING ===",
+    "- Base test cases on EXPLICIT requirements found in the text or OCR.",
+    "- Do NOT invent features or requirements that are not present in any source.",
+    "",
+    "=== OUTPUT FORMAT ===",
+    "Return ONLY valid JSON with this exact shape:",
+    '{"testCases":[{"id":"TC-001","title":"...","objective":"...","priority":"P1|P2|P3","category":"...","selected":true}]}',
+    "WARNING: Keluarkan HANYA raw JSON. Karakter pertama output HARUS '{' dan karakter terakhir HARUS '}'. Jangan gunakan markdown block (```json), jangan tambahkan teks pengantar atau penjelasan apa pun.",
+    "",
+    "=== FIELD GUIDELINES ===",
+    "- id: Sequential ID starting from TC-001",
+    "- title: Short, actionable title starting with a verb (e.g. 'Verify login with valid credentials', 'Validate error message for empty email field')",
+    "- objective: Clear, measurable description of WHAT is being tested and WHAT the expected outcome is. Include preconditions if relevant. For OCR-derived items, mention '(dari screenshot)'.",
+    "- priority:",
+    "  P1 = Critical business flow, blocks release if failing (login, payment, core CRUD)",
+    "  P2 = Important functionality, significant user impact (filters, search, notifications)",
+    "  P3 = Minor feature, cosmetic, nice-to-have (tooltips, sorting preferences, UI polish)",
+    "- category: One of: Functional, UI/UX, Security, Performance, Integration, Data Validation, Accessibility, Error Handling",
+    "- selected: Always set to true",
+    "",
+    "=== EXTRACTION DEPTH ===",
+    depthInstructions[depth],
+    "",
+    "=== ATURAN ANTI-HALUSINASI ===",
+    "- Ekstrak test case HANYA dari requirement yang ada di sumber. JANGAN mengarang fitur, endpoint, atau business rule yang tidak ada.",
+    "- Jika requirement tidak jelas atau ambigu, buat test case minimal dan tandai di objective bahwa requirement perlu diklarifikasi.",
+    "- Jangan menambah skenario yang tidak didukung bukti dari teks, OCR, atau RAG.",
+    "- Jika OCR tidak meyakinkan (confidence rendah), gunakan hanya bagian yang paling pasti.",
+    "",
+    "=== RULES ===",
+    "1. Each test case must be UNIQUE — no duplicate or overlapping scenarios",
+    "2. PENTING: Selalu tulis judul (title) dan tujuan (objective) dalam Bahasa Indonesia.",
+    "3. Titles must be specific and testable — avoid vague phrases like 'check feature works'",
+    "4. Objectives must describe the expected behavior, not just repeat the title",
+    "5. Group related scenarios logically (e.g. all validation cases together)",
+    "6. Separate happy path, negative path, and edge cases clearly.",
+  ];
+
+  if (ragContext) {
+    promptParts.push("");
+    promptParts.push("=== EXISTING PROJECT CONTEXT (from Knowledge Base / RAG) ===");
+    promptParts.push(ragContext);
+    promptParts.push("=== END CONTEXT ===");
+    promptParts.push("Use the context above ONLY for: (1) avoiding duplicate test cases, (2) aligning terminology, (3) reference. Do NOT add test cases based solely on RAG context.");
+  }
+
+  if (ocrText) {
+    promptParts.push("");
+    promptParts.push("=== OCR TEXT (from screenshot / image attachment) ===");
+    promptParts.push(ocrText);
+    promptParts.push("=== END OCR TEXT ===");
+    promptParts.push("Use OCR text as secondary source. Mark any OCR-derived items in the objective.");
+  }
+
+  promptParts.push("");
+  if (chunkInfo) {
+    promptParts.push(`=== REQUIREMENT TEXT TO ANALYZE (Part ${chunkInfo.index + 1}/${chunkInfo.total}) ===`);
+  } else {
+    promptParts.push("=== REQUIREMENT TEXT TO ANALYZE ===");
+  }
+  promptParts.push(content);
+
+  return promptParts.join("\n");
 }
 
 export function getRagAnswerPrompt(query: string, contextText: string): string {
