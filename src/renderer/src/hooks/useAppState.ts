@@ -92,9 +92,10 @@ const emptyStatus: ConnectionStatus = {
   ollama: { ok: false, message: "Belum diuji" },
 };
 
-function createEmptyConfEntry(isDirty = true) {
+function createEmptyConfEntry(isDirty = true, section = "") {
   return {
     id: crypto.randomUUID(),
+    section,
     testCaseNo: "",
     functionName: "",
     scenario: "",
@@ -340,6 +341,11 @@ export function useAppState() {
   const [confFetchingSteps, setConfFetchingSteps] = useState<Set<string>>(new Set());
   const [deletedConfTableIndices, setDeletedConfTableIndices] = useState<number[]>([]);
   const [draggedAttachment, setDraggedAttachment] = useState<{ entryId: string; attachmentId: string } | null>(null);
+
+  const confSections = useMemo(() => {
+    const sections = confEntries.map(e => e.section || "").filter(Boolean);
+    return [...new Set(sections)];
+  }, [confEntries]);
 
   const filteredReadyForQa = useMemo(() => {
     if (!dashboard) {
@@ -1321,6 +1327,7 @@ export function useAppState() {
   const downloadConfTemplate = () => {
     const templateData = [
       {
+        Section: "Login Module",
         "No. Test Case": "TC001",
         Function: "Login",
         Scenario: "Validasi login dengan data benar",
@@ -1840,6 +1847,7 @@ export function useAppState() {
         for (const row of jsonData) {
           const entry = {
             ...createEmptyConfEntry(),
+            section: row.Section || row.section || "",
             testCaseNo: row.TestCaseNo || row["No. Test Case"] || "",
             functionName: row.FunctionName || row.Function || "",
             scenario: row.Scenario || "",
@@ -1907,10 +1915,10 @@ export function useAppState() {
     event.target.value = "";
   };
 
-  const addConfEntry = () => {
+  const addConfEntry = (section?: string) => {
     setConfEntries((current) => [
       ...current,
-      createEmptyConfEntry()
+      createEmptyConfEntry(true, section || "")
     ]);
   };
 
@@ -2483,6 +2491,7 @@ export function useAppState() {
     confPreviewLoading,
     confParseStatus,
     confEntries,
+    confSections,
     setConfEntries,
     deletedConfTableIndices,
     setDeletedConfTableIndices,

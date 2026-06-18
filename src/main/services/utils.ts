@@ -271,6 +271,16 @@ export function validateBugPreview(raw: unknown): BugPreview | null {
   return { summary: obj.summary, description: obj.description, priority, labels };
 }
 
+export function slugify(text: string, maxLen = 30): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, maxLen)
+    .replace(/-$/, "");
+}
+
 export function fallbackTestCases(
   bodyText: string,
   depth: string

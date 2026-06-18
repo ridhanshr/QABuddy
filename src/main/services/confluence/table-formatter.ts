@@ -1,3 +1,5 @@
+import { slugify } from "../utils";
+
 export function normalizeAttachmentOrder<T extends { order?: number; name: string; data: string }>(attachments: T[]): T[] {
   return [...attachments]
     .sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER))
@@ -171,4 +173,20 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
 
 export function generateSingleTable(entry: any, jiraBaseUrl?: string, jiraServerId?: string): string {
   return generateXhtmlTable([entry], jiraBaseUrl, jiraServerId).trim();
+}
+
+export function generateSectionHeading(sectionName: string): string {
+  const id = `id-${slugify(sectionName)}`;
+  return `<h1 id="${id}"><strong><span style="color:var(--ds-text,#172b4d);">${escapeHtmlText(sectionName)} </span></strong></h1>`;
+}
+
+export function generateTocMacro(sections: string[]): string {
+  if (sections.length === 0) return "";
+  const items = sections
+    .map((name, i) => {
+      const id = `id-${slugify(name)}`;
+      return `<li><span class="toc-item-body" data-outline="${i + 1}"><span class="toc-outline">${i + 1}</span><a href="#${id}" class="toc-link">${escapeHtmlText(name)}&nbsp;</a></span></li>`;
+    })
+    .join("");
+  return `<div class="toc-macro client-side-toc-macro conf-macro output-block hidden-outline" data-headerelements="H1,H2,H3,H4,H5,H6,H7" data-hasbody="false" data-macro-name="toc"><ul style="">${items}</ul></div>`;
 }
