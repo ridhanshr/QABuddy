@@ -1061,11 +1061,16 @@ export class JiraService {
     const checks = await Promise.allSettled(
       valid.map(async (entry) => {
         try {
+          logger.info("Xray", `checkTestSteps(${entry.issueKey}) → GET /test/${entry.issueKey}/step`);
           const res = await this.client.xray.get(`/test/${entry.issueKey}/step`);
           const steps = res.data;
+          logger.info("Xray", `checkTestSteps(${entry.issueKey}) response (first 300): ${JSON.stringify(steps).slice(0, 300)}`);
           const hasExisting = Array.isArray(steps) ? steps.length > 0 : !!steps;
           return { issueKey: entry.issueKey, hasSteps: hasExisting };
-        } catch {
+        } catch (err: any) {
+          const status = err?.response?.status;
+          const body = JSON.stringify(err?.response?.data || "").slice(0, 300);
+          logger.error("Xray", `checkTestSteps(${entry.issueKey}) FAILED: status=${status} body=${body} message=${err?.message}`);
           return { issueKey: entry.issueKey, hasSteps: false };
         }
       })

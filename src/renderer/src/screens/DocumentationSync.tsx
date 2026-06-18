@@ -24,6 +24,7 @@ export default function DocumentationSync() {
     updateConfAttachmentNote,
     removeImage,
     handleConfFileAttachment,
+    handleConfFileDrop,
     addConfEntry,
     config,
     setConfig,
@@ -312,6 +313,14 @@ export default function DocumentationSync() {
                   </p>
                   <div 
                     onPaste={(e) => handleImagePaste(item.id, e)}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.dataTransfer.files.length > 0) {
+                        handleConfFileDrop(item.id, e.dataTransfer.files);
+                      }
+                    }}
                     style={{ 
                       minHeight: 120, border: '2px dashed var(--outline-variant)', 
                       borderRadius: 12, padding: 20, display: 'flex', flexWrap: 'wrap', gap: 12,
@@ -324,8 +333,8 @@ export default function DocumentationSync() {
                     {item.images.length === 0 && (
                       <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--on-surface-variant)', pointerEvents: 'none' }}>
                         <span className="material-symbols" style={{ fontSize: 32, marginBottom: 8, color: 'var(--primary)' }}>add_photo_alternate</span>
-                        <p style={{ fontSize: 13, fontWeight: 500, margin: 0 }}>Paste images or click to attach documents</p>
-                        <p style={{ fontSize: 11, color: 'var(--on-surface-variant)', marginTop: 4, opacity: 0.8 }}>Supports PNG, JPG, and document files</p>
+                        <p style={{ fontSize: 13, fontWeight: 500, margin: 0 }}>Paste images, drag files, or click to attach</p>
+                        <p style={{ fontSize: 11, color: 'var(--on-surface-variant)', marginTop: 4, opacity: 0.8 }}>Supports PNG, JPG, PDF, and document files</p>
                       </div>
                     )}
                     {normalizeConfAttachments(item.images).map((img: ConfAttachment) => {

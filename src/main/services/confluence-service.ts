@@ -53,6 +53,16 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+function slugify(text: string, maxLen = 30): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, maxLen)
+    .replace(/-$/, "");
+}
+
 export class ConfluenceService {
   private readonly config: ConfluenceConfig;
   private readonly rawClient: ConfluenceClient;
@@ -215,21 +225,25 @@ export class ConfluenceService {
       for (const img of normalizeAttachmentOrder(entry.images || [])) {
         if (!img.data) continue;
 
-        const normalizedImgName = normalizeFilename(img.name);
+        const ext = img.name.split(".").pop() || "png";
+        const tcNo = (entry.testCaseNo || "TC-000").replace(/\s+/g, "");
+        const scenarioSlug = slugify(entry.scenario || "untitled");
+        const newName = `${tcNo}-${scenarioSlug}-${img.order}.${ext}`;
+
+        const normalizedImgName = normalizeFilename(newName);
         if (existingAttachmentNames.includes(normalizedImgName)) {
           continue;
         }
 
         try {
-          await this.uploadAttachment(pageId, img.name, img.data);
+          await this.uploadAttachment(pageId, newName, img.data);
           if (img.data.startsWith("data:image/")) {
             imageCount++;
           } else {
             attachmentCount++;
           }
         } catch (uploadErr) {
-          logger.error("Confluence", `Failed to upload attachment ${img.name}:`, uploadErr);
-          throw uploadErr;
+          logger.error("Confluence", `Failed to upload attachment ${newName}:`, uploadErr);
         }
       }
     }

@@ -1993,10 +1993,28 @@ export function useAppState() {
   const handleConfFileAttachment = (entryId: string) => {
     const input = document.createElement("input");
     input.type = "file";
+    input.multiple = true;
     input.accept = ".png,.jpg,.jpeg,.gif,.pdf,.doc,.docx,.xls,.xlsx";
     input.onchange = (e: any) => {
-      const file = e.target?.files?.[0];
-      if (!file) return;
+      const files: FileList | undefined = e.target?.files;
+      if (!files?.length) return;
+      for (const file of Array.from(files)) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const data = ev.target?.result as string;
+          updateConfEntryImages(entryId, (images) => [
+            ...images,
+            createConfAttachment(file.name, data, images.length + 1),
+          ]);
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+    input.click();
+  };
+
+  const handleConfFileDrop = (entryId: string, fileList: FileList) => {
+    for (const file of Array.from(fileList)) {
       const reader = new FileReader();
       reader.onload = (ev) => {
         const data = ev.target?.result as string;
@@ -2006,8 +2024,7 @@ export function useAppState() {
         ]);
       };
       reader.readAsDataURL(file);
-    };
-    input.click();
+    }
   };
 
   const removeImage = (entryId: string, attachmentId: string) => {
@@ -2524,6 +2541,7 @@ export function useAppState() {
     updateConfEntryImages,
     handleImagePaste,
     handleConfFileAttachment,
+    handleConfFileDrop,
     removeImage,
     moveConfAttachment,
     moveConfAttachmentByOffset,

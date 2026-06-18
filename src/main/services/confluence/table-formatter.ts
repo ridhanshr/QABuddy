@@ -24,12 +24,31 @@ export function escapeHtmlText(value: string): string {
 }
 
 export function toListItems(text: string): string {
-  return text
-    .split("\n")
-    .map((s) => s.trim())
-    .filter((s) => s)
-    .map((s) => `<li>${escapeHtmlText(s)}</li>`)
-    .join("");
+  const lines = text.split("\n").map((s) => s.trim());
+  const parts: string[] = [];
+  let bullets: string[] = [];
+
+  const flushBullets = () => {
+    if (bullets.length > 0) {
+      parts.push(`<ul>${bullets.map((b) => `<li>${escapeHtmlText(b)}</li>`).join("")}</ul>`);
+      bullets = [];
+    }
+  };
+
+  for (const line of lines) {
+    if (!line) {
+      flushBullets();
+      continue;
+    }
+    if (/^\s*-\s+/.test(line)) {
+      bullets.push(line.replace(/^\s*-\s+/, ""));
+    } else {
+      flushBullets();
+      parts.push(`<p>${escapeHtmlText(line)}</p>`);
+    }
+  }
+  flushBullets();
+  return parts.join("");
 }
 
 export function linkifyJiraKeys(text: string, jiraBaseUrl?: string, jiraServerId?: string): string {
@@ -114,19 +133,19 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
           <tr>
             <td class="confluenceTd"><strong>Input Data</strong></td>
             <td class="confluenceTd">
-              <ol>${inputItems}</ol>
+              ${inputItems}
             </td>
           </tr>
           <tr>
             <td class="confluenceTd"><strong>Steps</strong></td>
             <td class="confluenceTd">
-              <ol>${stepsItems}</ol>
+              ${stepsItems}
             </td>
           </tr>
           <tr>
             <td class="confluenceTd"><p><strong>Expected Result</strong></p></td>
             <td class="confluenceTd">
-              <ol>${expectedItems}</ol>
+              ${expectedItems}
             </td>
           </tr>
           <tr>

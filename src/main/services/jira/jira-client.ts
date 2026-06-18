@@ -213,15 +213,23 @@ export class JiraClient {
     issueKey: string
   ): Promise<{ steps: string[]; results: string[] } | null> {
     try {
+      logger.info("Xray", `fetchTestSteps(${issueKey}) → GET /test/${issueKey}/step`);
       const res = await this.xray.get<any>(`/test/${issueKey}/step`);
       const data = res.data;
+      logger.info("Xray", `fetchTestSteps(${issueKey}) response (first 500): ${JSON.stringify(data).slice(0, 500)}`);
       if (Array.isArray(data) && data.length > 0) {
-        const steps = data.map((s: any) => (s.step || "").trim()).filter(Boolean);
-        const results = data.map((s: any) => (s.result || "").trim()).filter(Boolean);
+        const extractRaw = (v: any): string =>
+          typeof v === "string" ? v : v?.raw ?? "";
+        const steps = data.map((s: any) => extractRaw(s.step).trim()).filter(Boolean);
+        const results = data.map((s: any) => extractRaw(s.result).trim()).filter(Boolean);
         return steps.length > 0 || results.length > 0 ? { steps, results } : null;
       }
+      logger.warn("Xray", `fetchTestSteps(${issueKey}) — data is not a non-empty array, returning null`);
       return null;
-    } catch {
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const body = JSON.stringify(err?.response?.data || "").slice(0, 300);
+      logger.error("Xray", `fetchTestSteps(${issueKey}) FAILED: status=${status} body=${body} message=${err?.message}`);
       return null;
     }
   }
