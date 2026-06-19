@@ -1,5 +1,4 @@
 import React, { useEffect, useRef } from "react";
-import { marked } from "marked";
 import { useApp } from "../context/AppContext";
 
 const quickPrompts = [
@@ -68,7 +67,7 @@ export default function ChatAssistant() {
               <div className={`chat-bubble ${message.role === "user" ? "user-bubble" : "ai-bubble"}`}>
                 <div className="bubble-content">
                   {message.role === "assistant" ? (
-                    <div className="markdown-body" dangerouslySetInnerHTML={{ __html: marked.parse(message.text, { breaks: true }) as string }} />
+                    <div className="markdown-body" style={{ whiteSpace: "pre-wrap" }}>{message.text}</div>
                   ) : (
                     <p>{message.text}</p>
                   )}

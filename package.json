@@ -3,100 +3,39 @@
   "version": "0.7.0",
   "private": true,
   "description": "Desktop Jira and Confluence assistant for QA teams with local Ollama integration.",
-  "main": "out/main/index.js",
+  "main": "src-tauri/src/main.rs",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "dist": "npm run build && electron-builder --win portable --publish never",
-    "dist:setup": "npm run build && electron-builder --win nsis --publish never",
-    "dist:mac": "npm run build && electron-builder --mac --publish never",
-    "dist:all": "npm run build && electron-builder --win --mac --publish never",
+    "dev:renderer": "vite",
+    "build:renderer": "tsc --noEmit && vite build",
+    "dev": "tauri dev",
+    "build": "tauri build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
-    "axios": "^1.9.0",
-    "marked": "^18.0.5",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-store": "^2.4.3",
     "material-symbols": "^0.44.12",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "tesseract.js": "^5.1.1",
     "xlsx": "^0.18.5",
     "zod": "^3.25.6"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2",
     "@types/node": "^22.15.17",
     "@types/react": "^18.3.22",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.4.1",
-    "electron": "^31.7.7",
-    "electron-builder": "^24.13.3",
-    "electron-vite": "^2.3.0",
     "typescript": "^5.8.3",
     "vite": "^5.4.19",
     "vitest": "^1.6.1"
-  },
-  "build": {
-    "appId": "com.qabuddy.desktop",
-    "productName": "QA Buddy",
-    "files": [
-      "out/**/*",
-      "package.json"
-    ],
-    "asarUnpack": [
-      "out/renderer/**"
-    ],
-    "directories": {
-      "buildResources": "build"
-    },
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "QA Buddy"
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "category": "public.app-category.developer-tools",
-      "icon": "build/icon.png",
-      "minimumSystemVersion": "12.0",
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false
-    }
   }
 }

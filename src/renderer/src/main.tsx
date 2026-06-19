@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { installTauriApi } from "./tauri-api";
 
 /* Local font imports — bundled into the app, no internet needed */
 import "@fontsource/ibm-plex-sans/300.css";
@@ -17,10 +18,17 @@ import "material-symbols/outlined.css";
 
 import "./styles.css";
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </React.StrictMode>
-);
+/**
+ * Install the Tauri-backed DesktopApi onto `window.qaBuddy` before mounting
+ * React, so every `window.qaBuddy.*` call in the renderer resolves to a Tauri
+ * command. The promise is awaited to guarantee ordering.
+ */
+installTauriApi().finally(() => {
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+});

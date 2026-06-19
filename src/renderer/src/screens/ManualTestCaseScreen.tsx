@@ -130,6 +130,40 @@ export default function ManualTestCaseScreen() {
     return flatten(manualXrayFolders);
   }, [manualXrayFolders]);
 
+  const extractionStatus = extractMeta?.status ?? "idle";
+  const extractionStatusLabel = (() => {
+    switch (extractionStatus) {
+      case "loading":
+        return "Analyzing";
+      case "success":
+        return "AI";
+      case "fallback":
+        return "Fallback";
+      case "empty":
+        return "No results";
+      case "error":
+        return "Error";
+      default:
+        return "Idle";
+    }
+  })();
+  const extractionStatusStyle = (() => {
+    switch (extractionStatus) {
+      case "success":
+        return { color: "var(--primary)", border: "1px solid var(--primary)", background: "rgba(var(--primary-rgb), 0.08)" };
+      case "fallback":
+        return { color: "#f59e0b", border: "1px solid #f59e0b", background: "rgba(245, 158, 11, 0.08)" };
+      case "empty":
+        return { color: "var(--on-surface-variant)", border: "1px solid var(--outline-variant)", background: "transparent" };
+      case "error":
+        return { color: "var(--error)", border: "1px solid var(--error)", background: "rgba(239, 68, 68, 0.08)" };
+      case "loading":
+        return { color: "var(--on-surface-variant)", border: "1px solid var(--outline-variant)", background: "rgba(var(--primary-rgb), 0.04)" };
+      default:
+        return { color: "var(--on-surface-variant)", border: "1px solid var(--outline-variant)", background: "transparent" };
+    }
+  })();
+
   if (loading || activeView !== "manual-test-case") {
     return null;
   }
@@ -918,14 +952,17 @@ export default function ManualTestCaseScreen() {
               <div className="results-title-group">
                 <h3 style={{ fontSize: 20, fontWeight: 600 }}>Extraction Results</h3>
                 {extractMeta && (
-                  <span style={{ fontSize: 12, color: "var(--on-surface-variant)", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={extractMeta.title}>
+                  <span style={{ fontSize: 12, color: "var(--on-surface-variant)", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${extractMeta.title} • ${extractMeta.sourceUrl}`}>
                     dari: {extractMeta.title}
                   </span>
                 )}
-                <span className="count-badge">{extractedCases.length} Items</span>
-                {extractMeta?.isFallback && (
-                  <span className="chip" style={{ fontSize: 11, color: "#f59e0b", border: "1px solid #f59e0b", padding: "2px 8px" }}>
-                    Rule-Based (Ollama offline)
+                <span className="count-badge">{extractMeta?.count ?? extractedCases.length} Items</span>
+                <span className="chip" style={{ ...extractionStatusStyle, fontSize: 11, padding: "2px 8px" }}>
+                  {extractionStatusLabel}
+                </span>
+                {extractMeta?.sourceUrl && (
+                  <span className="chip" style={{ fontSize: 11, padding: "2px 8px", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={extractMeta.sourceUrl}>
+                    {extractMeta.sourceUrl}
                   </span>
                 )}
               </div>
@@ -950,7 +987,14 @@ export default function ManualTestCaseScreen() {
             </div>
 
             <div className="case-item-list">
-              {extractedCases.length > 0 ? (
+              {extractionStatus === "loading" ? (
+                <div className="card" style={{ padding: 20, border: "1px dashed var(--outline-variant)", background: "rgba(var(--primary-rgb), 0.04)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--on-surface-variant)" }}>
+                    <span className="material-symbols" style={{ fontSize: 18, animation: "spin 1s linear infinite" }}>sync</span>
+                    <span>Menunggu hasil ekstraksi dari Confluence dan AI parser...</span>
+                  </div>
+                </div>
+              ) : extractedCases.length > 0 ? (
                 extractedCases.map((item) => (
                   <label className="case-item-row" key={item.id}>
                     <div className="checkbox-box">
@@ -972,6 +1016,11 @@ export default function ManualTestCaseScreen() {
                         <span className="priority-pill">{item.priority}</span>
                       </div>
                       <p className="desc">{item.objective}</p>
+                      {item.sourceEvidence && (
+                        <p className="desc" style={{ fontSize: 12, color: "var(--on-surface-variant)", fontStyle: "italic" }}>
+                          Evidence: {item.sourceEvidence}
+                        </p>
+                      )}
                       <div className="tag-box">
                         <span className="case-tag">
                           <span
@@ -995,6 +1044,31 @@ export default function ManualTestCaseScreen() {
                     </div>
                   </label>
                 ))
+              ) : extractionStatus === "empty" ? (
+                <div className="card" style={{ padding: 24, border: "1px dashed var(--outline-variant)", background: "rgba(var(--surface-rgb), 0.5)" }}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <span className="material-symbols" style={{ color: "var(--on-surface-variant)", fontSize: 20 }}>search_off</span>
+                    <div>
+                      <h4 style={{ margin: "0 0 6px", fontSize: 15 }}>Tidak ada test case yang terbentuk</h4>
+                      <p style={{ margin: 0, color: "var(--on-surface-variant)", lineHeight: 1.6 }}>
+                        Halaman berhasil diproses, tetapi model tidak menemukan pola requirement yang cukup kuat untuk diubah menjadi test case.
+                        Coba gunakan URL yang lebih spesifik atau ubah depth ekstraksi.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : extractionStatus === "error" ? (
+                <div className="card" style={{ padding: 24, border: "1px dashed var(--error)", background: "rgba(239, 68, 68, 0.05)" }}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <span className="material-symbols" style={{ color: "var(--error)", fontSize: 20 }}>error</span>
+                    <div>
+                      <h4 style={{ margin: "0 0 6px", fontSize: 15 }}>Ekstraksi gagal</h4>
+                      <p style={{ margin: 0, color: "var(--on-surface-variant)", lineHeight: 1.6 }}>
+                        Periksa koneksi Confluence, kredensial, dan apakah halaman benar-benar dapat diakses oleh aplikasi.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <div className="bug-preview-placeholder" style={{ padding: 24, border: "none" }}>
                   Start extraction to see results here...

@@ -271,6 +271,7 @@ export interface ExtractedTestCase {
   priority: string;
   category: string;
   selected: boolean;
+  sourceEvidence?: string;
   confidence?: number;
 }
 
@@ -300,6 +301,7 @@ export function sanitizeExtractedTestCase(tc: any): ExtractedTestCase | null {
     priority: tc.priority,
     category: tc.category.trim(),
     selected: tc.selected,
+    sourceEvidence: typeof tc.sourceEvidence === "string" ? tc.sourceEvidence.trim() : undefined,
     confidence: typeof tc.confidence === "number" ? tc.confidence : undefined,
   };
 }

@@ -34,11 +34,12 @@ import type {
   UqaIssue,
 } from "@shared/types";
 import { defaultConfig } from "@shared/types";
-import * as XLSX from "xlsx";
 
 import jiraIcon from "../assets/jira.png";
 import confluenceIcon from "../assets/confluence.png";
 import ollamaIcon from "../assets/ollama.png";
+
+const loadXlsx = () => import("xlsx");
 
 export type ChatMessage = {
   role: "user" | "assistant";
@@ -84,6 +85,16 @@ export type ExecutionStats = {
 export type BannerState = {
   tone: "info" | "success" | "error";
   text: string;
+};
+
+export type ExtractStatus = "idle" | "loading" | "success" | "fallback" | "empty" | "error";
+
+export type ExtractMeta = {
+  title: string;
+  sourceUrl: string;
+  status: ExtractStatus;
+  count: number;
+  isFallback?: boolean;
 };
 
 const emptyStatus: ConnectionStatus = {
@@ -205,7 +216,7 @@ export function useAppState() {
   const [extractUrl, setExtractUrl] = useState("");
   const [extractDepth, setExtractDepth] = useState<ExtractionDepth>("comprehensive");
   const [extractedCases, setExtractedCases] = useState<ExtractedTestCase[]>([]);
-  const [extractMeta, setExtractMeta] = useState<{ title: string; sourceUrl: string; isFallback?: boolean } | null>(null);
+  const [extractMeta, setExtractMeta] = useState<ExtractMeta | null>(null);
   const [extractLoading, setExtractLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [extractionProgress, setExtractionProgress] = useState<string | null>(null);
@@ -1264,8 +1275,9 @@ export function useAppState() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
+        const XLSX = await loadXlsx();
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const firstSheetName = workbook.SheetNames[0];
@@ -1296,7 +1308,8 @@ export function useAppState() {
     event.target.value = ""; // Reset input
   };
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
+    const XLSX = await loadXlsx();
     const templateData = [
       {
         Title: "Sample Test Case Title",
@@ -1324,7 +1337,8 @@ export function useAppState() {
     document.body.removeChild(link);
   };
 
-  const downloadConfTemplate = () => {
+  const downloadConfTemplate = async () => {
+    const XLSX = await loadXlsx();
     const templateData = [
       {
         Section: "Login Module",
@@ -1826,6 +1840,7 @@ export function useAppState() {
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
+        const XLSX = await loadXlsx();
         const data = e.target?.result;
         const workbook = XLSX.read(data, { type: "binary" });
         const sheetName = workbook.SheetNames[0];
@@ -2080,18 +2095,48 @@ export function useAppState() {
 
     const unsubProgress = window.qaBuddy.onExtractionProgress((msg) => setExtractionProgress(msg));
     setExtractLoading(true);
+    setExtractedCases([]);
+    setExtractMeta({
+      title: "Memuat halaman Confluence...",
+      sourceUrl: extractUrl.trim(),
+      status: "loading",
+      count: 0,
+    });
     setExtractionProgress("Memulai ekstraksi...");
     try {
       const result = await window.qaBuddy.extractTestCases(extractUrl, extractDepth);
       setExtractedCases(result.testCases);
-      setExtractMeta({ title: result.pageTitle, sourceUrl: result.sourceUrl, isFallback: result.isFallback });
-      setBanner({
-        tone: result.isFallback ? "info" : "success",
-        text: result.isFallback
-          ? `Rule-based: ${result.testCases.length} test case diekstrak (Ollama tidak tersedia).`
-          : `Berhasil mengekstrak ${result.testCases.length} test case dari requirement.`,
+      const status = result.testCases.length === 0 ? "empty" : result.isFallback ? "fallback" : "success";
+      setExtractMeta({
+        title: result.pageTitle || "Confluence Page",
+        sourceUrl: result.sourceUrl || extractUrl.trim(),
+        status,
+        count: result.testCases.length,
+        isFallback: result.isFallback,
       });
+      setBanner(
+        status === "fallback"
+          ? {
+              tone: "info",
+              text: `Rule-based fallback mengekstrak ${result.testCases.length} test case karena Ollama tidak tersedia.`,
+            }
+          : status === "empty"
+            ? {
+                tone: "info",
+                text: "Ekstraksi selesai, tetapi tidak ada test case yang berhasil dibentuk dari halaman tersebut.",
+              }
+            : {
+                tone: "success",
+                text: `Berhasil mengekstrak ${result.testCases.length} test case dari requirement.`,
+              }
+      );
     } catch (error) {
+      setExtractMeta({
+        title: "Ekstraksi gagal",
+        sourceUrl: extractUrl.trim(),
+        status: "error",
+        count: 0,
+      });
       setBanner({
         tone: "error",
         text: toErrorMessage(error, "Gagal mengekstrak test case dari Confluence."),
