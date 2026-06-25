@@ -1,6 +1,6 @@
 {
   "name": "qa-buddy-desktop",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "private": true,
   "description": "Desktop Jira and Confluence assistant for QA teams with local Ollama integration.",
   "main": "out/main/index.js",

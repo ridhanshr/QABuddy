@@ -92,11 +92,11 @@ const emptyStatus: ConnectionStatus = {
   ollama: { ok: false, message: "Belum diuji" },
 };
 
-function createEmptyConfEntry(isDirty = true, section = "") {
+function createEmptyConfEntry(isDirty = true, section = "", testCaseNo = "") {
   return {
     id: crypto.randomUUID(),
     section,
-    testCaseNo: "",
+    testCaseNo,
     functionName: "",
     scenario: "",
     category: "Positive",
@@ -1916,10 +1916,17 @@ export function useAppState() {
   };
 
   const addConfEntry = (section?: string) => {
-    setConfEntries((current) => [
-      ...current,
-      createEmptyConfEntry(true, section || "")
-    ]);
+    setConfEntries((current) => {
+      const sec = section || "";
+      const sectionEntries = current.filter((e) => (e.section || "") === sec);
+      let maxNum = 0;
+      for (const e of sectionEntries) {
+        const match = String(e.testCaseNo || "").match(/^TC(\d+)$/i);
+        if (match) maxNum = Math.max(maxNum, parseInt(match[1], 10));
+      }
+      const nextNo = `TC${String(maxNum + 1).padStart(3, "0")}`;
+      return [...current, createEmptyConfEntry(true, sec, nextNo)];
+    });
   };
 
   const updateConfEntry = (id: string, field: string, value: any) => {
