@@ -253,39 +253,40 @@ export class ConfluenceService {
 
     const finalJiraServerId = jiraServerId || await this.resolveJiraServerId(content);
 
-    let existingAttachmentNames: string[] = [];
-    try {
-      const attachments = await this.rawClient.getAttachments(pageId);
-      existingAttachmentNames = attachments.map((att: any) => normalizeFilename(att.title));
-    } catch (attErr) {
-      logger.error("Confluence", "Failed to fetch existing attachments during sync:", attErr);
-    }
-
     let imageCount = 0;
     let attachmentCount = 0;
     for (const entry of entries) {
+      const entryImgs = entry.images || [];
+      logger.info("Confluence", `Syncing entry "${entry.testCaseNo || entry.scenario || "?"}" with ${entryImgs.length} attachment(s)`);
       for (const img of normalizeAttachmentOrder(entry.images || [])) {
-        if (!img.data) continue;
+        if (!img.data) {
+          logger.info("Confluence", `Skipping attachment "${img.name}" — data kosong`);
+          continue;
+        }
 
         const ext = img.name.split(".").pop() || "png";
         const tcNo = (entry.testCaseNo || "TC-000").replace(/\s+/g, "");
         const scenarioSlug = slugify(entry.scenario || "untitled");
         const newName = `${tcNo}-${scenarioSlug}-${img.order}.${ext}`;
 
-        const normalizedImgName = normalizeFilename(newName);
-        if (existingAttachmentNames.includes(normalizedImgName)) {
-          continue;
-        }
-
         try {
           await this.uploadAttachment(pageId, newName, img.data);
+          const originalImg = (entry.images || []).find((i: any) => i.order === img.order);
+          if (originalImg) originalImg.name = newName;
           if (img.data.startsWith("data:image/")) {
             imageCount++;
           } else {
             attachmentCount++;
           }
         } catch (uploadErr) {
-          logger.error("Confluence", `Failed to upload attachment ${newName}:`, uploadErr);
+          const axiosErr = uploadErr as any;
+          const status = axiosErr?.response?.status;
+          const statusText = axiosErr?.response?.statusText;
+          const respData = axiosErr?.response?.data;
+          const detail = respData
+            ? typeof respData === "string" ? respData.slice(0, 500) : JSON.stringify(respData).slice(0, 500)
+            : "no response body";
+          logger.error("Confluence", `Failed to upload attachment "${newName}" (HTTP ${status || "?"} ${statusText || ""}): ${detail}`, uploadErr);
         }
       }
     }

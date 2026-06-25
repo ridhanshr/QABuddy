@@ -3,6 +3,42 @@ import type { ConfluenceConfig } from "@shared/types";
 import { createAtlassianClient } from "../http";
 import { logger } from "../logger";
 
+function extractBase64Data(base64Data: string): { buffer: Buffer; mimeType: string } | null {
+  if (!base64Data || typeof base64Data !== "string") {
+    logger.error("ConfluenceClient", "Invalid base64 data: data is empty or not a string");
+    return null;
+  }
+
+  let raw: string;
+  let mimeType = "application/octet-stream";
+
+  const commaIndex = base64Data.indexOf(",");
+  if (commaIndex !== -1 && commaIndex < base64Data.length - 1) {
+    const header = base64Data.slice(0, commaIndex);
+    const mimeMatch = header.match(/^data:([^;]+)/i);
+    if (mimeMatch) {
+      mimeType = mimeMatch[1];
+    }
+    raw = base64Data.slice(commaIndex + 1);
+  } else {
+    raw = base64Data;
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    logger.error("ConfluenceClient", "Invalid base64 data: empty content");
+    return null;
+  }
+
+  const buffer = Buffer.from(trimmed, "base64");
+  if (buffer.length === 0) {
+    logger.error("ConfluenceClient", "Invalid base64 data: decoded buffer is empty");
+    return null;
+  }
+
+  return { buffer, mimeType };
+}
+
 export class ConfluenceClient {
   private readonly config: ConfluenceConfig;
 
@@ -39,23 +75,93 @@ export class ConfluenceClient {
     throw new Error(`Page not found with title "${title}" in space "${spaceKey}".`);
   }
 
-  async uploadAttachment(pageId: string, filename: string, base64Data: string) {
+  private async findAttachmentIdByName(pageId: string, filename: string): Promise<string | null> {
+    try {
+      const attachments = await this.getAttachments(pageId);
+      const match = attachments.find(
+        (att: any) => att.title?.toLowerCase() === filename.toLowerCase()
+      );
+      return match?.id || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async updateExistingAttachment(
+    pageId: string,
+    attachmentId: string,
+    filename: string,
+    buffer: Buffer,
+    mimeType: string
+  ) {
     const formData = new FormData();
-    const buffer = Buffer.from(base64Data.split(",")[1], "base64");
-    formData.append("file", buffer, { filename });
-    formData.append("comment", "Uploaded via QA Buddy");
+    formData.append("file", buffer, { filename, contentType: mimeType });
+    formData.append("comment", "Updated via QA Buddy");
 
     const response = await this.client().post(
-      `/content/${pageId}/child/attachment`,
+      `/content/${pageId}/child/attachment/${attachmentId}/data`,
       formData,
       {
         headers: {
           ...formData.getHeaders(),
           "X-Atlassian-Token": "nocheck"
-        }
+        },
+        timeout: 120000,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
       }
     );
-    return response.data.results[0];
+    return response.data.results?.[0] || response.data;
+  }
+
+  async uploadAttachment(pageId: string, filename: string, base64Data: string) {
+    const validated = extractBase64Data(base64Data);
+    if (!validated) {
+      throw new Error(`Invalid or empty base64 data for attachment "${filename}"`);
+    }
+
+    const { buffer, mimeType } = validated;
+    const formData = new FormData();
+    formData.append("file", buffer, { filename, contentType: mimeType });
+    formData.append("comment", "Uploaded via QA Buddy");
+
+    try {
+      const response = await this.client().post(
+        `/content/${pageId}/child/attachment`,
+        formData,
+        {
+          headers: {
+            ...formData.getHeaders(),
+            "X-Atlassian-Token": "nocheck"
+          },
+          timeout: 120000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        }
+      );
+      return response.data.results[0];
+    } catch (err: any) {
+      if (err?.response?.status === 409 || err?.response?.status === 400) {
+        logger.info("ConfluenceClient", `Attachment "${filename}" already exists (HTTP ${err.response.status}), updating...`);
+        const existingId = this.extractAttachmentIdFromError(err, filename) || await this.findAttachmentIdByName(pageId, filename);
+        if (existingId) {
+          logger.info("ConfluenceClient", `Updating attachment "${filename}" (ID: ${existingId})`);
+          return await this.updateExistingAttachment(pageId, existingId, filename, buffer, mimeType);
+        }
+      }
+      throw err;
+    }
+  }
+
+  private extractAttachmentIdFromError(err: any, filename: string): string | null {
+    try {
+      const data = err?.response?.data;
+      if (!data) return null;
+      const body = typeof data === "string" ? JSON.parse(data) : data;
+      return body?.data?.attachment?.id || null;
+    } catch {
+      return null;
+    }
   }
 
   async updatePage(pageId: string, title: string, content: string, version: number) {
