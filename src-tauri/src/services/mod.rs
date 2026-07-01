@@ -1,3 +1,4 @@
+pub mod brd_service;
 pub mod confluence;
 pub mod defect_repository;
 pub mod error;

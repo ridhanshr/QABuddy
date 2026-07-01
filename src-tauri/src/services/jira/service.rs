@@ -18,16 +18,62 @@ use crate::models::test_case::ManualTestCase;
 use crate::models::uqa::{
     AutoUqaGeneratedPayload, PhaseFailedDetail, PhaseTestSummary, UqaEntry, UqaIssue, UqaTransition,
 };
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager};
+
 use crate::services::error::{Result, ServiceError};
 use crate::services::http::normalize_url;
 use crate::services::jira::client::JiraClient;
 use crate::services::text_utils::adf_to_plain_text;
 
-pub struct JiraService;
+pub struct JiraService {
+    cache_path: Option<PathBuf>,
+}
 
 impl JiraService {
     pub fn new() -> Self {
-        Self
+        Self { cache_path: None }
+    }
+
+    pub fn with_cache(app_handle: &AppHandle) -> Self {
+        let cache_path = app_handle
+            .path()
+            .app_data_dir()
+            .unwrap_or_default()
+            .join("jira-project-cache.json");
+        Self { cache_path: Some(cache_path) }
+    }
+
+    fn read_cache(&self) -> Option<Vec<JiraProject>> {
+        let path = self.cache_path.as_ref()?;
+        let raw = std::fs::read_to_string(path).ok()?;
+        #[derive(serde::Deserialize)]
+        struct Cache {
+            projects: Vec<JiraProject>,
+            timestamp: u64,
+        }
+        let cache: Cache = serde_json::from_str(&raw).ok()?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        // 1-hour TTL
+        if now.saturating_sub(cache.timestamp) < 3600 {
+            Some(cache.projects)
+        } else {
+            None
+        }
+    }
+
+    fn write_cache(&self, projects: &[JiraProject]) {
+        let path = match self.cache_path.as_ref() {
+            Some(p) => p,
+            None => return,
+        };
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let cache = serde_json::json!({ "projects": projects, "timestamp": timestamp });
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, serde_json::to_string(&cache).unwrap());
     }
 
     pub fn client(&self, config: &JiraConfig) -> Result<JiraClient> {
@@ -344,17 +390,22 @@ impl JiraService {
     // ── Project metadata ────────────────────────────────────────────────
 
     pub async fn get_projects(&self, config: &JiraConfig) -> Result<Vec<JiraProject>> {
+        if let Some(cached) = self.read_cache() {
+            return Ok(cached);
+        }
         let client = self.client(config)?;
         let v: Value = client.api.get_json("/project", &[]).await?;
         let arr = v.as_array().cloned().unwrap_or_default();
-        Ok(arr
+        let projects: Vec<JiraProject> = arr
             .iter()
             .map(|p| JiraProject {
                 key: p["key"].as_str().unwrap_or("").to_string(),
                 name: p["name"].as_str().unwrap_or("").to_string(),
                 id: p["id"].as_str().unwrap_or("").to_string(),
             })
-            .collect())
+            .collect();
+        self.write_cache(&projects);
+        Ok(projects)
     }
 
     pub async fn get_boards(&self, config: &JiraConfig) -> Result<Vec<JiraBoard>> {
@@ -1334,6 +1385,230 @@ impl JiraService {
             phases,
             generated_notes,
             no_links_found: None,
+        })
+    }
+
+    /// Inject execution history table into a Jira issue description.
+    /// Builds a wiki-markup table from `snapshots` and replaces the section
+    /// between `h2. Execution Monitoring` markers (or appends if not found).
+    pub async fn inject_execution_report(
+        &self,
+        jira_config: &JiraConfig,
+        target_issue_key: &str,
+        exec_key: &str,
+        exec_summary: &str,
+        snapshots: &[crate::models::jira::XrayExecutionSnapshot],
+    ) -> Result<()> {
+        let client = self.client(jira_config)?;
+
+        // Build wiki-markup table: Date | Activity | Notes (newest first)
+        // No section header — user manages the surrounding description manually.
+        let mut table = String::from("||Date||Activity||Notes||\n");
+        for snap in snapshots.iter().rev() {
+            let date_label = {
+                let parts: Vec<&str> = snap.date.splitn(3, '-').collect();
+                if parts.len() == 3 {
+                    let month = match parts[1] {
+                        "01" => "Jan", "02" => "Feb", "03" => "Mar", "04" => "Apr",
+                        "05" => "Mei", "06" => "Jun", "07" => "Jul", "08" => "Agu",
+                        "09" => "Sep", "10" => "Okt", "11" => "Nov", "12" => "Des",
+                        m => m,
+                    };
+                    format!("{} {} {}", parts[2], month, parts[0])
+                } else {
+                    snap.date.clone()
+                }
+            };
+            // Notes: ringkasan status; Blocked hanya muncul jika > 0
+            let mut notes = format!(
+                "Done {}, In Progress {}, To Do {}, Fail {}, Aborted 0",
+                snap.passed, snap.in_progress, snap.unexecuted, snap.failed
+            );
+            if snap.blocked > 0 {
+                notes.push_str(&format!(", Blocked {}", snap.blocked));
+            }
+            // Activity column left empty — user fills it in manually
+            table.push_str(&format!("|{}| |{}|\n", date_label, notes));
+        }
+
+        // Wrap the table in hidden anchor markers so re-injecting replaces instead of appends.
+        // The markers render as invisible anchors in Jira wiki markup.
+        let marker_open  = format!("{{anchor:qab-exec-start-{exec_key}}}");
+        let marker_close = format!("{{anchor:qab-exec-end-{exec_key}}}");
+        let block = format!("{marker_open}\n{table}{marker_close}");
+
+        // Fetch existing description and splice or append
+        let issue = client.get_issue_detail(target_issue_key).await?;
+        let existing_desc = issue
+            .as_ref()
+            .and_then(|v| {
+                if v["description"].is_object() {
+                    Some(adf_to_plain_text(&v["description"]))
+                } else {
+                    v["description"].as_str().map(|s| s.to_string())
+                }
+            })
+            .unwrap_or_default();
+
+        let new_desc = if let (Some(s), Some(e)) = (
+            existing_desc.find(&marker_open),
+            existing_desc.find(&marker_close),
+        ) {
+            // Replace everything between (and including) the two markers
+            let end_idx = e + marker_close.len();
+            format!("{}{}{}", &existing_desc[..s], block, &existing_desc[end_idx..])
+        } else {
+            // First time — append at the end
+            if existing_desc.trim().is_empty() {
+                block
+            } else {
+                format!("{}\n\n{}", existing_desc.trim_end(), block)
+            }
+        };
+
+        client.replace_description(target_issue_key, &new_desc).await
+    }
+
+    /// Snapshot history file path for a given execution key.
+    fn execution_history_path(app_handle: &AppHandle, exec_key: &str) -> PathBuf {
+        let safe_key = exec_key.replace('/', "_").replace('\\', "_");
+        app_handle
+            .path()
+            .app_data_dir()
+            .unwrap_or_default()
+            .join("exec-history")
+            .join(format!("{safe_key}.json"))
+    }
+
+    /// Load all saved snapshots for a given execution key.
+    pub fn load_execution_history(
+        app_handle: &AppHandle,
+        exec_key: &str,
+    ) -> Result<Vec<crate::models::jira::XrayExecutionSnapshot>> {
+        let path = Self::execution_history_path(app_handle, exec_key);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = std::fs::read_to_string(&path).map_err(|e| ServiceError::Api(e.to_string()))?;
+        let snaps: Vec<crate::models::jira::XrayExecutionSnapshot> =
+            serde_json::from_str(&raw).unwrap_or_default();
+        Ok(snaps)
+    }
+
+    /// Append today's snapshot, keeping only one entry per date (latest wins).
+    fn save_snapshot(
+        app_handle: &AppHandle,
+        exec_key: &str,
+        snap: &crate::models::jira::XrayExecutionSnapshot,
+    ) {
+        let path = Self::execution_history_path(app_handle, exec_key);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut history: Vec<crate::models::jira::XrayExecutionSnapshot> =
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+        // Replace entry for today if it exists, otherwise append
+        if let Some(pos) = history.iter().position(|h| h.date == snap.date) {
+            history[pos] = snap.clone();
+        } else {
+            history.push(snap.clone());
+        }
+        // Keep chronological order
+        history.sort_by(|a, b| a.date.cmp(&b.date));
+        if let Ok(json) = serde_json::to_string_pretty(&history) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
+    /// Fetch current state of a Jira Xray Test Execution, save a daily snapshot, return details + history.
+    pub async fn get_xray_execution_details(
+        &self,
+        jira_config: &JiraConfig,
+        app_handle: &AppHandle,
+        exec_key: &str,
+    ) -> Result<crate::models::jira::XrayExecutionDetails> {
+        let client = self.client(jira_config)?;
+        // Fetch issue metadata
+        let issue = client.get_issue_detail(exec_key).await?;
+
+        // Validate issue type — must be "Test Execution"
+        let issue_type = issue
+            .as_ref()
+            .and_then(|v| v["issueType"].as_str())
+            .unwrap_or("")
+            .to_string();
+        if issue.is_none() {
+            return Err(ServiceError::NotFound(format!(
+                "Issue '{exec_key}' tidak ditemukan. Pastikan key yang dimasukkan benar."
+            )));
+        }
+        if !issue_type.eq_ignore_ascii_case("Test Execution") {
+            return Err(ServiceError::Api(format!(
+                "Issue '{exec_key}' bukan bertipe Test Execution (tipe saat ini: \"{issue_type}\"). \
+                 Masukkan key dari issue bertipe Test Execution."
+            )));
+        }
+
+        let summary = issue
+            .as_ref()
+            .and_then(|v| v["summary"].as_str())
+            .unwrap_or(exec_key)
+            .to_string();
+        let status = issue
+            .as_ref()
+            .and_then(|v| v["status"].as_str())
+            .unwrap_or("")
+            .to_string();
+        let status_category = issue
+            .as_ref()
+            .and_then(|v| v["statusCategory"].as_str())
+            .unwrap_or("")
+            .to_string();
+        let updated = issue
+            .as_ref()
+            .and_then(|v| v["updated"].as_str())
+            .unwrap_or("")
+            .to_string();
+        // Fetch all test runs and aggregate counts
+        let runs = client.get_xray_test_execution_tests(exec_key).await?;
+        let total = runs.len() as u32;
+        let passed = runs.iter().filter(|r| matches!(r.status.to_uppercase().as_str(), "PASS" | "PASSED")).count() as u32;
+        let failed = runs.iter().filter(|r| matches!(r.status.to_uppercase().as_str(), "FAIL" | "FAILED" | "ABORTED")).count() as u32;
+        let blocked = runs.iter().filter(|r| matches!(r.status.to_uppercase().as_str(), "BLOCKED")).count() as u32;
+        let in_progress = runs.iter().filter(|r| matches!(r.status.to_uppercase().as_str(), "EXECUTING" | "IN_PROGRESS" | "IN PROGRESS")).count() as u32;
+        let unexecuted = total.saturating_sub(passed + failed + blocked + in_progress);
+        let pass_rate = if total > 0 { (passed as f64 / total as f64) * 100.0 } else { 0.0 };
+        // Save today's snapshot
+        let today = Utc::now().format("%Y-%m-%d").to_string();
+        let snap = crate::models::jira::XrayExecutionSnapshot {
+            date: today,
+            total,
+            passed,
+            failed,
+            blocked,
+            unexecuted,
+            in_progress,
+        };
+        Self::save_snapshot(app_handle, exec_key, &snap);
+        // Load full history to return alongside current state
+        let history = Self::load_execution_history(app_handle, exec_key).unwrap_or_default();
+        Ok(crate::models::jira::XrayExecutionDetails {
+            key: exec_key.to_string(),
+            summary,
+            status,
+            status_category,
+            updated,
+            total,
+            passed,
+            failed,
+            blocked,
+            unexecuted,
+            in_progress,
+            pass_rate,
+            history,
         })
     }
 }

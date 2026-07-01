@@ -13,11 +13,13 @@ import Logs from "./screens/Logs";
 import Settings from "./screens/Settings";
 import Documentation from "./screens/Documentation";
 import DefectRepository from "./screens/DefectRepository";
+import TestCycleManager from "./screens/TestCycleManager";
 
 const primaryNavigation: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: "grid_view", filledIcon: "grid_view" },
   { key: "chat-assistant", label: "Chat Assistant", icon: "chat_spark", filledIcon: "chat_spark" },
   { key: "manual-test-case", label: "Test Cases", icon: "assignment", filledIcon: "assignment" },
+  { key: "test-cycle-manager", label: "Test Cycles", icon: "fact_check", filledIcon: "fact_check" },
   { key: "documentation-sync", label: "Documentation Sync", icon: "description", filledIcon: "description" },
   { key: "advanced-jira-organizer", label: "Advanced Jira Organizer", icon: "account_tree", filledIcon: "account_tree" },
   { key: "daily-uqa", label: "Daily UQA", icon: "edit_note", filledIcon: "edit_note" },
@@ -124,7 +126,6 @@ function AppContent() {
       <div className="main-shell">
         <header className="topbar">
           <div className="topbar-left" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span className="material-symbols" style={{ fontSize: 20 }}>{currentNav?.icon || "dashboard"}</span>
             <h2 style={{ margin: 0 }}>{currentTitle}</h2>
           </div>
           <div className="topbar-right" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
@@ -185,6 +186,7 @@ function AppContent() {
               {activeView === "advanced-jira-organizer" && <AdvancedJiraOrganizer />}
               {activeView === "daily-uqa" && <DailyUQA />}
               {activeView === "defect-repository" && <DefectRepository />}
+              {activeView === "test-cycle-manager" && <TestCycleManager />}
               {activeView === "logs" && <Logs />}
               {activeView === "settings" && <Settings />}
               {activeView === "documentation" && <Documentation />}

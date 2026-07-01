@@ -226,6 +226,38 @@ pub struct XrayTestDefect {
     pub summary: String,
 }
 
+/// One historical snapshot of a Test Execution's progress, saved each time the user fetches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XrayExecutionSnapshot {
+    pub date: String,       // ISO date string, e.g. "2026-01-16"
+    pub total: u32,
+    pub passed: u32,
+    pub failed: u32,
+    pub blocked: u32,
+    pub unexecuted: u32,
+    pub in_progress: u32,
+}
+
+/// Full details of a Jira Xray Test Execution — current state + historical snapshots.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XrayExecutionDetails {
+    pub key: String,
+    pub summary: String,
+    pub status: String,
+    pub status_category: String,
+    pub updated: String,
+    pub total: u32,
+    pub passed: u32,
+    pub failed: u32,
+    pub blocked: u32,
+    pub unexecuted: u32,
+    pub in_progress: u32,
+    pub pass_rate: f64,
+    pub history: Vec<XrayExecutionSnapshot>,
+}
+
 /// Result of creating an issue: `{ key, url }`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -13,6 +13,15 @@ pub async fn save_config(
 }
 
 #[tauri::command]
+pub async fn get_ollama_models(
+    state: State<'_, AppState>,
+    endpoint: String,
+) -> Result<Vec<String>, String> {
+    let ollama_service = state.ollama_service.lock().await;
+    Ok(ollama_service.get_models(&endpoint).await)
+}
+
+#[tauri::command]
 pub async fn test_connections(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
     let mut config_store = state.config.lock().await;
     let config = config_store.load().await.map_err(|e| e.to_string())?;

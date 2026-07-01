@@ -129,11 +129,20 @@ impl OllamaClient {
         temperature: Option<f64>,
         model_override: Option<&str>,
     ) -> Option<String> {
-        let client = self.long_client().ok()?;
+        let client = match self.long_client() {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = format!("[OllamaClient] Failed to create HTTP client: {e}");
+                log::warn!("{msg}");
+                eprintln!("{msg}");
+                return None;
+            }
+        };
         let mut body = serde_json::json!({
             "model": model_override.unwrap_or(&self.model),
             "prompt": prompt,
             "stream": false,
+            "num_predict": 32768,
         });
         if json_format {
             body["format"] = serde_json::json!("json");
@@ -141,15 +150,36 @@ impl OllamaClient {
         if let Some(t) = temperature {
             body["temperature"] = serde_json::json!(t);
         }
-        let resp = client
-            .post(format!("{}/api/generate", self.endpoint))
-            .json(&body)
-            .send()
-            .await
-            .ok()?;
-        let parsed: GenerateResponse = resp.json().await.ok()?;
-        let text = parsed.response.trim().to_string();
-        if text.is_empty() { None } else { Some(text) }
+        let url = format!("{}/api/generate", self.endpoint);
+        let resp = match client.post(&url).json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("[OllamaClient] HTTP request failed: {e}");
+                log::warn!("{msg}");
+                eprintln!("{msg}");
+                return None;
+            }
+        };
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            let msg = format!("[OllamaClient] /api/generate returned HTTP {status}: {body_text}");
+            log::warn!("{msg}");
+            eprintln!("{msg}");
+            return None;
+        }
+        match serde_json::from_str::<GenerateResponse>(&body_text) {
+            Ok(parsed) => {
+                let text = parsed.response.trim().to_string();
+                if text.is_empty() { None } else { Some(text) }
+            }
+            Err(e) => {
+                let msg = format!("[OllamaClient] Failed to parse /api/generate response: {e}. Body: {body_text}");
+                log::warn!("{msg}");
+                eprintln!("{msg}");
+                None
+            }
+        }
     }
 
     pub async fn chat(
@@ -160,7 +190,15 @@ impl OllamaClient {
         temperature: Option<f64>,
         model_override: Option<&str>,
     ) -> Option<String> {
-        let client = self.long_client().ok()?;
+        let modeled = model_override.unwrap_or(&self.model);
+        let url = format!("{}/api/chat", self.endpoint);
+        let client = match self.long_client() {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = format!("[OllamaClient] chat: failed to create HTTP client: {e}");
+                eprintln!("{msg}"); log::warn!("{msg}"); return None;
+            }
+        };
         let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
             "role": "system",
             "content": system_prompt,
@@ -171,24 +209,38 @@ impl OllamaClient {
         }
         messages.push(serde_json::json!({ "role": "user", "content": user_message }));
         let mut body = serde_json::json!({
-            "model": model_override.unwrap_or(&self.model),
+            "model": modeled,
             "messages": messages,
             "stream": false,
         });
         if let Some(t) = temperature {
             body["temperature"] = serde_json::json!(t);
         }
-        let resp = client
-            .post(format!("{}/api/chat", self.endpoint))
-            .json(&body)
-            .send()
-            .await
-            .ok()?;
-        let parsed: ChatResponse = resp.json().await.ok()?;
-        parsed.message.and_then(|m| {
-            let t = m.content.trim().to_string();
-            if t.is_empty() { None } else { Some(t) }
-        })
+        let resp = match client.post(&url).json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("[OllamaClient] chat: HTTP request failed: {e}");
+                eprintln!("{msg}"); log::warn!("{msg}"); return None;
+            }
+        };
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            let msg = format!("[OllamaClient] chat: HTTP {status} for model={modeled}: {body_text}");
+            eprintln!("{msg}"); log::warn!("{msg}"); return None;
+        }
+        match serde_json::from_str::<ChatResponse>(&body_text) {
+            Ok(parsed) => {
+                parsed.message.and_then(|m| {
+                    let t = m.content.trim().to_string();
+                    if t.is_empty() { None } else { Some(t) }
+                })
+            }
+            Err(e) => {
+                let msg = format!("[OllamaClient] chat: failed to parse response for model={modeled}: {e}. Body: {body_text}");
+                eprintln!("{msg}"); log::warn!("{msg}"); None
+            }
+        }
     }
 
     pub async fn embed(&self, text: &str, model_override: Option<&str>) -> Result<Vec<f64>> {

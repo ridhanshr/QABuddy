@@ -8,6 +8,7 @@ mod services;
 mod runtime_smoke;
 
 use config::store::ConfigStore;
+use services::brd_service::BRDService;
 use services::defect_repository::DefectRepositoryService;
 use services::confluence::ConfluenceService;
 use services::jira::JiraService;
@@ -33,6 +34,7 @@ pub struct AppState {
     pub update_service: Mutex<UpdateService>,
     pub ocr_service: Mutex<OcrService>,
     pub defect_repository_service: Mutex<DefectRepositoryService>,
+    pub brd_service: Mutex<BRDService>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -54,7 +56,7 @@ pub fn run() {
             let config_store = ConfigStore::new(app.handle())?;
             app.manage(AppState {
                 config: Mutex::new(config_store),
-                jira_service: Mutex::new(JiraService::new()),
+                jira_service: Mutex::new(JiraService::with_cache(app.handle())),
                 confluence_service: Mutex::new(ConfluenceService::new()),
                 ollama_service: Mutex::new(OllamaService::new()),
                 qa_service: Mutex::new(QaService::new()),
@@ -63,6 +65,7 @@ pub fn run() {
                 update_service: Mutex::new(UpdateService::new()),
                 ocr_service: Mutex::new(OcrService::new()),
                 defect_repository_service: Mutex::new(DefectRepositoryService::new(app.handle())),
+                brd_service: Mutex::new(BRDService::new(app.handle())),
             });
 
             Ok(())
@@ -70,6 +73,24 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap::bootstrap,
             commands::config::save_config,
+            commands::brd::get_test_plans,
+            commands::brd::create_test_plan,
+            commands::brd::update_test_plan,
+            commands::brd::delete_test_plan,
+            commands::brd::sync_test_plan_to_jira,
+            commands::brd::get_test_executions,
+            commands::brd::create_test_execution,
+            commands::brd::update_test_execution,
+            commands::brd::delete_test_execution,
+            commands::brd::sync_test_execution_to_jira,
+            commands::brd::generate_test_cases_from_brd,
+            commands::brd::get_generated_test_cases,
+            commands::brd::update_brd_test_case,
+            commands::brd::delete_brd_test_case,
+            commands::brd::sync_brd_test_cases_to_jira,
+            commands::brd::get_execution_monitoring_data,
+            commands::brd::semantic_search_test_cases,
+            commands::config::get_ollama_models,
             commands::config::test_connections,
             commands::config::healthcheck,
             commands::dashboard::get_dashboard,
@@ -132,6 +153,9 @@ pub fn run() {
             commands::jira::bulk_assign,
             commands::jira::bulk_add_labels,
             commands::jira::bulk_move_to_xray_folder,
+            commands::jira::get_xray_execution_details,
+            commands::jira::get_xray_execution_history,
+            commands::jira::inject_execution_report,
             commands::jira::get_current_user,
             commands::jira::get_uqa_field,
             commands::jira::get_uqa_issues,

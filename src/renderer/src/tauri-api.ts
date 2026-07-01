@@ -35,8 +35,16 @@ import type {
   FetchTestStepsResult,
   JiraBoard,
   JiraIssueSummary,
+  BRDGenerationRequest,
+  BRDGenerationResult,
+  BRDTestCase,
+  BrdChunkProgress,
+  ExecutionMonitoringData,
   JiraProject,
   JiraProjectSource,
+  SemanticSearchResult,
+  TestExecution,
+  TestPlan,
   JiraSprint,
   JiraStatus,
   JiraUser,
@@ -61,6 +69,8 @@ import type {
   UpdateInfo,
   UpdateProgress,
   UpdateTestCasesFromConfluenceResult,
+  XrayExecutionDetails,
+  XrayExecutionSnapshot,
   XrayFolder,
 } from "@shared/types";
 
@@ -139,6 +149,8 @@ const api = {
     on<UpdateProgress>("update-progress", callback),
   findTestCasesByJql: (jql: string, maxResults: number) =>
     cmd<JiraIssueSummary[]>("find_test_cases_by_jql", { jql, maxResults }),
+  semanticSearchTestCases: (query: string, projectKey: string) =>
+    cmd<SemanticSearchResult[]>("semantic_search_test_cases", { query, projectKey }),
 
   // Confluence sync
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) =>
@@ -191,6 +203,12 @@ const api = {
     cmd<BulkOperationResult>("bulk_add_labels", { issueKeys, labels }),
   bulkMoveToXrayFolder: (issueKeys: string[], folderPath: string) =>
     cmd<BulkOperationResult>("bulk_move_to_xray_folder", { issueKeys, folderPath }),
+  getXrayExecutionDetails: (execKey: string) =>
+    cmd<XrayExecutionDetails>("get_xray_execution_details", { execKey }),
+  getXrayExecutionHistory: (execKey: string) =>
+    cmd<XrayExecutionSnapshot[]>("get_xray_execution_history", { execKey }),
+  injectExecutionReport: (targetIssueKey: string, execKey: string, execSummary: string, snapshots: XrayExecutionSnapshot[]) =>
+    cmd<void>("inject_execution_report", { targetIssueKey, execKey, execSummary, snapshots }),
 
   // Ollama
   getOllamaModels: (endpoint: string) => cmd<string[]>("get_ollama_models", { endpoint }),
@@ -217,6 +235,45 @@ const api = {
   },
   onExtractionProgress: (callback: (msg: string) => void) =>
     on<string>("extraction-progress", callback),
+  onBrdChunkProgress: (callback: (progress: BrdChunkProgress) => void) =>
+    on<BrdChunkProgress>("brd-chunk-progress", callback),
+
+  // ── BRD / Test Case Manager ─────────────────────────────────────────
+  generateTestCasesFromBRD: (request: BRDGenerationRequest) =>
+    cmd<BRDGenerationResult>("generate_test_cases_from_brd", { request }),
+  getGeneratedTestCases: (testExecutionId: string) =>
+    cmd<BRDTestCase[]>("get_generated_test_cases", { testExecutionId }),
+  updateBRDTestCase: (testCase: BRDTestCase) =>
+    cmd<BRDTestCase>("update_brd_test_case", { testCase }),
+  deleteBRDTestCase: (id: string) => cmd<void>("delete_brd_test_case", { id }),
+  syncBRDTestCasesToJira: (testExecutionId: string, projectKey: string, folderPath?: string) =>
+    cmd<{ success: number; failed: number; errors: string[] }>("sync_brd_test_cases_to_jira", {
+      testExecutionId,
+      projectKey,
+      folderPath: folderPath ?? null,
+    }),
+
+  // ── BRD / Test Cycle Manager ────────────────────────────────────────
+  getTestPlans: () => cmd<TestPlan[]>("get_test_plans"),
+  createTestPlan: (uqaKey: string, phase: string, name: string, description: string, projectKey: string) =>
+    cmd<TestPlan>("create_test_plan", { uqaKey, phase, name, description, projectKey }),
+  updateTestPlan: (plan: TestPlan) => cmd<TestPlan>("update_test_plan", { plan }),
+  deleteTestPlan: (id: string) => cmd<void>("delete_test_plan", { id }),
+  syncTestPlanToJira: (planId: string) =>
+    cmd<{ key: string; url: string } | null>("sync_test_plan_to_jira", { planId }),
+  getTestExecutions: (testPlanId?: string) =>
+    cmd<TestExecution[]>("get_test_executions", { testPlanId: testPlanId ?? null }),
+  createTestExecution: (testPlanId: string, assignee: string, name: string, projectKey: string, featureName: string) =>
+    cmd<TestExecution>("create_test_execution", { testPlanId, assignee, name, projectKey, featureName }),
+  updateTestExecution: (execution: TestExecution) =>
+    cmd<TestExecution>("update_test_execution", { execution }),
+  deleteTestExecution: (id: string) => cmd<void>("delete_test_execution", { id }),
+  syncTestExecutionToJira: (executionId: string) =>
+    cmd<{ key: string; url: string } | null>("sync_test_execution_to_jira", { executionId }),
+  getExecutionMonitoringData: (testExecutionId?: string) =>
+    cmd<ExecutionMonitoringData[]>("get_execution_monitoring_data", {
+      testExecutionId: testExecutionId ?? null,
+    }),
 
   // ── Updates ──────────────────────────────────────────────────────────
   checkForUpdates: () => cmd<UpdateInfo>("check_for_updates"),

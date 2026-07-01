@@ -15,7 +15,8 @@ export type ViewKey =
   | "logs"
   | "settings"
   | "documentation"
-  | "defect-repository";
+  | "defect-repository"
+  | "test-cycle-manager";
 export type ExtractionDepth = "comprehensive" | "happy-path" | "edge-case";
 export type IntentRoute = "jira" | "confluence" | "mixed" | "clarify";
 
@@ -491,6 +492,9 @@ export interface DesktopApi {
   bulkAssign: (issueKeys: string[], assigneeAccountId: string) => Promise<BulkOperationResult>;
   bulkAddLabels: (issueKeys: string[], labels: string[]) => Promise<BulkOperationResult>;
   bulkMoveToXrayFolder: (issueKeys: string[], folderPath: string) => Promise<BulkOperationResult>;
+  getXrayExecutionDetails: (execKey: string) => Promise<XrayExecutionDetails>;
+  getXrayExecutionHistory: (execKey: string) => Promise<XrayExecutionSnapshot[]>;
+  injectExecutionReport: (targetIssueKey: string, execKey: string, execSummary: string, snapshots: XrayExecutionSnapshot[]) => Promise<void>;
   getLogs: () => Promise<any[]>;
   saveLogs: (logs: any[]) => Promise<void>;
   recordExecution: (execution: TestCaseExecution) => Promise<void>;
@@ -510,6 +514,7 @@ export interface DesktopApi {
   checkUqaOnStartup: () => Promise<UqaIssue[]>;
   cancelRequest: (requestId: string) => void;
   onExtractionProgress: (callback: (msg: string) => void) => () => void;
+  onBrdChunkProgress: (callback: (progress: BrdChunkProgress) => void) => () => void;
   getUqaField: () => Promise<{ id: string; name: string; type: string; isCustom: boolean } | null>;
   updateUqaSchedule: (config: UqaConfig) => Promise<void>;
   getUqaSchedule: () => Promise<UqaConfig>;
@@ -532,6 +537,28 @@ export interface DesktopApi {
   removeDuplicateDefectLink: (id: string) => Promise<void>;
   getDefectStats: () => Promise<DefectRepositoryStats>;
   reindexAllDefects: () => Promise<void>;
+  // BRD / Test Management
+  generateTestCasesFromBRD: (request: BRDGenerationRequest) => Promise<BRDGenerationResult>;
+  getGeneratedTestCases: (testExecutionId: string) => Promise<BRDTestCase[]>;
+  updateBRDTestCase: (testCase: BRDTestCase) => Promise<BRDTestCase>;
+  deleteBRDTestCase: (id: string) => Promise<void>;
+  syncBRDTestCasesToJira: (testExecutionId: string, projectKey: string, folderPath?: string) => Promise<{ success: number; failed: number; errors: string[] }>;
+  // Test Plans
+  getTestPlans: () => Promise<TestPlan[]>;
+  createTestPlan: (uqaKey: string, phase: string, name: string, description: string, projectKey: string) => Promise<TestPlan>;
+  updateTestPlan: (plan: TestPlan) => Promise<TestPlan>;
+  deleteTestPlan: (id: string) => Promise<void>;
+  syncTestPlanToJira: (planId: string) => Promise<{ key: string; url: string } | null>;
+  // Test Executions
+  getTestExecutions: (testPlanId?: string) => Promise<TestExecution[]>;
+  createTestExecution: (testPlanId: string, assignee: string, name: string, projectKey: string, featureName: string) => Promise<TestExecution>;
+  updateTestExecution: (execution: TestExecution) => Promise<TestExecution>;
+  deleteTestExecution: (id: string) => Promise<void>;
+  syncTestExecutionToJira: (executionId: string) => Promise<{ key: string; url: string } | null>;
+  // Execution Monitoring
+  getExecutionMonitoringData: (testExecutionId?: string) => Promise<ExecutionMonitoringData[]>;
+  // Semantic Search
+  semanticSearchTestCases: (query: string, projectKey: string) => Promise<SemanticSearchResult[]>;
   // OCR
   ocrExtractFromFile: (filePath: string) => Promise<OcrResult | null>;
 }
@@ -645,6 +672,32 @@ export interface XrayTestRun {
   key: string;
   status: XrayTestStatus;
   defects?: Array<{ key: string; summary: string }>;
+}
+
+export interface XrayExecutionSnapshot {
+  date: string;
+  total: number;
+  passed: number;
+  failed: number;
+  blocked: number;
+  unexecuted: number;
+  inProgress: number;
+}
+
+export interface XrayExecutionDetails {
+  key: string;
+  summary: string;
+  status: string;
+  statusCategory: string;
+  updated: string;
+  total: number;
+  passed: number;
+  failed: number;
+  blocked: number;
+  unexecuted: number;
+  inProgress: number;
+  passRate: number;
+  history: XrayExecutionSnapshot[];
 }
 
 export interface PhaseTestSummary {
@@ -796,6 +849,105 @@ export interface DefectRepositoryApi {
   removeDuplicateLink: (id: string) => Promise<void>;
   getStats: () => Promise<DefectRepositoryStats>;
   reindexAll: () => Promise<void>;
+}
+
+// ── BRD / Test Management Types ─────────────────────────────────────
+
+export type ScenarioType = "Positive" | "Negative" | "Regression";
+export type ExecutionStatusType = "Pass" | "Fail" | "Blocked" | "Unexecuted";
+export type TestCaseSyncStatus = "Draft AI" | "Synced to Jira" | "Failed to Sync";
+export type TestPhase = "SIT" | "UAT" | "DT";
+
+export interface BRDTestCaseStep {
+  stepNumber: number;
+  action: string;
+}
+
+export interface BRDTestCaseExpectedResult {
+  stepNumber: number;
+  result: string;
+}
+
+export interface BRDTestCase {
+  id: string;
+  testExecutionId: string;
+  name: string;
+  featureCategory: string;
+  scenarioType: ScenarioType;
+  steps: BRDTestCaseStep[];
+  expectedResult: BRDTestCaseExpectedResult[];
+  assignee: string;
+  executionStatus: ExecutionStatusType;
+  syncStatus: TestCaseSyncStatus;
+  jiraTestCaseKey: string | null;
+  lastUpdated: string;
+}
+
+export interface BRDGenerationRequest {
+  confluencePageId: string;
+  projectKey: string;
+}
+
+export interface BRDGenerationResult {
+  success: boolean;
+  featureName: string;
+  testCases: BRDTestCase[];
+  testExecutionId?: string;
+  error?: string;
+}
+
+export interface BrdChunkProgress {
+  featureIndex: number;
+  featureTotal: number;
+  featureName: string;
+  testCases: BRDTestCase[];
+  testExecutionId: string;
+}
+
+export interface TestPlan {
+  id: string;
+  jiraTestPlanKey: string | null;
+  uqaKey: string;
+  phase: TestPhase;
+  name: string;
+  description: string;
+  projectKey: string;
+  lastUpdated: string;
+}
+
+export interface TestExecution {
+  id: string;
+  jiraTestExecKey: string | null;
+  testPlanId: string;
+  assignee: string;
+  name: string;
+  projectKey: string;
+  featureName: string;
+  lastUpdated: string;
+}
+
+export interface BRDStoreData {
+  testPlans: TestPlan[];
+  testExecutions: TestExecution[];
+  testCases: BRDTestCase[];
+}
+
+export interface ExecutionMonitoringData {
+  testExecutionId: string;
+  testExecutionName: string;
+  total: number;
+  passed: number;
+  failed: number;
+  blocked: number;
+  unexecuted: number;
+  passRate: number;
+}
+
+export interface SemanticSearchResult {
+  issueKey: string;
+  summary: string;
+  score: number;
+  matchReason: string;
 }
 
 // ── Zod validation schemas ───────────────────────────────────────────

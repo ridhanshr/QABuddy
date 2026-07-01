@@ -196,7 +196,7 @@ impl JiraClient {
         let path = format!("/issue/{issue_key}");
         match self
             .api
-            .get_json(&path, &[("fields", "summary,description,status,updated,updateAuthor".to_string())])
+            .get_json(&path, &[("fields", "summary,description,status,updated,updateAuthor,issuetype".to_string())])
             .await
         {
             Ok(d) => {
@@ -213,6 +213,7 @@ impl JiraClient {
                     d["fields"]["status"]["statusCategory"]["name"].clone(),
                 );
                 out.insert("updated".into(), d["fields"]["updated"].clone());
+                out.insert("issueType".into(), d["fields"]["issuetype"]["name"].clone());
                 out.insert(
                     "updateAuthor".into(),
                     d["fields"]["updateAuthor"]["accountId"].clone(),
@@ -239,6 +240,13 @@ impl JiraClient {
     pub async fn execute_transition(&self, issue_key: &str, transition_id: &str) -> Result<()> {
         let path = format!("/issue/{issue_key}/transitions");
         let body = serde_json::json!({ "transition": { "id": transition_id } });
+        self.api.put_json_void(&path, &body).await
+    }
+
+    /// Fully replace an issue's description with the given wiki-markup string.
+    pub async fn replace_description(&self, issue_key: &str, new_description: &str) -> Result<()> {
+        let body = serde_json::json!({ "fields": { "description": new_description } });
+        let path = format!("/issue/{issue_key}");
         self.api.put_json_void(&path, &body).await
     }
 

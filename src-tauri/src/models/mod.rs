@@ -1,4 +1,5 @@
 pub mod app_config;
+pub mod brd;
 pub mod chat;
 pub mod connection;
 pub mod defect;

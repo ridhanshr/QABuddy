@@ -229,6 +229,45 @@ pub async fn bulk_move_to_xray_folder(
 }
 
 #[tauri::command]
+pub async fn get_xray_execution_details(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    exec_key: String,
+) -> Result<crate::models::jira::XrayExecutionDetails, String> {
+    let config = load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    jira_service
+        .get_xray_execution_details(&config.jira, &app_handle, &exec_key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn inject_execution_report(
+    state: State<'_, AppState>,
+    target_issue_key: String,
+    exec_key: String,
+    exec_summary: String,
+    snapshots: Vec<crate::models::jira::XrayExecutionSnapshot>,
+) -> Result<(), String> {
+    let config = load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    jira_service
+        .inject_execution_report(&config.jira, &target_issue_key, &exec_key, &exec_summary, &snapshots)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_xray_execution_history(
+    app_handle: tauri::AppHandle,
+    exec_key: String,
+) -> Result<Vec<crate::models::jira::XrayExecutionSnapshot>, String> {
+    crate::services::jira::JiraService::load_execution_history(&app_handle, &exec_key)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_current_user(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let config = load_config(state.clone()).await?;
     let client = state

@@ -1,4 +1,4 @@
 pub mod client;
-mod service;
+pub mod service;
 
 pub use service::JiraService;

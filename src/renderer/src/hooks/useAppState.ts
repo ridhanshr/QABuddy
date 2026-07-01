@@ -244,7 +244,7 @@ export function useAppState() {
   const [manualLoading, setManualLoading] = useState(false);
   const [progressHidden, setProgressHidden] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [manualTab, setManualTab] = useState<"creator" | "organizer" | "update-from-conf" | "extractor">("creator");
+  const [manualTab, setManualTab] = useState<"creator" | "generate-with-ai" | "organizer" | "update-from-conf" | "extractor" | "search">("creator");
   const [manualCases, setManualCases] = useState<ManualTestCase[]>([
     { id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "" }
   ]);
@@ -557,7 +557,7 @@ export function useAppState() {
   // Load Jira metadata when viewing Advanced Jira Organizer or Manual Test Case
   useEffect(() => {
     const needsProjects = activeView === "advanced-jira-organizer" ||
-      (activeView === "manual-test-case");
+      activeView === "manual-test-case";
     if (!needsProjects) return;
     if (!config.jira.baseUrl || !config.jira.token) return;
 

@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import ReactDOM from "react-dom";
 import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
+import TestCaseManager from "./TestCaseManager";
 import type { ExtractionDepth } from "@shared/types";
 
 export default function ManualTestCaseScreen() {
@@ -174,84 +175,78 @@ export default function ManualTestCaseScreen() {
         <h2 className="text-display">Test Cases</h2>
         <p className="text-body-lg">Create, organize, extract, and sync your manual test repository.</p>
         
+        {/* Primary tab bar */}
         <div style={{ display: 'flex', gap: 24, marginTop: 24, borderBottom: '1px solid var(--outline-variant)' }}>
-          <button 
-            onClick={() => setManualTab("creator")}
-            style={{ 
-              padding: '12px 4px', 
-              background: 'none', 
-              border: 'none', 
-              borderBottom: manualTab === "creator" ? '2px solid var(--primary)' : '2px solid transparent',
-              color: manualTab === "creator" ? 'var(--primary)' : 'var(--on-surface-variant)',
-              fontWeight: manualTab === "creator" ? 600 : 400,
-              cursor: 'pointer',
-              fontSize: 14,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8
-            }}
-          >
-            <span className="material-symbols" style={{ fontSize: 20 }}>add_circle</span>
-            Creator
-          </button>
-          <button 
-            onClick={() => setManualTab("organizer")}
-            style={{ 
-              padding: '12px 4px', 
-              background: 'none', 
-              border: 'none', 
-              borderBottom: manualTab === "organizer" ? '2px solid var(--primary)' : '2px solid transparent',
-              color: manualTab === "organizer" ? 'var(--primary)' : 'var(--on-surface-variant)',
-              fontWeight: manualTab === "organizer" ? 600 : 400,
-              cursor: 'pointer',
-              fontSize: 14,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8
-            }}
-          >
-            <span className="material-symbols" style={{ fontSize: 20 }}>account_tree</span>
-            Xray Organizer
-          </button>
-          <button 
-            onClick={() => setManualTab("update-from-conf")}
-            style={{ 
-              padding: '12px 4px', 
-              background: 'none', 
-              border: 'none', 
-              borderBottom: manualTab === "update-from-conf" ? '2px solid var(--primary)' : '2px solid transparent',
-              color: manualTab === "update-from-conf" ? 'var(--primary)' : 'var(--on-surface-variant)',
-              fontWeight: manualTab === "update-from-conf" ? 600 : 400,
-              cursor: 'pointer',
-              fontSize: 14,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8
-            }}
-          >
-            <span className="material-symbols" style={{ fontSize: 20 }}>cloud_sync</span>
-            Update from Confluence
-          </button>
-          <button 
-            onClick={() => setManualTab("extractor")}
-            style={{ 
-              padding: '12px 4px', 
-              background: 'none', 
-              border: 'none', 
-              borderBottom: manualTab === "extractor" ? '2px solid var(--primary)' : '2px solid transparent',
-              color: manualTab === "extractor" ? 'var(--primary)' : 'var(--on-surface-variant)',
-              fontWeight: manualTab === "extractor" ? 600 : 400,
-              cursor: 'pointer',
-              fontSize: 14,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8
-            }}
-          >
-            <span className="material-symbols" style={{ fontSize: 20 }}>auto_awesome</span>
-            AI Extractor
-          </button>
+          {(
+            [
+              { key: "creator", label: "Creation", icon: "add_circle" },
+              { key: "search", label: "Test Case Search", icon: "search" },
+              { key: "organizer", label: "Xray Organizer", icon: "account_tree" },
+              { key: "update-from-conf", label: "Update from Confluence", icon: "cloud_sync" },
+              { key: "extractor", label: "AI Extractor", icon: "auto_awesome" },
+            ] as const
+          ).map(({ key, label, icon }) => {
+            const isCreationGroup = key === "creator" && (manualTab === "creator" || manualTab === "generate-with-ai");
+            const isActive = isCreationGroup || manualTab === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setManualTab(key === "creator" && manualTab === "generate-with-ai" ? "generate-with-ai" : key)}
+                style={{
+                  padding: '12px 4px',
+                  background: 'none',
+                  border: 'none',
+                  borderBottom: isActive ? '2px solid var(--primary)' : '2px solid transparent',
+                  color: isActive ? 'var(--primary)' : 'var(--on-surface-variant)',
+                  fontWeight: isActive ? 600 : 400,
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <span className="material-symbols" style={{ fontSize: 20 }}>{icon}</span>
+                {label}
+              </button>
+            );
+          })}
         </div>
+
+        {/* Creation sub-tabs — only shown when Creation group is active */}
+        {(manualTab === "creator" || manualTab === "generate-with-ai") && (
+          <div style={{ display: 'flex', gap: 4, marginTop: 12, marginBottom: 4 }}>
+            <button
+              onClick={() => setManualTab("creator")}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 20, border: 'none',
+                cursor: 'pointer', fontSize: 13,
+                background: manualTab === "creator" ? 'var(--primary-container)' : 'var(--surface-container-high)',
+                color: manualTab === "creator" ? 'var(--on-primary-container)' : 'var(--on-surface-variant)',
+                fontWeight: manualTab === "creator" ? 600 : 400,
+              }}
+            >
+              <span className="material-symbols" style={{ fontSize: 16 }}>edit_note</span>
+              Manual
+            </button>
+            <button
+              onClick={() => setManualTab("generate-with-ai")}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 20, border: 'none',
+                cursor: 'pointer', fontSize: 13,
+                background: manualTab === "generate-with-ai" ? 'var(--primary-container)' : 'var(--surface-container-high)',
+                color: manualTab === "generate-with-ai" ? 'var(--on-primary-container)' : 'var(--on-surface-variant)',
+                fontWeight: manualTab === "generate-with-ai" ? 600 : 400,
+              }}
+            >
+              <span className="material-symbols" style={{ fontSize: 16 }}>auto_awesome</span>
+              Generate with AI
+            </button>
+          </div>
+        )}
       </div>
 
       {manualTab === "creator" && (
@@ -1077,6 +1072,14 @@ export default function ManualTestCaseScreen() {
             </div>
           </div>
         </div>
+      )}
+
+      {manualTab === "search" && (
+        <TestCaseManager initialTab="search" />
+      )}
+
+      {manualTab === "generate-with-ai" && (
+        <TestCaseManager initialTab="creation" />
       )}
 
       {/* Update progress modal (hideable) */}

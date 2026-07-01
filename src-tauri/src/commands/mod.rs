@@ -1,3 +1,4 @@
+pub mod brd;
 pub mod bootstrap;
 pub mod config;
 pub mod confluence;
