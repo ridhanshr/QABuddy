@@ -184,14 +184,29 @@ impl ConfluenceClient {
     /// List attachments (up to 100) for a page.
     pub async fn get_attachments(&self, page_id: &str) -> Result<Vec<Value>> {
         let client = self.build("/rest/api", 60)?;
-        let path = format!("/rest/api/content/{page_id}/child/attachment?limit=100");
-        let resp = client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
-        let body: Value = resp.json().await.unwrap_or(Value::Null);
-        Ok(body
-            .get("results")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default())
+        let mut all_results: Vec<Value> = Vec::new();
+        let mut start = 0usize;
+        let limit = 200usize;
+        loop {
+            let path = format!(
+                "/rest/api/content/{page_id}/child/attachment?limit={limit}&start={start}&expand=version"
+            );
+            let resp = client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+            let body: Value = resp.json().await.unwrap_or(Value::Null);
+            let results = body
+                .get("results")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let count = results.len();
+            all_results.extend(results);
+            // Stop if this page returned fewer items than the limit (last page)
+            if count < limit {
+                break;
+            }
+            start += limit;
+        }
+        Ok(all_results)
     }
 
     /// Download an attachment by its `/download/...` path and return raw bytes.

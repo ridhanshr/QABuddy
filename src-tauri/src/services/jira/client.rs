@@ -318,6 +318,13 @@ impl JiraClient {
     }
 
     /// Get all test runs within a Test Execution via Xray (?detailed=true).
+    pub async fn add_tests_to_execution(&self, exec_key: &str, test_keys: &[String]) -> Result<()> {
+        // Xray Raven API v1: POST /testexec/{key}/test
+        let path = format!("/testexec/{exec_key}/test");
+        let payload = serde_json::json!({ "add": test_keys });
+        self.xray.post_json(&path, &payload).await.map(|_| ())
+    }
+
     pub async fn get_xray_test_execution_tests(&self, test_exec_key: &str) -> Result<Vec<XrayTestRun>> {
         let path = format!("/testexec/{test_exec_key}/test?detailed=true");
         let data = self.xray.get_json_or_none(&path, &[]).await.unwrap_or(Value::Null);

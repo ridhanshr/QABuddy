@@ -3,6 +3,7 @@ import ReactDOM from "react-dom";
 import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
 import TestCaseManager from "./TestCaseManager";
+import TestExecutions from "./TestExecutions";
 import type { ExtractionDepth } from "@shared/types";
 
 export default function ManualTestCaseScreen() {
@@ -172,7 +173,7 @@ export default function ManualTestCaseScreen() {
   return (
     <section style={{ maxWidth: 1000, margin: "0 auto", paddingBottom: 100 }}>
       <div style={{ marginBottom: 32 }}>
-        <h2 className="text-display">Test Cases</h2>
+        <h2 className="text-display">Test Cases Management</h2>
         <p className="text-body-lg">Create, organize, extract, and sync your manual test repository.</p>
         
         {/* Primary tab bar */}
@@ -183,7 +184,7 @@ export default function ManualTestCaseScreen() {
               { key: "search", label: "Test Case Search", icon: "search" },
               { key: "organizer", label: "Xray Organizer", icon: "account_tree" },
               { key: "update-from-conf", label: "Update from Confluence", icon: "cloud_sync" },
-              { key: "extractor", label: "AI Extractor", icon: "auto_awesome" },
+              { key: "test-executions", label: "Test Executions", icon: "fact_check" },
             ] as const
           ).map(({ key, label, icon }) => {
             const isCreationGroup = key === "creator" && (manualTab === "creator" || manualTab === "generate-with-ai");
@@ -1080,6 +1081,10 @@ export default function ManualTestCaseScreen() {
 
       {manualTab === "generate-with-ai" && (
         <TestCaseManager initialTab="creation" />
+      )}
+
+      {manualTab === "test-executions" && (
+        <TestExecutions />
       )}
 
       {/* Update progress modal (hideable) */}

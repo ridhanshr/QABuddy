@@ -235,7 +235,7 @@ export default function DocumentationSync() {
   return (
     <section style={{ maxWidth: 1000, margin: "0 auto", paddingBottom: 100 }}>
       <div style={{ marginBottom: 32 }}>
-        <h2 className="text-display">Documentation Sync</h2>
+        <h2 className="text-display">Test Evidence Management</h2>
         <p className="text-body-lg">Sync your testing documentation directly to Confluence pages.</p>
         {confParseStatus && (
           <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 12, border: `1px solid ${confParseStatus.contentLoaded ? "var(--outline-variant)" : "var(--error)"}`, background: confParseStatus.contentLoaded ? "var(--surface-container-low)" : "color-mix(in srgb, var(--error) 8%, var(--surface))", color: "var(--on-surface)", display: "flex", flexDirection: "column", gap: 4 }}>

@@ -32,6 +32,9 @@ import type {
   ChatHistoryMessage,
   XrayFolder,
   UqaIssue,
+  BRDTestCase,
+  BRDGenerationResult,
+  BrdChunkProgress,
 } from "@shared/types";
 import { defaultConfig } from "@shared/types";
 
@@ -244,7 +247,7 @@ export function useAppState() {
   const [manualLoading, setManualLoading] = useState(false);
   const [progressHidden, setProgressHidden] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [manualTab, setManualTab] = useState<"creator" | "generate-with-ai" | "organizer" | "update-from-conf" | "extractor" | "search">("creator");
+  const [manualTab, setManualTab] = useState<"creator" | "generate-with-ai" | "organizer" | "update-from-conf" | "extractor" | "search" | "test-executions">("creator");
   const [manualCases, setManualCases] = useState<ManualTestCase[]>([
     { id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "" }
   ]);
@@ -288,16 +291,57 @@ export function useAppState() {
   const [jiraStatuses, setJiraStatuses] = useState<JiraStatus[]>([]);
   const [jiraIssueTypes, setJiraIssueTypes] = useState<string[]>([]);
   const [jiraCustomFields, setJiraCustomFields] = useState<{ id: string; name: string; type: string; isCustom: boolean }[]>([]);
-  // ponies: cache for Jira metadata to avoid re-fetching on tab switch
-  const jiraMetadataCache = useRef<{
-    data: {
-      projects: JiraProject[];
-      statuses: JiraStatus[];
-      issueTypes: string[];
-      customFields: { id: string; name: string; type: string; isCustom: boolean }[];
-    } | null;
-    timestamp: number;
-  }>({ data: null, timestamp: 0 });
+  // Cache Jira metadata in sessionStorage so it survives login/logout within
+  // the same app session. TTL: 30 minutes.
+  const JIRA_CACHE_KEY = "qa-buddy-jira-meta-cache";
+  const JIRA_CACHE_TTL = 30 * 60 * 1000;
+
+  const readJiraCache = (): { projects: JiraProject[]; statuses: JiraStatus[]; issueTypes: string[]; customFields: { id: string; name: string; type: string; isCustom: boolean }[] } | null => {
+    try {
+      const raw = sessionStorage.getItem(JIRA_CACHE_KEY);
+      if (!raw) return null;
+      const { data, timestamp } = JSON.parse(raw);
+      if (Date.now() - timestamp > JIRA_CACHE_TTL) {
+        sessionStorage.removeItem(JIRA_CACHE_KEY);
+        return null;
+      }
+      return data;
+    } catch { return null; }
+  };
+
+  const writeJiraCache = (data: { projects: JiraProject[]; statuses: JiraStatus[]; issueTypes: string[]; customFields: { id: string; name: string; type: string; isCustom: boolean }[] }) => {
+    try {
+      sessionStorage.setItem(JIRA_CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+    } catch { /* sessionStorage quota — silently ignore */ }
+  };
+
+  const _jiraMetaInit = (() => {
+    const cached = readJiraCache();
+    return cached ? { data: cached, timestamp: Date.now() } : { data: null as null, timestamp: 0 };
+  })();
+  const jiraMetadataCache = useRef(_jiraMetaInit);
+
+  // sessionStorage cache for Xray folders (per project key), TTL 30 min
+  const XRAY_FOLDER_CACHE_TTL = 30 * 60 * 1000;
+  const xrayFolderCacheKey = (projectKey: string) => `qa-buddy-xray-folders-${projectKey}`;
+  const readXrayFolderCache = (projectKey: string): XrayFolder[] | null => {
+    try {
+      const raw = sessionStorage.getItem(xrayFolderCacheKey(projectKey));
+      if (!raw) return null;
+      const { data, timestamp } = JSON.parse(raw);
+      if (Date.now() - timestamp > XRAY_FOLDER_CACHE_TTL) {
+        sessionStorage.removeItem(xrayFolderCacheKey(projectKey));
+        return null;
+      }
+      return data;
+    } catch { return null; }
+  };
+  const writeXrayFolderCache = (projectKey: string, folders: XrayFolder[]) => {
+    try {
+      sessionStorage.setItem(xrayFolderCacheKey(projectKey), JSON.stringify({ data: folders, timestamp: Date.now() }));
+    } catch { /* quota — silently ignore */ }
+  };
+
   const [jqlProject, setJqlProject] = useState<string[]>([]);
   const [jqlBoard, setJqlBoard] = useState<string[]>([]);
   const [jqlSprint, setJqlSprint] = useState<string[]>([]);
@@ -448,6 +492,16 @@ export function useAppState() {
       ]).catch(() => {
         // Keep bootstrap resilient even if defect repository data fails to load.
       });
+      // Preload Jira projects in background after bootstrap — if cache is still
+      // valid this is a no-op; otherwise projects will be ready before the user
+      // navigates to any menu that needs them.
+      const cachedMeta = readJiraCache();
+      if (cachedMeta) {
+        jiraMetadataCache.current = { data: cachedMeta, timestamp: Date.now() };
+        applyJiraMetadata(cachedMeta);
+      } else if (bootstrap.config.jira.baseUrl && bootstrap.config.jira.token) {
+        fetchAndCacheJiraMetadata();
+      }
     } catch (error) {
       setBanner({
         tone: "error",
@@ -554,25 +608,25 @@ export function useAppState() {
     }
   }, [activeView, loadExecutionTracking]);
 
-  // Load Jira metadata when viewing Advanced Jira Organizer or Manual Test Case
-  useEffect(() => {
-    const needsProjects = activeView === "advanced-jira-organizer" ||
-      activeView === "manual-test-case";
-    if (!needsProjects) return;
-    if (!config.jira.baseUrl || !config.jira.token) return;
+  // Load Jira metadata for all views that need projects/statuses.
+  // Uses sessionStorage cache (30-min TTL) so data survives login/logout
+  // within the same app session — no re-fetch until cache expires.
+  const VIEWS_NEEDING_PROJECTS = new Set([
+    "advanced-jira-organizer",
+    "manual-test-case",
+    "project-management",
+    "test-cycle-manager",
+    "defect-repository",
+  ]);
 
-    // ponies: check cache first (5 minutes TTL)
-    const CACHE_TTL = 5 * 60 * 1000;
-    const cache = jiraMetadataCache.current;
-    if (cache.data && Date.now() - cache.timestamp < CACHE_TTL) {
-      setJiraProjects(cache.data.projects);
-      setJiraStatuses(cache.data.statuses);
-      setJiraIssueTypes(cache.data.issueTypes);
-      setJiraCustomFields(cache.data.customFields);
-      setFiltersLoading(false);
-      return;
-    }
+  const applyJiraMetadata = (data: { projects: JiraProject[]; statuses: JiraStatus[]; issueTypes: string[]; customFields: { id: string; name: string; type: string; isCustom: boolean }[] }) => {
+    setJiraProjects(data.projects);
+    setJiraStatuses(data.statuses);
+    setJiraIssueTypes(data.issueTypes);
+    setJiraCustomFields(data.customFields);
+  };
 
+  const fetchAndCacheJiraMetadata = () => {
     setFiltersLoading(true);
     Promise.all([
       window.qaBuddy.getJiraProjects().catch(() => [] as JiraProject[]),
@@ -580,18 +634,27 @@ export function useAppState() {
       window.qaBuddy.getJiraIssueTypes().catch(() => [] as string[]),
       window.qaBuddy.getJiraCustomFields().catch(() => [] as { id: string; name: string; type: string; isCustom: boolean }[]),
     ]).then(([projects, statuses, issueTypes, customFields]) => {
-      // ponies: store in cache
-      jiraMetadataCache.current = {
-        data: { projects, statuses, issueTypes, customFields },
-        timestamp: Date.now(),
-      };
-      setJiraProjects(projects);
-      setJiraStatuses(statuses);
-      setJiraIssueTypes(issueTypes);
-      setJiraCustomFields(customFields);
+      const data = { projects, statuses, issueTypes, customFields };
+      jiraMetadataCache.current = { data, timestamp: Date.now() };
+      writeJiraCache(data);
+      applyJiraMetadata(data);
       setFiltersLoading(false);
     }).catch(() => setFiltersLoading(false));
-  }, [activeView, config.jira.baseUrl, config.jira.token, config.jira.projectKey]);
+  };
+
+  useEffect(() => {
+    if (!VIEWS_NEEDING_PROJECTS.has(activeView)) return;
+    if (!config.jira.baseUrl || !config.jira.token) return;
+
+    const cache = jiraMetadataCache.current;
+    if (cache.data && Date.now() - cache.timestamp < JIRA_CACHE_TTL) {
+      applyJiraMetadata(cache.data);
+      setFiltersLoading(false);
+      return;
+    }
+
+    fetchAndCacheJiraMetadata();
+  }, [activeView, config.jira.baseUrl, config.jira.token]);
 
   // Load boards when project changes
   useEffect(() => {
@@ -851,6 +914,72 @@ export function useAppState() {
     }
   }, [loadDefectSources, loadDefectStats, loadAllDefects, setBanner, setDefectTab, setDefectCandidates, setDefectSearchResults]);
 
+  // ── BRD Generation State (global — survives navigation) ──────────────
+  const [brdGenerating, setBrdGenerating] = useState(false);
+  const [brdTestCases, setBrdTestCases] = useState<BRDTestCase[]>([]);
+  const [brdGenerationResult, setBrdGenerationResult] = useState<BRDGenerationResult | null>(null);
+  const [brdGeneratedExecId, setBrdGeneratedExecId] = useState<string>(() =>
+    localStorage.getItem("brd_last_exec_id") ?? ""
+  );
+  const [brdChunkProgress, setBrdChunkProgress] = useState<{
+    done: number; total: number; currentFeature: string;
+  } | null>(null);
+
+  const handleBrdGenerate = useCallback(async (confluencePageId: string, projectKey: string) => {
+    if (!confluencePageId || !projectKey) return;
+    setBrdGenerating(true);
+    setBrdGenerationResult(null);
+    setBrdTestCases([]);
+    setBrdChunkProgress(null);
+    localStorage.removeItem("brd_last_exec_id");
+
+    const unlisten = window.qaBuddy.onBrdChunkProgress((progress: BrdChunkProgress) => {
+      setBrdTestCases(prev => {
+        const existingIds = new Set(prev.map(tc => tc.id));
+        const newCases = progress.testCases.filter(tc => !existingIds.has(tc.id));
+        return [...prev, ...newCases];
+      });
+      if (progress.testExecutionId) {
+        setBrdGeneratedExecId(progress.testExecutionId);
+        localStorage.setItem("brd_last_exec_id", progress.testExecutionId);
+      }
+      setBrdChunkProgress({
+        done: progress.featureIndex,
+        total: progress.featureTotal,
+        currentFeature: progress.featureName,
+      });
+    });
+
+    try {
+      const result = await window.qaBuddy.generateTestCasesFromBRD({ confluencePageId, projectKey });
+      setBrdGenerationResult(result);
+      if (result.success && result.testCases.length > 0) {
+        setBrdTestCases(result.testCases);
+        if (result.testExecutionId) {
+          setBrdGeneratedExecId(result.testExecutionId);
+          localStorage.setItem("brd_last_exec_id", result.testExecutionId);
+        }
+      }
+    } catch (e: any) {
+      const errMsg = typeof e === "string" ? e : e?.message || String(e) || "Generation failed";
+      setBrdGenerationResult({ success: false, featureName: "", testCases: [], error: errMsg });
+    } finally {
+      unlisten();
+      setBrdGenerating(false);
+      setBrdChunkProgress(null);
+    }
+  }, []);
+
+  // On first load: restore previously generated test cases if any
+  useEffect(() => {
+    const savedId = localStorage.getItem("brd_last_exec_id");
+    if (savedId && !brdGenerating) {
+      window.qaBuddy.getGeneratedTestCases(savedId)
+        .then(cases => { if (cases?.length > 0) setBrdTestCases(cases); })
+        .catch(() => {});
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── UQA Store State ───────────────────────────────────────────────────
   const [uqaIssues, setUqaIssues] = useState<UqaIssue[]>([]);
   const [uqaSyncing, setUqaSyncing] = useState(false);
@@ -908,10 +1037,15 @@ export function useAppState() {
       setOrganizeFolder("");
       return;
     }
+    const cached = readXrayFolderCache(organizeProjectKey);
+    if (cached) {
+      setOrganizeXrayFolders(cached);
+      return;
+    }
     setOrganizeFolderLoading(true);
     setOrganizeFolder("");
     window.qaBuddy.getXrayFolders(organizeProjectKey)
-      .then(setOrganizeXrayFolders)
+      .then(f => { writeXrayFolderCache(organizeProjectKey, f); setOrganizeXrayFolders(f); })
       .catch(() => setOrganizeXrayFolders([]))
       .finally(() => setOrganizeFolderLoading(false));
   }, [organizeProjectKey]);
@@ -923,10 +1057,15 @@ export function useAppState() {
       setConfImportSelectedFolder("");
       return;
     }
+    const cached = readXrayFolderCache(confImportProjectKey);
+    if (cached) {
+      setConfImportXrayFolders(cached);
+      return;
+    }
     setConfImportFolderLoading(true);
     setConfImportSelectedFolder("");
     window.qaBuddy.getXrayFolders(confImportProjectKey)
-      .then(setConfImportXrayFolders)
+      .then(f => { writeXrayFolderCache(confImportProjectKey, f); setConfImportXrayFolders(f); })
       .catch(() => setConfImportXrayFolders([]))
       .finally(() => setConfImportFolderLoading(false));
   }, [confImportProjectKey]);
@@ -937,9 +1076,14 @@ export function useAppState() {
       setManualXrayFolders([]);
       return;
     }
+    const cached = readXrayFolderCache(manualProjectKey);
+    if (cached) {
+      setManualXrayFolders(cached);
+      return;
+    }
     setManualFolderLoading(true);
     window.qaBuddy.getXrayFolders(manualProjectKey)
-      .then(setManualXrayFolders)
+      .then(f => { writeXrayFolderCache(manualProjectKey, f); setManualXrayFolders(f); })
       .catch(() => setManualXrayFolders([]))
       .finally(() => setManualFolderLoading(false));
   }, [manualProjectKey]);
@@ -1443,6 +1587,8 @@ export function useAppState() {
           testCaseNo: entry.testCaseNo || "",
           inputData: entry.inputData || "",
           selected: issueKey.length > 0,
+          screenCaptureFilenames: entry.screenCaptureFilenames || [],
+          images: entry.images || [],
         };
       });
 
@@ -1726,6 +1872,7 @@ export function useAppState() {
         e.id = crypto.randomUUID();
         e.isDirty = false;
         e.issueKey = e.issueKey || "";
+        e.screenCaptureFilenames = e.screenCaptureFilenames || [];
         e.images = normalizeConfAttachments(
           (e.images || []).map((image: any, index: number) => ({
             id: image.id || crypto.randomUUID(),
@@ -2654,5 +2801,14 @@ export function useAppState() {
     uqaSyncProgress,
     loadUqaIssuesFromStore,
     syncUqaIssues,
+    brdGenerating,
+    brdTestCases,
+    setBrdTestCases,
+    brdGenerationResult,
+    setBrdGenerationResult,
+    brdGeneratedExecId,
+    setBrdGeneratedExecId,
+    brdChunkProgress,
+    handleBrdGenerate,
   };
 }

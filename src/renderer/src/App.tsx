@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import logo from "./assets/logo.png";
 import { AppProvider, useApp } from "./context/AppContext";
+import Login from "./screens/Login";
 
 import NavigationButton, { NavItem } from "./components/NavigationButton";
 import Dashboard from "./screens/Dashboard";
@@ -14,16 +15,15 @@ import Settings from "./screens/Settings";
 import Documentation from "./screens/Documentation";
 import DefectRepository from "./screens/DefectRepository";
 import TestCycleManager from "./screens/TestCycleManager";
+import ProjectManagement from "./screens/ProjectManagement";
 
 const primaryNavigation: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: "grid_view", filledIcon: "grid_view" },
-  { key: "chat-assistant", label: "Chat Assistant", icon: "chat_spark", filledIcon: "chat_spark" },
-  { key: "manual-test-case", label: "Test Cases", icon: "assignment", filledIcon: "assignment" },
-  { key: "test-cycle-manager", label: "Test Cycles", icon: "fact_check", filledIcon: "fact_check" },
-  { key: "documentation-sync", label: "Documentation Sync", icon: "description", filledIcon: "description" },
-  { key: "advanced-jira-organizer", label: "Advanced Jira Organizer", icon: "account_tree", filledIcon: "account_tree" },
-  { key: "daily-uqa", label: "Daily UQA", icon: "edit_note", filledIcon: "edit_note" },
-  { key: "defect-repository", label: "Defect Repository", icon: "inventory_2", filledIcon: "inventory_2" },
+  { key: "project-management", label: "Project Management", icon: "folder_open", filledIcon: "folder_open" },
+  { key: "manual-test-case", label: "Test Cases Management", icon: "assignment", filledIcon: "assignment" },
+  { key: "documentation-sync", label: "Test Evidence Management", icon: "description", filledIcon: "description" },
+  { key: "defect-repository", label: "Test Defect Management", icon: "inventory_2", filledIcon: "inventory_2" },
+  { key: "daily-uqa", label: "Daily Activities", icon: "edit_note", filledIcon: "edit_note" },
 ];
 
 const footerNavigation: NavItem[] = [
@@ -34,7 +34,7 @@ const footerNavigation: NavItem[] = [
 
 const allNavigation = [...primaryNavigation, ...footerNavigation];
 
-function AppContent() {
+function AppContent({ onLogout, loggedInUser }: { onLogout: () => void; loggedInUser: string }) {
   const {
     activeView,
     setActiveView,
@@ -50,6 +50,8 @@ function AppContent() {
     downloadProgress,
     setSettingsTab,
     setShowDetailedProgress,
+    brdGenerating,
+    brdChunkProgress,
   } = useApp();
 
   const currentNav = allNavigation.find((item) => item.key === activeView);
@@ -63,7 +65,7 @@ function AppContent() {
             <img src={logo} alt="QA Buddy Logo" className="brand-logo" />
             <h1>QA Buddy</h1>
           </div>
-          <p>Quality Engineering Hub</p>
+          <p>Buddy Up. Test Smarter.</p>
         </div>
 
         <nav className="nav-list">
@@ -77,8 +79,50 @@ function AppContent() {
           ))}
         </nav>
 
+        {brdGenerating && (
+          <div
+            onClick={() => setActiveView("manual-test-case")}
+            style={{
+              margin: "8px 12px",
+              padding: "10px 12px",
+              background: "rgba(22, 163, 74, 0.08)",
+              borderRadius: "8px",
+              border: "1px solid #16a34a",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              transition: "all 0.2s ease",
+            }}
+            title="Klik untuk kembali ke halaman Generate Test Case"
+          >
+            <span className="material-symbols rotating" style={{ color: "#16a34a", fontSize: 18 }}>smart_toy</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#16a34a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                AI Generating Test Cases...
+              </div>
+              {brdChunkProgress && (
+                <>
+                  <div style={{ width: "100%", height: 4, background: "var(--surface-container-high)", borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
+                    <div style={{
+                      width: `${Math.round((brdChunkProgress.done / Math.max(brdChunkProgress.total, 1)) * 100)}%`,
+                      height: "100%",
+                      background: "#16a34a",
+                      transition: "width 0.4s ease",
+                    }} />
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--on-surface-variant)", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {brdChunkProgress.done}/{brdChunkProgress.total} fitur
+                    {brdChunkProgress.currentFeature ? ` — ${brdChunkProgress.currentFeature}` : ""}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {downloadingUpdate && (
-          <div 
+          <div
             onClick={() => {
               setActiveView("settings");
               setSettingsTab("updates");
@@ -162,6 +206,33 @@ function AppContent() {
               ))}
             </div>
 
+            {/* User info + logout */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, borderLeft: "1px solid var(--outline-variant)", paddingLeft: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: "50%",
+                  background: "var(--primary-container)",
+                  color: "var(--on-primary-container)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 13, fontWeight: 700,
+                }}>
+                  {loggedInUser.slice(0, 2)}
+                </div>
+                <span style={{ fontSize: 12, fontWeight: 500, color: "var(--on-surface-variant)" }}>
+                  {loggedInUser}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="icon-button"
+                title="Logout"
+                style={{ color: "var(--on-surface-variant)" }}
+              >
+                <span className="material-symbols" style={{ fontSize: 18 }}>logout</span>
+              </button>
+            </div>
+
           </div>
         </header>
 
@@ -180,6 +251,7 @@ function AppContent() {
           {!loading && (
             <>
               {activeView === "dashboard" && <Dashboard />}
+              {activeView === "project-management" && <ProjectManagement />}
               {activeView === "chat-assistant" && <ChatAssistant />}
               {activeView === "manual-test-case" && <ManualTestCaseScreen />}
               {activeView === "documentation-sync" && <DocumentationSync />}
@@ -198,10 +270,30 @@ function AppContent() {
   );
 }
 
+const SESSION_KEY = "qa-buddy-session";
+
 export default function App() {
+  const [loggedInUser, setLoggedInUser] = useState<string | null>(
+    () => sessionStorage.getItem(SESSION_KEY)
+  );
+
+  const handleLogin = (username: string) => {
+    sessionStorage.setItem(SESSION_KEY, username);
+    setLoggedInUser(username);
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem(SESSION_KEY);
+    setLoggedInUser(null);
+  };
+
+  if (!loggedInUser) {
+    return <Login onLogin={handleLogin} />;
+  }
+
   return (
     <AppProvider>
-      <AppContent />
+      <AppContent onLogout={handleLogout} loggedInUser={loggedInUser} />
     </AppProvider>
   );
 }

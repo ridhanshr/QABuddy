@@ -127,7 +127,6 @@ export default function TestCycleManager() {
       await window.qaBuddy.injectExecutionReport(
         targetIssueKey.trim().toUpperCase(),
         execDetails.key,
-        execDetails.summary,
         execDetails.history,
       );
       setInjectResult({ ok: true, msg: `Berhasil diinject ke ${targetIssueKey.trim().toUpperCase()}` });

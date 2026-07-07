@@ -18,8 +18,10 @@ use crate::models::test_case::ManualTestCase;
 use crate::models::uqa::{
     AutoUqaGeneratedPayload, PhaseFailedDetail, PhaseTestSummary, UqaEntry, UqaIssue, UqaTransition,
 };
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 use crate::services::error::{Result, ServiceError};
@@ -27,13 +29,17 @@ use crate::services::http::normalize_url;
 use crate::services::jira::client::JiraClient;
 use crate::services::text_utils::adf_to_plain_text;
 
+const XRAY_FOLDER_CACHE_SECS: u64 = 1800; // 30 minutes
+
 pub struct JiraService {
     cache_path: Option<PathBuf>,
+    // In-memory cache: project_key → (folders, fetched_at)
+    xray_folder_cache: Mutex<HashMap<String, (Vec<XrayFolder>, Instant)>>,
 }
 
 impl JiraService {
     pub fn new() -> Self {
-        Self { cache_path: None }
+        Self { cache_path: None, xray_folder_cache: Mutex::new(HashMap::new()) }
     }
 
     pub fn with_cache(app_handle: &AppHandle) -> Self {
@@ -42,7 +48,7 @@ impl JiraService {
             .app_data_dir()
             .unwrap_or_default()
             .join("jira-project-cache.json");
-        Self { cache_path: Some(cache_path) }
+        Self { cache_path: Some(cache_path), xray_folder_cache: Mutex::new(HashMap::new()) }
     }
 
     fn read_cache(&self) -> Option<Vec<JiraProject>> {
@@ -905,8 +911,22 @@ impl JiraService {
         config: &JiraConfig,
         project_key: &str,
     ) -> Result<Vec<XrayFolder>> {
+        // Check in-memory cache first (30-min TTL)
+        {
+            let cache = self.xray_folder_cache.lock().unwrap();
+            if let Some((folders, fetched_at)) = cache.get(project_key) {
+                if fetched_at.elapsed().as_secs() < XRAY_FOLDER_CACHE_SECS {
+                    return Ok(folders.clone());
+                }
+            }
+        }
         let client = self.client(config)?;
-        client.get_xray_folders(project_key).await
+        let folders = client.get_xray_folders(project_key).await?;
+        {
+            let mut cache = self.xray_folder_cache.lock().unwrap();
+            cache.insert(project_key.to_string(), (folders.clone(), Instant::now()));
+        }
+        Ok(folders)
     }
 
     pub async fn get_xray_folder_issues(
@@ -919,34 +939,45 @@ impl JiraService {
         let client = self.client(config)?;
         let path = format!("/testrepository/{project_key}/folders/{folder_id}/tests");
         let data = client.xray.get_json_or_none(&path, &[]).await;
+        log::info!("[folder_issues] raw response: {:?}", data.as_ref().map(|d| d.to_string().chars().take(500).collect::<String>()));
         let mut keys: Vec<String> = Vec::new();
         if let Some(data) = data {
+            // Try all known Xray Raven API response shapes
+            let candidates: &[&str] = &["testIssues", "keys", "issues", "results", "tests"];
             if let Some(arr) = data.as_array() {
-                keys = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
-            } else if let Some(arr) = data["keys"].as_array() {
-                keys = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
-            } else if let Some(arr) = data["issues"].as_array() {
-                keys = arr
-                    .iter()
-                    .filter_map(|v| {
-                        v.as_str()
-                            .map(String::from)
-                            .or_else(|| v["key"].as_str().map(String::from))
-                    })
-                    .collect();
-            } else if let Some(arr) = data["results"].as_array() {
-                keys = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                keys = arr.iter().filter_map(|v| {
+                    v.as_str().map(String::from).or_else(|| v["key"].as_str().map(String::from))
+                }).collect();
+            } else {
+                for field in candidates {
+                    if let Some(arr) = data[field].as_array() {
+                        keys = arr.iter().filter_map(|v| {
+                            v.as_str().map(String::from).or_else(|| v["key"].as_str().map(String::from))
+                        }).collect();
+                        if !keys.is_empty() {
+                            break;
+                        }
+                    }
+                }
             }
         }
+        log::info!("[folder_issues] resolved {} keys for folder {}", keys.len(), folder_id);
         if !keys.is_empty() {
             return Ok(fetch_issue_summaries(&client, &keys).await);
         }
-        let jql = format!("project = \"{project_key}\" ORDER BY key");
-        let issues = client.search_issues(&jql, 500, "summary").await?;
-        Ok(issues
-            .iter()
-            .map(|i| json!({ "key": i["key"], "summary": i["fields"]["summary"] }))
-            .collect())
+        // Return empty — do not fall back to full project issues
+        Ok(vec![])
+    }
+
+    pub async fn add_tests_to_execution(
+        &self,
+        config: &JiraConfig,
+        exec_key: &str,
+        test_keys: &[String],
+    ) -> Result<()> {
+        self.assert_configured(config)?;
+        let client = self.client(config)?;
+        client.add_tests_to_execution(exec_key, test_keys).await
     }
 
     pub async fn organize_tests_into_xray(
@@ -1396,7 +1427,6 @@ impl JiraService {
         jira_config: &JiraConfig,
         target_issue_key: &str,
         exec_key: &str,
-        exec_summary: &str,
         snapshots: &[crate::models::jira::XrayExecutionSnapshot],
     ) -> Result<()> {
         let client = self.client(jira_config)?;

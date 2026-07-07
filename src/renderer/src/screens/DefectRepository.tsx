@@ -793,7 +793,7 @@ export default function DefectRepository() {
       <section className="defect-repo-section">
         {/* Page Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "var(--on-surface)", lineHeight: "28px" }}>Defect Repository Statistics</h2>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "var(--on-surface)", lineHeight: "28px" }}>Test Defect Management Statistics</h2>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
               onClick={() => app.loadDefectStats()}
@@ -947,7 +947,7 @@ export default function DefectRepository() {
             <span className="material-symbols filled" style={{ fontSize: 24 }}>bug_report</span>
           </div>
           <div>
-            <h2 style={{ margin: 0, fontSize: 24, fontWeight: 600, color: "var(--on-surface)", lineHeight: "32px", letterSpacing: "-0.01em" }}>Defect Repository</h2>
+            <h2 style={{ margin: 0, fontSize: 24, fontWeight: 600, color: "var(--on-surface)", lineHeight: "32px", letterSpacing: "-0.01em" }}>Test Defect Management</h2>
             <p style={{ margin: 0, fontSize: 14, color: "var(--on-surface-variant)", lineHeight: "20px" }}>Manage and track all system anomalies and test failures.</p>
           </div>
         </div>

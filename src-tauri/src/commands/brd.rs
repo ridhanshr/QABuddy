@@ -123,10 +123,13 @@ pub async fn sync_test_execution_to_jira(
 #[tauri::command]
 pub async fn generate_test_cases_from_brd(
     state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
     request: BRDGenerationRequest,
 ) -> Result<BRDGenerationResult, String> {
     let config = load_config(state.clone()).await?;
-    let service = state.brd_service.lock().await;
+    // Create a temporary service instance so the mutex is NOT held during the
+    // long-running parallel Ollama generation — keeps all other commands responsive.
+    let service = crate::services::brd_service::BRDService::new(&app_handle);
     service
         .generate_from_confluence(&config, request)
         .await

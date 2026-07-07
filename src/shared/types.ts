@@ -16,7 +16,8 @@ export type ViewKey =
   | "settings"
   | "documentation"
   | "defect-repository"
-  | "test-cycle-manager";
+  | "test-cycle-manager"
+  | "project-management";
 export type ExtractionDepth = "comprehensive" | "happy-path" | "edge-case";
 export type IntentRoute = "jira" | "confluence" | "mixed" | "clarify";
 
@@ -467,6 +468,7 @@ export interface DesktopApi {
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => () => void;
   findTestCasesByJql: (jql: string, maxResults: number) => Promise<JiraIssueSummary[]>;
   getXrayFolderIssues: (projectKey: string, folderId: number) => Promise<{ key: string; summary: string }[]>;
+  addTestsToExecution: (execKey: string, testKeys: string[]) => Promise<void>;
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) => Promise<SyncToConfluenceResult>;
   previewConfluenceSync: (pageId: string, payload: { entries: any[] }) => Promise<ConfluencePreviewResult>;
   openExternal: (url: string) => Promise<void>;
@@ -494,7 +496,7 @@ export interface DesktopApi {
   bulkMoveToXrayFolder: (issueKeys: string[], folderPath: string) => Promise<BulkOperationResult>;
   getXrayExecutionDetails: (execKey: string) => Promise<XrayExecutionDetails>;
   getXrayExecutionHistory: (execKey: string) => Promise<XrayExecutionSnapshot[]>;
-  injectExecutionReport: (targetIssueKey: string, execKey: string, execSummary: string, snapshots: XrayExecutionSnapshot[]) => Promise<void>;
+  injectExecutionReport: (targetIssueKey: string, execKey: string, snapshots: XrayExecutionSnapshot[]) => Promise<void>;
   getLogs: () => Promise<any[]>;
   saveLogs: (logs: any[]) => Promise<void>;
   recordExecution: (execution: TestCaseExecution) => Promise<void>;
@@ -620,6 +622,14 @@ export interface FetchTestStepsResult {
   expectedResult: string;
 }
 
+export interface ConfluenceEntryImage {
+  id: string;
+  name: string;
+  data: string; // data URI: "data:image/png;base64,..."
+  order: number;
+  note: string;
+}
+
 export interface ConfluenceTestImportEntry {
   id: string;
   issueKey: string;
@@ -630,6 +640,8 @@ export interface ConfluenceTestImportEntry {
   testCaseNo: string;
   inputData: string;
   selected: boolean;
+  screenCaptureFilenames: string[];
+  images: ConfluenceEntryImage[];
 }
 
 export type StepConflictMode = "replace" | "skip" | "append";

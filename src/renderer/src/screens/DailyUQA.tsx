@@ -619,7 +619,6 @@ export default function DailyUQA() {
     <div className="daily-uqa">
       <div className="page-header">
         <div className="page-header-left">
-          <h3>Daily UQA</h3>
         </div>
         <div className="page-header-right" style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {!uqaSyncing && (
@@ -800,7 +799,7 @@ export default function DailyUQA() {
           <div className="card uqa-table-shell">
               <div className="uqa-table-hero">
                 <div className="uqa-table-hero-copy">
-                <h4>Daily UQA board</h4>
+                <h4>Daily Activities board</h4>
                 <p>Prioritizes issues that need attention today and keeps the latest activity easy to scan.</p>
               </div>
               <div className="uqa-table-metrics">

@@ -153,6 +153,21 @@ pub struct ConfluenceTestImportEntry {
     pub test_case_no: String,
     pub input_data: String,
     pub selected: bool,
+    /// Attachment filenames extracted from the Screen Capture column (for image download)
+    pub screen_capture_filenames: Vec<String>,
+    /// Base64-encoded images downloaded from Confluence attachments
+    pub images: Vec<ConfluenceEntryImage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfluenceEntryImage {
+    pub id: String,
+    pub name: String,
+    /// base64-encoded image data (data URI without prefix)
+    pub data: String,
+    pub order: usize,
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

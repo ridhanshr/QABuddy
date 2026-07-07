@@ -129,6 +129,17 @@ impl OllamaClient {
         temperature: Option<f64>,
         model_override: Option<&str>,
     ) -> Option<String> {
+        self.generate_text_with_ctx(prompt, json_format, temperature, model_override, None).await
+    }
+
+    pub async fn generate_text_with_ctx(
+        &self,
+        prompt: &str,
+        json_format: bool,
+        temperature: Option<f64>,
+        model_override: Option<&str>,
+        num_ctx: Option<u32>,
+    ) -> Option<String> {
         let client = match self.long_client() {
             Ok(c) => c,
             Err(e) => {
@@ -138,11 +149,13 @@ impl OllamaClient {
                 return None;
             }
         };
+        let ctx = num_ctx.unwrap_or(8192);
         let mut body = serde_json::json!({
             "model": model_override.unwrap_or(&self.model),
             "prompt": prompt,
             "stream": false,
-            "num_predict": 32768,
+            "num_ctx": ctx,
+            "num_predict": -1,
         });
         if json_format {
             body["format"] = serde_json::json!("json");

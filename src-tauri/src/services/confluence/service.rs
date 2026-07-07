@@ -6,6 +6,7 @@
 //! markers) mirrors the Electron `confluence-service.ts` + `table-formatter.ts`
 //! behaviour, ported to Rust regex.
 
+use base64::Engine as _;
 use serde_json::Value;
 
 use crate::models::app_config::ConfluenceConfig;
@@ -252,8 +253,56 @@ impl ConfluenceService {
                 });
             }
         };
-        let entries = parse_tables_to_entries(&content);
+        let mut entries = parse_tables_to_entries(&content);
         let jira_server_id = self.client(config).detect_jira_server_id().await;
+
+        // Download screen capture attachments for entries that need them
+        let needs_images = entries.iter().any(|e| !e.screen_capture_filenames.is_empty());
+        if needs_images {
+            // Fetch all page attachments once
+            let all_attachments = self.get_attachments(config, page_id).await.unwrap_or_default();
+            // Build filename → download_path map
+            let att_map: std::collections::HashMap<String, String> = all_attachments
+                .iter()
+                .filter_map(|a| {
+                    let name = a["title"].as_str()?.to_string();
+                    let path = a["_links"]["download"].as_str()?.to_string();
+                    Some((name, path))
+                })
+                .collect();
+
+            for entry in entries.iter_mut() {
+                if entry.screen_capture_filenames.is_empty() {
+                    continue;
+                }
+                let mut images: Vec<crate::models::jira::ConfluenceEntryImage> = Vec::new();
+                for (order, filename) in entry.screen_capture_filenames.iter().enumerate() {
+                    if let Some(download_path) = att_map.get(filename) {
+                        match self.download_attachment(config, download_path).await {
+                            Ok(bytes) => {
+                                let ext = filename.rsplit('.').next().unwrap_or("png").to_lowercase();
+                                let mime = match ext.as_str() {
+                                    "jpg" | "jpeg" => "image/jpeg",
+                                    "gif" => "image/gif",
+                                    "webp" => "image/webp",
+                                    _ => "image/png",
+                                };
+                                let b64 = base64_encode(&bytes);
+                                images.push(crate::models::jira::ConfluenceEntryImage {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    name: filename.clone(),
+                                    data: format!("data:{mime};base64,{b64}"),
+                                    order: order + 1,
+                                    note: String::new(),
+                                });
+                            }
+                            Err(_) => {} // skip failed downloads silently
+                        }
+                    }
+                }
+                entry.images = images;
+            }
+        }
 
         Ok(ParseConfluenceEntriesResult {
             page_id: page_id.to_string(),
@@ -269,6 +318,10 @@ impl ConfluenceService {
 
 // ── free helpers ────────────────────────────────────────────────────────
 
+fn base64_encode(data: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(data)
+}
+
 /// Minimal HTML-escape for cell values pushed into storage format.
 fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -276,15 +329,233 @@ fn escape_html(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Parse every `<table>` in a storage body into import entries, mapping
-/// columns by header text (TestCase No, Function Name, Scenario, Steps,
-/// Expected Result). Falls back to positional columns when headers are absent.
+/// Normalize a field label from a vertical-format table row (left column).
+fn normalise_field_label(raw: &str) -> String {
+    strip_inner_tags(raw).trim().to_lowercase()
+}
+
+/// Detect whether a table uses the vertical (card) format used by Documentation Sync,
+/// where each row is: | Field Label | Value | and field labels match known QA fields.
+fn is_vertical_table(body: &str) -> bool {
+    let row_re = regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap();
+    let cell_re = regex::Regex::new(r"(?is)<t[dh][^>]*>([\s\S]*?)</t[dh]>").unwrap();
+    let known: &[&str] = &[
+        "no. test case", "no test case", "no. tc", "function", "scenario",
+        "kategori", "input data", "steps", "test steps", "expected result",
+        "result", "screen capture",
+    ];
+    let mut matched = 0usize;
+    let mut checked = 0usize;
+    for row_cap in row_re.captures_iter(body) {
+        let cells: Vec<String> = cell_re
+            .captures_iter(&row_cap[1])
+            .map(|c| normalise_field_label(&c[1]))
+            .collect();
+        if cells.len() >= 1 {
+            checked += 1;
+            let label = cells[0].as_str();
+            if known.iter().any(|k| label.contains(k)) {
+                matched += 1;
+            }
+        }
+        if checked >= 6 {
+            break;
+        }
+    }
+    checked > 0 && matched >= 3
+}
+
+/// Extract a Jira issue key from a Confluence Jira macro in storage format.
+/// e.g. <ac:structured-macro ac:name="jira"><ac:parameter ac:name="key">TRALOS-1</ac:parameter>...
+/// Falls back to stripping all tags if no macro found.
+fn extract_scenario_text(raw: &str) -> String {
+    // Try to find a Jira macro key parameter
+    let key_re = regex::Regex::new(
+        r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*"key"[^>]*>([\s\S]*?)</ac:parameter>"#,
+    )
+    .unwrap();
+    let keys: Vec<String> = key_re
+        .captures_iter(raw)
+        .map(|c| strip_inner_tags(&c[1]).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !keys.is_empty() {
+        return keys.join(", ");
+    }
+    // Fallback: plain text
+    strip_inner_tags(raw).trim().to_string()
+}
+
+/// Extract attachment filenames from a Confluence cell.
+/// Handles both direct <ri:attachment ri:filename="..."/> and
+/// filenames wrapped inside Expand macros or other nested structures.
+/// Also handles single-quoted attribute values.
+fn extract_attachment_filenames(raw: &str) -> Vec<String> {
+    // Match ri:filename with double or single quotes
+    let re = regex::Regex::new(
+        r#"(?i)<ri:attachment\b[^>]*\bri:filename\s*=\s*(?:"([^"]+)"|'([^']+)')"#,
+    )
+    .unwrap();
+    re.captures_iter(raw)
+        .map(|c| {
+            c.get(1)
+                .or_else(|| c.get(2))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default()
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Split a table row's raw HTML into individual cell raw HTML contents.
+/// Uses a simple open/close counter to handle nested tags inside cells.
+fn split_row_cells(row_html: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let open_re = regex::Regex::new(r"(?i)<(td|th)\b[^>]*>").unwrap();
+    let close_re = regex::Regex::new(r"(?i)</(td|th)>").unwrap();
+    let len = row_html.len();
+    let mut pos = 0usize;
+
+    while pos < len {
+        let Some(open_cap) = open_re.find(&row_html[pos..]) else { break };
+        let cell_start = pos + open_cap.end();
+        let mut depth = 1i32;
+        let mut cur = cell_start;
+        while cur < len && depth > 0 {
+            let rest = &row_html[cur..];
+            let next_open = open_re.find(rest).map(|m| m.start());
+            let next_close = close_re.find(rest).map(|m| m.start());
+            match (next_open, next_close) {
+                (Some(o), Some(c)) if o < c => {
+                    depth += 1;
+                    cur += open_re.find(rest).unwrap().end();
+                }
+                (_, Some(c)) => {
+                    depth -= 1;
+                    let close_end = cur + close_re.find(rest).unwrap().end();
+                    if depth == 0 {
+                        cells.push(row_html[cell_start..cur + c].to_string());
+                        cur = close_end;
+                        break;
+                    }
+                    cur = close_end;
+                }
+                _ => break,
+            }
+        }
+        if cur <= cell_start { break; }
+        pos = cur;
+    }
+    cells
+}
+
+/// Find the position of "Screen Capture" label row in the table body,
+/// then extract ALL ri:attachment filenames from the rest of the table body
+/// after that label — this handles Expand macros that contain </tr> inside them.
+fn extract_screen_capture_filenames_from_body(body: &str) -> Vec<String> {
+    // Find where the Screen Capture label appears (case-insensitive plain text)
+    let lower = body.to_lowercase();
+    let marker_pos = lower
+        .find("screen capture")
+        .or_else(|| lower.find("screenshot"))
+        .or_else(|| lower.find("screen shot"));
+
+    if let Some(pos) = marker_pos {
+        // Search for ri:attachment anywhere after the marker in the full body
+        extract_attachment_filenames(&body[pos..])
+    } else {
+        Vec::new()
+    }
+}
+
+/// Parse a vertical-format table (one test case per table block).
+/// Rows: | Field Label | Value |
+fn parse_vertical_table(body: &str, counter: &mut usize) -> Option<ConfluenceTestImportEntry> {
+    let row_re = regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap();
+
+    let mut test_case_no = String::new();
+    let mut function_name = String::new();
+    let mut scenario = String::new();
+    let mut steps = String::new();
+    let mut expected_result = String::new();
+    let mut input_data = String::new();
+    let mut found_any = false;
+
+    for row_cap in row_re.captures_iter(body) {
+        // Use depth-aware cell splitter to handle nested tags inside cells
+        let raw_cells = split_row_cells(&row_cap[1]);
+        if raw_cells.len() < 2 {
+            continue;
+        }
+        let label = strip_inner_tags(&raw_cells[0]).trim().to_lowercase();
+        let raw_value = &raw_cells[1];
+
+        if label.contains("no. test case") || label.contains("no test case") || label.contains("no. tc") || label == "no tc" {
+            test_case_no = strip_inner_tags(raw_value).trim().to_string();
+            found_any = true;
+        } else if label.contains("function") {
+            function_name = strip_inner_tags(raw_value).trim().to_string();
+            found_any = true;
+        } else if label.contains("scenario") {
+            scenario = extract_scenario_text(raw_value);
+            found_any = true;
+        } else if label.contains("input data") {
+            input_data = strip_inner_tags(raw_value).trim().to_string();
+            found_any = true;
+        } else if label.contains("steps") || label.contains("langkah") {
+            steps = strip_inner_tags(raw_value).trim().to_string();
+            found_any = true;
+        } else if label.contains("expected") || label.contains("hasil yang diharapkan") {
+            expected_result = strip_inner_tags(raw_value).trim().to_string();
+            found_any = true;
+        }
+    }
+
+    // Extract screen capture filenames from the full table body (bypasses lazy </tr> truncation)
+    // This correctly handles Expand macros that embed </tr> inside their body.
+    let screen_capture_filenames = extract_screen_capture_filenames_from_body(body);
+
+    if !found_any {
+        return None;
+    }
+
+    let id = format!("tc-{}", counter);
+    *counter += 1;
+    Some(ConfluenceTestImportEntry {
+        id,
+        issue_key: String::new(),
+        test_case_no,
+        function_name,
+        scenario,
+        input_data,
+        steps,
+        expected_result,
+        selected: true,
+        screen_capture_filenames,
+        images: Vec::new(), // populated later by parse_confluence_entries
+    })
+}
+
+/// Parse every `<table>` in a storage body into import entries.
+/// Supports two formats:
+///   1. Horizontal: first row = headers (No. Test Case, Function, Scenario, Steps, Expected Result)
+///   2. Vertical (card): each row = | Field Label | Value | — one test case per table
 fn parse_tables_to_entries(content: &str) -> Vec<ConfluenceTestImportEntry> {
     let mut entries: Vec<ConfluenceTestImportEntry> = Vec::new();
     let table_re = regex::Regex::new(r"(?is)<table\b[^>]*>([\s\S]*?)</table>").unwrap();
     let mut counter = 1usize;
     for table_cap in table_re.captures_iter(content) {
         let body = &table_cap[1];
+
+        // Detect vertical (card) format first
+        if is_vertical_table(body) {
+            if let Some(entry) = parse_vertical_table(body, &mut counter) {
+                entries.push(entry);
+            }
+            continue;
+        }
+
+        // Horizontal format: header row + data rows
         let (header_map, has_header) = parse_header_map(body);
         let row_re = regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap();
         let cell_re = regex::Regex::new(r"(?is)<t[dh][^>]*>([\s\S]*?)</t[dh]>").unwrap();
@@ -383,6 +654,8 @@ fn build_entry(
         test_case_no,
         input_data: String::new(),
         selected: true,
+        screen_capture_filenames: Vec::new(),
+        images: Vec::new(),
     }
 }
 

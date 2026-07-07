@@ -136,6 +136,8 @@ const api = {
   getXrayFolders: (projectKey: string) => cmd<XrayFolder[]>("get_xray_folders", { projectKey }),
   getXrayFolderIssues: (projectKey: string, folderId: number) =>
     cmd<{ key: string; summary: string }[]>("get_xray_folder_issues", { projectKey, folderId }),
+  addTestsToExecution: (execKey: string, testKeys: string[]) =>
+    cmd<void>("add_tests_to_execution", { execKey, testKeys }),
   checkTestSteps: (entries: ConfluenceTestImportEntry[]) =>
     cmd<StepConflictCheck>("check_test_steps", { entries }),
   fetchTestSteps: (issueKey: string) =>
@@ -207,8 +209,8 @@ const api = {
     cmd<XrayExecutionDetails>("get_xray_execution_details", { execKey }),
   getXrayExecutionHistory: (execKey: string) =>
     cmd<XrayExecutionSnapshot[]>("get_xray_execution_history", { execKey }),
-  injectExecutionReport: (targetIssueKey: string, execKey: string, execSummary: string, snapshots: XrayExecutionSnapshot[]) =>
-    cmd<void>("inject_execution_report", { targetIssueKey, execKey, execSummary, snapshots }),
+  injectExecutionReport: (targetIssueKey: string, execKey: string, snapshots: XrayExecutionSnapshot[]) =>
+    cmd<void>("inject_execution_report", { targetIssueKey, execKey, snapshots }),
 
   // Ollama
   getOllamaModels: (endpoint: string) => cmd<string[]>("get_ollama_models", { endpoint }),

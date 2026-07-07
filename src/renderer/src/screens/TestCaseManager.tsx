@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
-import type { JiraProject, BRDTestCase, BRDGenerationResult, BrdChunkProgress, SemanticSearchResult, XrayFolder } from "@shared/types";
+import type { JiraProject, BRDTestCase, BRDGenerationResult, SemanticSearchResult, XrayFolder } from "@shared/types";
 
 type Tab = "search" | "creation";
 
@@ -240,17 +240,23 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [searchError, setSearchError] = useState("");
   const searchCache = useRef<Map<string, { data: any[]; ts: number }>>(new Map());
 
-  // ── Creation Tab ──
+  // ── Creation Tab ── (generation state lives in global AppContext to survive navigation)
+  const {
+    brdGenerating: generating,
+    brdTestCases: testCases,
+    setBrdTestCases: setTestCases,
+    brdGenerationResult: generationResult,
+    setBrdGenerationResult: setGenerationResult,
+    brdGeneratedExecId: generatedTestExecId,
+    setBrdGeneratedExecId: setGeneratedTestExecId,
+    brdChunkProgress: chunkProgress,
+    handleBrdGenerate,
+  } = useApp();
+
   const [confluencePageId, setConfluencePageId] = useState("");
   const [generationProject, setGenerationProject] = useState("");
-  const [generating, setGenerating] = useState(false);
-  const [generationResult, setGenerationResult] = useState<BRDGenerationResult | null>(null);
-  const [generatedTestExecId, setGeneratedTestExecId] = useState("");
-  const [testCases, setTestCases] = useState<BRDTestCase[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ success: number; failed: number; errors: string[] } | null>(null);
-  // Streaming progress: tracks how many feature-chunks have been processed
-  const [chunkProgress, setChunkProgress] = useState<{ done: number; total: number; currentFeature: string } | null>(null);
 
   // ── Xray Folder Selection ──
   const [xrayFolders, setXrayFolders] = useState<{ label: string; value: string }[]>([]);
@@ -317,59 +323,9 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   }, [fetchXrayFolders]);
 
   const handleGenerate = useCallback(async () => {
-    if (!confluencePageId || !generationProject) return;
-    setGenerating(true);
-    setGenerationResult(null);
-    setTestCases([]);
     setSyncResult(null);
-    setChunkProgress(null);
-
-    // Subscribe to per-feature streaming events BEFORE calling generate
-    const unlisten = window.qaBuddy.onBrdChunkProgress((progress: BrdChunkProgress) => {
-      // Append the new test cases to the table immediately
-      setTestCases(prev => {
-        const existingIds = new Set(prev.map(tc => tc.id));
-        const newCases = progress.testCases.filter(tc => !existingIds.has(tc.id));
-        return [...prev, ...newCases];
-      });
-      // Capture execution ID from the first chunk
-      if (progress.testExecutionId) {
-        setGeneratedTestExecId(progress.testExecutionId);
-      }
-      setChunkProgress({
-        done: progress.featureIndex,
-        total: progress.featureTotal,
-        currentFeature: progress.featureName,
-      });
-    });
-
-    try {
-      const result = await window.qaBuddy.generateTestCasesFromBRD({
-        confluencePageId,
-        projectKey: generationProject,
-      });
-      setGenerationResult(result);
-      // Final sync: replace with the authoritative list from the command result
-      if (result.success && result.testCases.length > 0) {
-        setTestCases(result.testCases);
-        if (result.testExecutionId) {
-          setGeneratedTestExecId(result.testExecutionId);
-        }
-      }
-    } catch (e: any) {
-      const errMsg = typeof e === "string" ? e : e?.message || String(e) || "Generation failed";
-      setGenerationResult({
-        success: false,
-        featureName: "",
-        testCases: [],
-        error: errMsg,
-      });
-    } finally {
-      unlisten(); // unsubscribe from streaming events
-      setGenerating(false);
-      setChunkProgress(null);
-    }
-  }, [confluencePageId, generationProject]);
+    await handleBrdGenerate(confluencePageId, generationProject);
+  }, [confluencePageId, generationProject, handleBrdGenerate]);
 
   const handleUpdateTestCase = useCallback(async (tc: BRDTestCase) => {
     try {

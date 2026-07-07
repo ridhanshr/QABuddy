@@ -150,6 +150,20 @@ pub async fn get_xray_folder_issues(
 }
 
 #[tauri::command]
+pub async fn add_tests_to_execution(
+    state: State<'_, AppState>,
+    exec_key: String,
+    test_keys: Vec<String>,
+) -> Result<(), String> {
+    let config = load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    jira_service
+        .add_tests_to_execution(&config.jira, &exec_key, &test_keys)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn check_test_steps(
     state: State<'_, AppState>,
     entries: Vec<ConfluenceTestImportEntry>,
@@ -247,13 +261,12 @@ pub async fn inject_execution_report(
     state: State<'_, AppState>,
     target_issue_key: String,
     exec_key: String,
-    exec_summary: String,
     snapshots: Vec<crate::models::jira::XrayExecutionSnapshot>,
 ) -> Result<(), String> {
     let config = load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
     jira_service
-        .inject_execution_report(&config.jira, &target_issue_key, &exec_key, &exec_summary, &snapshots)
+        .inject_execution_report(&config.jira, &target_issue_key, &exec_key, &snapshots)
         .await
         .map_err(|e| e.to_string())
 }

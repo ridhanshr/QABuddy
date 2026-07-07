@@ -507,16 +507,16 @@ impl BRDService {
         Some(section)
     }
 
-    /// Extract per-feature rows from the "2.1.3 Fungsi-Fungsi yang Diharapkan" table
-    /// inside the Proses Bisnis section HTML.
-    /// Returns a Vec of (feature_name, feature_full_text) — one entry per table row.
-    fn extract_fungsi_features(proses_bisnis_html: &str) -> Vec<(String, String)> {
+    /// Extract per-feature rows from the "Fungsi-Fungsi yang Diharapkan" table
+    /// inside the Proses Bisnis section HTML. The section number (e.g. 2.1.3)
+    /// is ignored — only the title text is matched.
+    /// Returns a Vec of (feature_name, feature_full_text, image_filenames) — one entry per table row.
+    fn extract_fungsi_features(proses_bisnis_html: &str) -> Vec<(String, String, Vec<String>)> {
         let s = proses_bisnis_html;
 
-        // ── Step 1: Try to narrow down to the 2.1.3 sub-section ──────────────
-        // Confluence may render heading numbers inside the heading text OR as a
-        // Confluence outline-macro prefix — match both <h*> tags AND <p>/<div>
-        // elements whose text starts with "2.1.3".
+        // ── Step 1: Try to narrow down to the "Fungsi-Fungsi yang Diharapkan" sub-section ──
+        // Match any heading/block element whose plain text CONTAINS "fungsi" AND "diharapkan"
+        // regardless of any section number prefix (2.1.3, 3.2.1, etc.).
         let heading_block_re = regex::Regex::new(
             r#"(?is)<(?:h[1-6]|p|div)\b[^>]*>([\s\S]*?)</(?:h[1-6]|p|div)>"#
         ).unwrap();
@@ -528,10 +528,10 @@ impl BRDService {
             ws_re.replace_all(no_tags.trim(), " ").trim().to_string()
         };
 
-        // Collect candidate block positions whose plain text starts with "2.1.3"
+        // Find first block whose text contains both "fungsi" and "diharapkan" (case-insensitive)
         let fungsi_pos: Option<usize> = heading_block_re.find_iter(s).find_map(|m| {
             let text = clean_text(&s[m.start()..m.end()]).to_lowercase();
-            if text.starts_with("2.1.3") || (text.contains("2.1.3") && (text.contains("fungsi") || text.contains("diharapkan"))) {
+            if text.contains("fungsi") && text.contains("diharapkan") {
                 Some(m.start())
             } else {
                 None
@@ -539,11 +539,10 @@ impl BRDService {
         });
 
         let section_html: &str = if let Some(pos) = fungsi_pos {
-            eprintln!("[BRD Gen] Found 2.1.3 section at byte {}", pos);
-            // Use everything from here to end of Proses Bisnis section
+            eprintln!("[BRD Gen] Found \"Fungsi-Fungsi yang Diharapkan\" section at byte {}", pos);
             &s[pos..]
         } else {
-            eprintln!("[BRD Gen] No 2.1.3 heading found, scanning full Proses Bisnis HTML for table");
+            eprintln!("[BRD Gen] \"Fungsi-Fungsi yang Diharapkan\" heading not found, scanning full Proses Bisnis HTML for table");
             s
         };
 
@@ -552,9 +551,49 @@ impl BRDService {
         // (Confluence macros, nested divs, etc.). We tokenize by scanning
         // for opening/closing tags and tracking nesting depth instead.
 
-        let clean_cell = |raw: &str| -> String {
-            let no_tags = tag_strip_re.replace_all(raw, " ");
-            ws_re.replace_all(no_tags.trim(), " ").trim().to_string()
+        // Rich cell text: strips tags but preserves nested table row structure ("|" separated)
+        // and extracts Confluence image attachment filenames from <ri:attachment> / <ac:image>.
+        // Returns (plain_text, Vec<attachment_filename>)
+        let rich_cell_text = |raw: &str| -> (String, Vec<String>) {
+            // Extract Confluence image attachment filenames
+            let ri_re = regex::Regex::new(
+                r#"(?i)<ri:attachment\b[^>]*\bri:filename\s*=\s*"([^"]+)"[^>]*/?>|<img\b[^>]*\bsrc\s*=\s*"([^"]+)"[^>]*/?>|<ac:image[^>]*>\s*<ri:attachment\b[^>]*\bri:filename\s*=\s*"([^"]+)""#
+            ).unwrap();
+            let images: Vec<String> = ri_re.captures_iter(raw)
+                .filter_map(|c| {
+                    c.get(1).or(c.get(2)).or(c.get(3)).map(|m| m.as_str().to_string())
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            // Convert nested tables to readable text: each <tr> becomes a "| col | col |" line
+            let tr_re    = regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap();
+            let td_th_re = regex::Regex::new(r"(?is)<t[dh][^>]*>([\s\S]*?)</t[dh]>").unwrap();
+            let table_re2 = regex::Regex::new(r"(?is)<table\b[^>]*>[\s\S]*?</table>").unwrap();
+
+            // Replace nested tables with a text representation before stripping tags
+            let with_tables_flattened = table_re2.replace_all(raw, |caps: &regex::Captures| {
+                let table_html = &caps[0];
+                let mut table_text = String::from("\n");
+                for tr_cap in tr_re.captures_iter(table_html) {
+                    let cells: Vec<String> = td_th_re.captures_iter(&tr_cap[1])
+                        .map(|c| {
+                            let no_tags = tag_strip_re.replace_all(&c[1], " ");
+                            ws_re.replace_all(no_tags.trim(), " ").trim().to_string()
+                        })
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if !cells.is_empty() {
+                        table_text.push_str(&format!("| {} |\n", cells.join(" | ")));
+                    }
+                }
+                table_text
+            });
+
+            let no_tags = tag_strip_re.replace_all(&with_tables_flattened, " ");
+            let collapsed = ws_re.replace_all(no_tags.trim(), " ");
+            let text = collapsed.trim().to_string();
+            (text, images)
         };
 
         // Tokenize: split HTML into a flat list of (tag_name, is_closing, start, end)
@@ -562,18 +601,38 @@ impl BRDService {
         let tag_token_re = regex::Regex::new(r"(?i)<(/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>").unwrap();
 
         // Column-header detection helpers
+        // Feature/requirement name column — covers both "Feature"/"Fitur" style BRDs
+        // and "Requirement Name" style BRDs
         let is_feature_header = |h: &str| -> bool {
             let lower = h.to_lowercase();
             lower == "feature" || lower == "fitur"
                 || lower.starts_with("feature") || lower.starts_with("fitur")
+                || lower.contains("requirement name") || lower.contains("nama requirement")
+                || lower.contains("nama fitur") || lower.contains("requirement")
+                || lower == "name" || lower == "nama"
         };
+        // Acceptance criteria / expected output columns
         let is_ac_header = |h: &str| -> bool {
             let lower = h.to_lowercase();
             lower.contains("acceptance") || lower.contains("criteria") || lower.contains("kriteria")
+                || lower.contains("expected output") || lower.contains("output")
+                || lower.contains("test requirement") || lower.contains("test req")
+                || lower.contains("skenario") || lower.contains("scenario")
+                || lower.contains("requirement detail") || lower.contains("deskripsi")
         };
+        // Business flow / context column
+        let is_flow_header = |h: &str| -> bool {
+            let lower = h.to_lowercase();
+            lower.contains("business flow") || lower.contains("alur bisnis")
+                || lower.contains("flow") || lower.contains("alur")
+                || lower.contains("proses") || lower.contains("process")
+        };
+        // Notes / additional info column
         let is_notes_header = |h: &str| -> bool {
             let lower = h.to_lowercase();
-            lower.contains("catatan") || lower.contains("tambahan") || lower.contains("notes") || lower.contains("keterangan")
+            lower.contains("catatan") || lower.contains("tambahan") || lower.contains("notes")
+                || lower.contains("keterangan") || lower.contains("additional")
+                || lower.contains("test requirement") || lower.contains("test req")
         };
 
         // Extract all top-level <table>…</table> blocks (depth-aware)
@@ -601,14 +660,14 @@ impl BRDService {
         };
 
         // Extract rows from a single table HTML block (depth-aware, skips nested tables).
-        // table_depth starts at -1 so the outer <table> tag brings it to 0, meaning
-        // tr/td/th at depth==0 belong to the outermost table (the one we care about).
-        let extract_rows = |table_html: &str| -> Vec<Vec<String>> {
-            let mut rows: Vec<Vec<String>> = Vec::new();
-            let mut row_cells: Vec<String> = Vec::new();
+        // Returns Vec of rows, each row is Vec of (plain_text, image_filenames) per cell.
+        // table_depth starts at -1 so the outer <table> tag brings it to 0.
+        let extract_rows = |table_html: &str| -> Vec<Vec<(String, Vec<String>)>> {
+            let mut rows: Vec<Vec<(String, Vec<String>)>> = Vec::new();
+            let mut row_cells: Vec<(String, Vec<String>)> = Vec::new();
             let mut cell_start = 0usize;
             let mut in_cell = false;
-            let mut table_depth: i32 = -1; // -1 so first <table> brings it to 0
+            let mut table_depth: i32 = -1;
             let mut cell_depth = 0i32;
 
             for cap in tag_token_re.captures_iter(table_html) {
@@ -637,7 +696,7 @@ impl BRDService {
                         } else if in_cell {
                             if cell_depth == 0 {
                                 let raw = &table_html[cell_start..m.start()];
-                                row_cells.push(clean_cell(raw));
+                                row_cells.push(rich_cell_text(raw));
                                 in_cell = false;
                             } else {
                                 cell_depth -= 1;
@@ -657,57 +716,83 @@ impl BRDService {
                 continue;
             }
 
-            // Find the header row — may NOT be rows[0] due to merged-title rows above
-            let header_row_idx = rows.iter().take(5).position(|row| {
+            // Header detection uses plain text only (no images in headers)
+            let text_rows: Vec<Vec<String>> = rows.iter()
+                .map(|row| row.iter().map(|(t, _)| t.clone()).collect())
+                .collect();
+
+            let header_row_idx = text_rows.iter().take(5).position(|row| {
                 row.iter().any(|cell| is_feature_header(cell))
+                    || row.iter().any(|cell| is_ac_header(cell))
+                    || row.iter().any(|cell| is_flow_header(cell))
             });
 
             let Some(hdr_idx) = header_row_idx else {
-                eprintln!("[BRD Gen] Table skipped (no Feature col in first 5 rows). Row 0: {:?}, Row 1: {:?}",
-                    rows.get(0).map(|r| r.iter().take(4).collect::<Vec<_>>()),
-                    rows.get(1).map(|r| r.iter().take(4).collect::<Vec<_>>()));
+                eprintln!("[BRD Gen] Table skipped (no recognisable header in first 5 rows). Headers: {:?}",
+                    text_rows.get(0).map(|r| r.iter().take(5).collect::<Vec<_>>()));
                 continue;
             };
 
-            let header = &rows[hdr_idx];
+            let header: Vec<String> = text_rows[hdr_idx].clone();
+            eprintln!("[BRD Gen] Header row {}: {:?}", hdr_idx, header.iter().take(6).collect::<Vec<_>>());
+
             let feature_col = header.iter().position(|h| is_feature_header(h));
             let ac_col      = header.iter().position(|h| is_ac_header(h));
-            let notes_col   = header.iter().position(|h| is_notes_header(h));
+            let flow_col    = header.iter().position(|h| is_flow_header(h));
+            let notes_col   = header.iter().position(|h| is_notes_header(h)
+                && header.iter().position(|h2| is_notes_header(h2)) != ac_col);
 
-            eprintln!("[BRD Gen] Feature table found (header row {}): feature_col={:?} ac_col={:?} notes_col={:?}",
-                hdr_idx, feature_col, ac_col, notes_col);
+            eprintln!("[BRD Gen] Column mapping: feature={:?} ac={:?} flow={:?} notes={:?}",
+                feature_col, ac_col, flow_col, notes_col);
 
-            let Some(feat_idx) = feature_col else { continue };
+            let Some(feat_idx) = feature_col.or_else(|| {
+                header.iter().position(|h| {
+                    let l = h.to_lowercase();
+                    l != "no" && l != "#" && l != "no." && !l.is_empty()
+                })
+            }) else { continue };
 
-            let mut features: Vec<(String, String)> = Vec::new();
-            // Data rows start after the header row (skip title rows + header row)
+            let mut features: Vec<(String, String, Vec<String>)> = Vec::new();
+
             for row in &rows[hdr_idx + 1..] {
-                let feature_raw = row.get(feat_idx).cloned().unwrap_or_default();
+                let (feature_raw, _) = row.get(feat_idx).cloned().unwrap_or_default();
                 if feature_raw.trim().is_empty() {
                     continue;
                 }
 
-                // Feature name = FIRST line only, but skip lines that are user-story sentences
-                // ("As a...", "I want...", "Sebagai...", "Saya ingin...") — those are context, not the label
-                let is_user_story = |line: &str| -> bool {
+                // Collect all image filenames from every cell in this row
+                let mut row_images: Vec<String> = row.iter()
+                    .flat_map(|(_, imgs)| imgs.clone())
+                    .collect();
+                row_images.dedup();
+
+                let is_boilerplate = |line: &str| -> bool {
                     let l = line.trim().to_lowercase();
+                    // user story template lines
                     l.starts_with("as a") || l.starts_with("as an")
                         || l.starts_with("i want") || l.starts_with("i need")
                         || l.starts_with("sebagai") || l.starts_with("saya ingin")
                         || l.starts_with("saya dapat") || l.starts_with("agar")
+                        // format instruction lines like "Gunakan format :", "…", single words
+                        || l == "…" || l == "..." || l.ends_with("format :")
+                        || l.ends_with("format:") || l == "cdd" || l == "admin"
+                        || l == "nasabah" || l == "maker" || l == "signer"
+                        || l.chars().count() <= 3  // very short lines are role labels
                 };
+                // Prefer the LAST substantive line (the actual feature description usually
+                // appears at the bottom of the cell, after "As a / I want" template lines)
                 let feature_name = feature_raw
                     .lines()
-                    .find(|l| !l.trim().is_empty() && !is_user_story(l))
+                    .filter(|l| !l.trim().is_empty() && !is_boilerplate(l))
+                    .last()
+                    .or_else(|| feature_raw.lines().find(|l| !l.trim().is_empty()))
                     .unwrap_or(feature_raw.trim())
                     .trim()
                     .trim_end_matches('.')
                     .to_string();
 
-                // Build a rich context string from ALL columns — this is what the AI reads
                 let mut context_parts = vec![format!("Feature (nama fitur):\n{}", feature_name)];
 
-                // Full feature cell text as user story context (may contain "As a..." lines)
                 let user_story_lines: String = feature_raw
                     .lines()
                     .filter(|l| !l.trim().is_empty() && l.trim() != feature_name)
@@ -718,38 +803,75 @@ impl BRDService {
                 }
 
                 if let Some(ac_idx) = ac_col {
-                    if let Some(ac) = row.get(ac_idx) {
+                    if let Some((ac, _)) = row.get(ac_idx) {
                         if !ac.trim().is_empty() {
-                            context_parts.push(format!("Acceptance Criteria:\n{ac}"));
+                            let col_label = header.get(ac_idx).map(|h| h.as_str())
+                                .unwrap_or("Acceptance Criteria / Expected Output");
+                            context_parts.push(format!("{col_label}:\n{ac}"));
+                        }
+                    }
+                }
+                if let Some(flow_idx) = flow_col {
+                    if Some(flow_idx) != ac_col {
+                        if let Some((flow, _)) = row.get(flow_idx) {
+                            if !flow.trim().is_empty() {
+                                let col_label = header.get(flow_idx).map(|h| h.as_str())
+                                    .unwrap_or("Business Flow");
+                                context_parts.push(format!("{col_label}:\n{flow}"));
+                            }
                         }
                     }
                 }
                 if let Some(notes_idx) = notes_col {
-                    if let Some(notes) = row.get(notes_idx) {
-                        if !notes.trim().is_empty() {
-                            context_parts.push(format!("Catatan Tambahan:\n{notes}"));
+                    if Some(notes_idx) != ac_col && Some(notes_idx) != flow_col {
+                        if let Some((notes, _)) = row.get(notes_idx) {
+                            if !notes.trim().is_empty() {
+                                let col_label = header.get(notes_idx).map(|h| h.as_str())
+                                    .unwrap_or("Catatan Tambahan");
+                                context_parts.push(format!("{col_label}:\n{notes}"));
+                            }
+                        }
+                    }
+                }
+                // Remaining columns
+                for (col_idx, col_header) in header.iter().enumerate() {
+                    if col_idx == feat_idx
+                        || Some(col_idx) == ac_col
+                        || Some(col_idx) == flow_col
+                        || Some(col_idx) == notes_col
+                    { continue; }
+                    let l = col_header.to_lowercase();
+                    if l == "no" || l == "#" || l == "no." || l.is_empty() { continue; }
+                    if let Some((val, _)) = row.get(col_idx) {
+                        if !val.trim().is_empty() {
+                            context_parts.push(format!("{col_header}:\n{val}"));
                         }
                     }
                 }
 
-                features.push((feature_name, context_parts.join("\n\n")));
+                features.push((feature_name, context_parts.join("\n\n"), row_images));
             }
 
             if !features.is_empty() {
-                eprintln!("[BRD Gen] Extracted {} features from 2.1.3 table", features.len());
+                eprintln!("[BRD Gen] Extracted {} features from Fungsi-Fungsi yang Diharapkan table", features.len());
                 return features;
             }
         }
 
-        eprintln!("[BRD Gen] No feature table found in 2.1.3 section");
+        eprintln!("[BRD Gen] No feature table found in Fungsi-Fungsi yang Diharapkan section");
         Vec::new()
     }
 
     /// Fetch image attachments from the Confluence page and run OCR on them.
+    /// If `only_filenames` is non-empty, only attachments whose title matches one of those
+    /// filenames are processed (used for per-feature OCR of images in "Catatan Tambahan" cells).
+    /// If `only_filenames` is empty, all image attachments are processed (up to `limit`).
     async fn extract_image_ocr(
         &self,
         config: &crate::models::app_config::ConfluenceConfig,
         page_id: &str,
+        only_filenames: &[String],
+        limit: usize,
     ) -> String {
         let confluence = ConfluenceService::new();
         let attachments = match confluence.get_attachments(config, page_id).await {
@@ -765,13 +887,16 @@ impl BRDService {
             .filter(|att| {
                 let ct = att["contentType"].as_str().unwrap_or("").to_lowercase();
                 let mime = att["mimeType"].as_str().unwrap_or("").to_lowercase();
-                ct.starts_with("image/") || mime.starts_with("image/")
+                let is_image = ct.starts_with("image/") || mime.starts_with("image/");
+                if !is_image { return false; }
+                if only_filenames.is_empty() { return true; }
+                let title = att["title"].as_str().unwrap_or("").to_lowercase();
+                only_filenames.iter().any(|f| f.to_lowercase() == title)
             })
-            .take(5)
+            .take(limit)
             .collect();
 
         if image_attachments.is_empty() {
-            eprintln!("[BRD Gen] No image attachments found for OCR");
             return String::new();
         }
 
@@ -804,7 +929,7 @@ impl BRDService {
                 if !text.is_empty() {
                     eprintln!("[BRD Gen] OCR extracted {} chars from {title}", text.len());
                     texts.push(format!(
-                        "[Screenshot {}: {}]\n{}",
+                        "[Gambar dari Catatan Tambahan — {}: {}]\n{}",
                         idx + 1, result.source_attachment, text
                     ));
                 }
@@ -887,239 +1012,185 @@ impl BRDService {
                 raw_html.clone()
             });
 
-        // ── Step 2: Extract per-feature rows from 2.1.3 table ──────────
+        // ── Step 2: Extract per-feature rows from Fungsi-Fungsi yang Diharapkan table ──
         let features = Self::extract_fungsi_features(&proses_bisnis_html);
 
         if features.is_empty() {
             return Err(ServiceError::Api(
-                "Tabel fitur (2.1.3 Fungsi-Fungsi yang Diharapkan) tidak ditemukan pada halaman Confluence ini. \
-                 Pastikan halaman memiliki heading \"2.1.3\" dan tabel dengan kolom \"Feature\" atau \"Fitur\"."
+                "Tabel fitur tidak ditemukan pada halaman Confluence ini. \
+                 Pastikan halaman memiliki heading yang mengandung teks \"Fungsi-Fungsi yang Diharapkan\" \
+                 dan tabel dengan kolom \"Feature\" atau \"Fitur\"."
                     .into(),
             ));
         }
 
-        eprintln!("[BRD Gen] {} fitur ditemukan pada tabel 2.1.3", features.len());
+        eprintln!("[BRD Gen] {} fitur ditemukan pada tabel Fungsi-Fungsi yang Diharapkan", features.len());
 
         // ── Step 3: Plain-text context of the full Proses Bisnis section ─
-        // Truncated to avoid overwhelming the model — used as background context per chunk
+        // Kept short — only background context, not the feature detail itself.
+        // The per-feature row already contains the relevant AC/flow/notes columns.
         let proses_bisnis_plain = {
             let full = crate::services::text_utils::strip_html(&proses_bisnis_html);
-            if full.len() > 6000 { format!("{}…", &full[..6000]) } else { full }
+            if full.len() > 2000 { format!("{}…", &full[..2000]) } else { full }
         };
 
-        // ── Step 4: OCR any images in the page ─────────────────────────
-        let ocr_text = self.extract_image_ocr(&config.confluence, &request.confluence_page_id).await;
-        if !ocr_text.is_empty() {
-            eprintln!("[BRD Gen] OCR text extracted ({} chars)", ocr_text.len());
-        }
+        // ── Step 4: Pre-fetch all attachment metadata once for per-feature OCR ─
+        // We fetch the list upfront so each feature can do targeted OCR without
+        // making a separate list API call. Actual image bytes are fetched on demand.
+        let confluence_for_ocr = ConfluenceService::new();
+        let all_attachments: Vec<Value> = confluence_for_ocr
+            .get_attachments(&config.confluence, &request.confluence_page_id)
+            .await
+            .unwrap_or_default();
+        eprintln!("[BRD Gen] Found {} total attachments on page", all_attachments.len());
 
         let model = config.ollama.extraction_model.as_deref().unwrap_or(&config.ollama.model);
-        let ollama_client = OllamaClient::new(&config.ollama.endpoint, model);
 
-        let system_prompt = r#"Anda adalah senior QA engineer berpengalaman di bidang perbankan Indonesia. Tugas Anda adalah membuat test case yang sangat komprehensif dari BRD (Business Requirements Document).
+        let system_prompt = r#"Kamu adalah QA engineer senior perbankan Indonesia. Buat test case KOMPREHENSIF dari satu baris BRD.
 
-Anda akan menerima satu baris dari tabel "2.1.3 Fungsi-Fungsi yang Diharapkan" yang berisi:
-- Feature (nama fitur): label singkat nama fitur
-- Konteks fitur (user story): kalimat "As a... I want..." yang menjelaskan kebutuhan user — GUNAKAN untuk memahami skenario
-- Acceptance Criteria: DAFTAR kriteria yang HARUS dipenuhi sistem — SETIAP butir criteria HARUS menghasilkan minimal 1 test case
-- Catatan Tambahan: informasi tambahan, constraint, atau edge case — WAJIB dimasukkan ke dalam test case
+ATURAN:
+1. Gunakan HANYA role yang disebut eksplisit di requirement. Jangan asumsikan Maker/Signer jika tidak ada.
+2. TC_HAPPY: setiap alur berhasil + variasinya. TC_UNHAPPY: setiap field wajib kosong satu per satu, format salah, batas nilai, skenario Variation. TC_REGRESSION: hanya jika ada integrasi modul lain.
+3. Satu skenario = satu TC terpisah. Jangan digabung.
+4. Nama TC: deskriptif dan spesifik. Tidak harus diawali "Verifikasi".
+5. Steps: 3–8 langkah, setiap step punya expected result spesifik (bukan hanya "berhasil").
+6. JANGAN berhenti sebelum JSON ditutup. Output harus JSON lengkap dan valid.
 
-CARA MEMBUAT TEST CASE:
-1. Baca setiap butir Acceptance Criteria satu per satu
-2. Untuk setiap butir AC: buat minimal 1 TC_HAPPY (scenario berhasil) dan 1 TC_UNHAPPY (scenario gagal/edge case)
-3. Tambahkan TC_REGRESSION untuk integrasi dengan fitur lain
-4. Gunakan Catatan Tambahan sebagai tambahan scenario khusus (constraint, validasi, format data, dll)
-5. Total test case MINIMAL = (jumlah butir AC × 2) + 2 regression. Jika ada 5 butir AC → minimal 12 test case
+Output HANYA raw JSON:
+{"featureName":"...","testCases":[{"name":"...","featureCategory":"...","scenarioType":"TC_HAPPY|TC_UNHAPPY|TC_REGRESSION","steps":[{"stepNumber":1,"action":"..."}],"expectedResult":[{"stepNumber":1,"result":"..."}]}]}"#;
 
-TIPE SKENARIO (hanya 3 pilihan, WAJIB salah satu):
-- TC_HAPPY: Happy path — input valid, sistem berjalan normal, output sesuai ekspektasi
-- TC_UNHAPPY: Unhappy path — input tidak valid, format salah, data kosong, batas melebihi limit, error handling, unauthorized access
-- TC_REGRESSION: Regression — fitur yang sudah ada tidak rusak, integrasi dengan modul lain tetap berjalan
-
-ATURAN WAJIB:
-- SETIAP butir Acceptance Criteria HARUS punya test case (jangan lewatkan satupun)
-- featureCategory HARUS berisi nama fitur yang diberikan (bukan user story)
-- scenarioType HARUS salah satu dari: TC_HAPPY, TC_UNHAPPY, TC_REGRESSION
-- SEMUA field output dalam Bahasa Indonesia
-- Steps minimal 3, maksimal 7 langkah per test case
-- Setiap step HARUS memiliki expected result yang sesuai dan spesifik
-- Nama test case harus deskriptif: "Verifikasi [aksi] [kondisi] [hasil yang diharapkan]"
-
-Respond ONLY with valid JSON (no explanation, no markdown, just JSON):
-{
-  "featureName": "nama fitur",
-  "testCases": [
-    {
-      "name": "Verifikasi [aksi] [kondisi] menghasilkan [ekspektasi]",
-      "featureCategory": "Nama fitur (sama dengan featureName di atas)",
-      "scenarioType": "TC_HAPPY",
-      "steps": [
-        { "stepNumber": 1, "action": "Langkah pertama dalam Bahasa Indonesia" },
-        { "stepNumber": 2, "action": "Langkah kedua dalam Bahasa Indonesia" }
-      ],
-      "expectedResult": [
-        { "stepNumber": 1, "result": "Hasil yang diharapkan dari langkah 1" },
-        { "stepNumber": 2, "result": "Hasil yang diharapkan dari langkah 2" }
-      ]
-    }
-  ]
-}"#;
-
-        // ── Step 5: One AI call per feature (chunk = feature) ───────────
+        // ── Step 5: Parallel AI calls — one per feature ─────────────────
+        // All features are sent to Ollama concurrently. Results are collected
+        // via a channel ordered by feat_idx so emit order stays predictable.
         let exec_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let feature_total = features.len();
+
+        // Helper: parse raw JSON response into Vec<Value> of test case objects.
+        fn parse_tc_response(response: &str, feat_idx: usize, feature_total: usize) -> Vec<Value> {
+            let cleaned = response
+                .trim()
+                .strip_prefix("```json").or_else(|| response.trim().strip_prefix("```"))
+                .map(|s| s.strip_suffix("```").unwrap_or(s))
+                .unwrap_or(response.trim());
+
+            if let Ok(v) = serde_json::from_str::<Value>(cleaned) {
+                return v.get("testCases").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+            }
+
+            // Partial parse: extract complete {...} objects from "testCases":[
+            let mut cases: Vec<Value> = Vec::new();
+            let bytes = cleaned.as_bytes();
+            let len = bytes.len();
+            if let Some(start) = cleaned.find("\"testCases\"") {
+                let mut i = start;
+                while i < len && bytes[i] != b'[' { i += 1; }
+                i += 1;
+                while i < len {
+                    while i < len && matches!(bytes[i], b' ' | b'\n' | b'\r' | b'\t' | b',') { i += 1; }
+                    if i >= len || bytes[i] != b'{' { break; }
+                    let obj_start = i;
+                    let mut depth = 0i32;
+                    let mut in_str = false;
+                    let mut esc = false;
+                    let mut j = i;
+                    while j < len {
+                        let b = bytes[j];
+                        if esc { esc = false; j += 1; continue; }
+                        if b == b'\\' && in_str { esc = true; j += 1; continue; }
+                        if b == b'"' { in_str = !in_str; j += 1; continue; }
+                        if !in_str {
+                            if b == b'{' { depth += 1; }
+                            else if b == b'}' { depth -= 1; if depth == 0 { j += 1; break; } }
+                        }
+                        j += 1;
+                    }
+                    if depth == 0 {
+                        if let Ok(v) = serde_json::from_str::<Value>(&cleaned[obj_start..j]) {
+                            cases.push(v);
+                        }
+                    }
+                    i = j;
+                }
+            }
+            eprintln!("[BRD Gen] Chunk {}/{} — partial parse: {}/{} TC objects",
+                feat_idx + 1, feature_total, cases.len(), cleaned.matches("\"name\"").count());
+            cases
+        }
+
+        // Build one prompt string per feature (OCR is still sequential here since it's I/O bound
+        // and Confluence rate-limits; the heavy Ollama inference runs in parallel below).
+        let mut prompts: Vec<(String, String)> = Vec::new(); // (feature_name, prompt)
+        for (feat_idx, (feature_name, feature_context, row_images)) in features.iter().enumerate() {
+            let feature_ocr_text = if !row_images.is_empty() {
+                self.extract_image_ocr(&config.confluence, &request.confluence_page_id, row_images, row_images.len().min(8)).await
+            } else if feat_idx == 0 {
+                self.extract_image_ocr(&config.confluence, &request.confluence_page_id, &[], 3).await
+            } else {
+                String::new()
+            };
+
+            let mut parts = vec![
+                format!("BRD: {title}\n\nFITUR ({}/{feature_total}):\n{feature_context}", feat_idx + 1),
+            ];
+            if !proses_bisnis_plain.is_empty() {
+                parts.push(format!("KONTEKS PROSES BISNIS:\n{proses_bisnis_plain}"));
+            }
+            if !feature_ocr_text.is_empty() {
+                parts.push(format!("GAMBAR/DIAGRAM DI CATATAN TAMBAHAN:\n{feature_ocr_text}"));
+            }
+            parts.push(format!(
+                "Buat test case untuk fitur \"{feature_name}\". \
+                 Pastikan: semua alur berhasil (TC_HAPPY), semua kondisi gagal (TC_UNHAPPY) per skenario dan per field, \
+                 dan regression jika ada integrasi. Output HANYA JSON valid lengkap."
+            ));
+
+            let full_prompt = format!("{system_prompt}\n\n{}", parts.join("\n\n"));
+            prompts.push((feature_name.clone(), full_prompt));
+        }
+
+        // Spawn all Ollama calls into a JoinSet — all run concurrently.
+        // join_next() returns each task the moment it finishes, so we can
+        // parse and emit to the frontend immediately without waiting for others.
+        let mut join_set: tokio::task::JoinSet<(usize, String, String)> = tokio::task::JoinSet::new();
+        for (feat_idx, (feature_name, prompt)) in prompts.into_iter().enumerate() {
+            let ollama = OllamaClient::new(&config.ollama.endpoint, model);
+            let ftotal = feature_total;
+            join_set.spawn(async move {
+                eprintln!("[BRD Gen] Chunk {}/{} START — \"{}\"", feat_idx + 1, ftotal, feature_name);
+                let response = ollama
+                    .generate_text_with_ctx(&prompt, true, Some(0.3), None, Some(16384))
+                    .await
+                    .unwrap_or_default();
+                eprintln!("[BRD Gen] Chunk {}/{} DONE — {} chars", feat_idx + 1, ftotal, response.len());
+                (feat_idx, feature_name, response)
+            });
+        }
+
         let mut all_test_cases: Vec<BRDTestCase> = Vec::new();
         let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        for (feat_idx, (feature_name, feature_context)) in features.iter().enumerate() {
-            eprintln!(
-                "[BRD Gen] Chunk {}/{} — fitur: \"{}\"",
-                feat_idx + 1, feature_total, feature_name
-            );
-
-            // Build the full prompt for this feature chunk
-            let mut prompt_parts = vec![
-                format!("Halaman BRD: {title}"),
-                String::new(),
-                format!("=== FITUR YANG HARUS DIGENERATE TEST CASE-NYA (fitur ke-{}/{}) ===", feat_idx + 1, feature_total),
-                feature_context.clone(),
-            ];
-
-            if !proses_bisnis_plain.is_empty() {
-                prompt_parts.push(String::new());
-                prompt_parts.push("=== KONTEKS: Section 2.1 Proses Bisnis (untuk pemahaman sistem) ===".into());
-                prompt_parts.push(proses_bisnis_plain.clone());
-            }
-
-            if !ocr_text.is_empty() {
-                prompt_parts.push(String::new());
-                prompt_parts.push("=== TEXT DARI DIAGRAM/SCREENSHOT (gunakan untuk memahami alur sistem) ===".into());
-                prompt_parts.push(ocr_text.clone());
-            }
-
-            // Count AC bullet points to tell the model the minimum expected output
-            let ac_count = feature_context
-                .lines()
-                .filter(|l| {
-                    let t = l.trim();
-                    !t.is_empty() && (t.starts_with('-') || t.starts_with('•') || t.starts_with('*')
-                        || (t.len() > 2 && t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)))
-                })
-                .count()
-                .max(3); // at least 3 AC assumed even if formatting wasn't detected
-
-            prompt_parts.push(String::new());
-            prompt_parts.push(format!(
-                "INSTRUKSI WAJIB untuk fitur \"{feature_name}\" (fitur ke-{} dari {feature_total}):\n\
-                 \n\
-                 1. Baca SETIAP butir Acceptance Criteria di atas — ada sekitar {ac_count} butir.\n\
-                 2. Untuk setiap butir AC buat MINIMAL 2 test case: satu TC_HAPPY (berhasil) dan satu TC_UNHAPPY (gagal/invalid).\n\
-                 3. Tambahkan minimal 2 TC_REGRESSION untuk memastikan fitur ini tidak merusak fitur lain.\n\
-                 4. Gunakan Catatan Tambahan sebagai scenario tambahan (constraint, format, validasi khusus).\n\
-                 5. TOTAL test case yang diharapkan: MINIMAL {} test case.\n\
-                 \n\
-                 JANGAN buat hanya 1 test case. JANGAN lewatkan butir Acceptance Criteria manapun.\n\
-                 WAJIB output seluruh test case dalam satu JSON response.\n\
-                 Semua teks dalam Bahasa Indonesia.",
-                feat_idx + 1,
-                (ac_count * 2) + 2
-            ));
-
-            let full_prompt = format!("{system_prompt}\n\n{}", prompt_parts.join("\n"));
-
-            let response = ollama_client
-                .generate_text(&full_prompt, true, None, None)
-                .await
-                .unwrap_or_default();
-
-            eprintln!(
-                "[BRD Gen] Chunk {}/{} response: {} chars",
-                feat_idx + 1, feature_total, response.len()
-            );
+        // As each task completes (in any order), parse and emit immediately
+        while let Some(join_result) = join_set.join_next().await {
+            let (feat_idx, feature_name, response) = match join_result {
+                Ok(r) => r,
+                Err(e) => { eprintln!("[BRD Gen] Task join error: {e}"); continue; }
+            };
 
             if response.len() < 10 {
                 eprintln!("[BRD Gen] Chunk {}/{} — empty response, skipping", feat_idx + 1, feature_total);
                 continue;
             }
 
-            // Parse JSON response — handle both complete and truncated responses.
-            // Strategy: try full parse first, then extract all complete {"name":...}
-            // objects directly from the text so truncation never drops all cases.
-            let cleaned = response
-                .trim()
-                .strip_prefix("```json")
-                .or_else(|| response.trim().strip_prefix("```"))
-                .map(|s| s.strip_suffix("```").unwrap_or(s))
-                .unwrap_or(response.trim());
-
-            let raw_cases: Vec<Value> = if let Ok(v) = serde_json::from_str::<Value>(cleaned) {
-                // Full parse succeeded
-                v.get("testCases").and_then(|a| a.as_array()).cloned().unwrap_or_default()
-            } else {
-                // Truncated — extract every complete {...} object that appears after
-                // a "testCases" array opener. Walk char by char tracking brace depth
-                // and collect each top-level object that parses cleanly.
-                let mut cases: Vec<Value> = Vec::new();
-                let bytes = cleaned.as_bytes();
-                let len = bytes.len();
-                // Skip to "testCases":[
-                if let Some(start) = cleaned.find("\"testCases\"") {
-                    let mut i = start;
-                    // Advance to the '[' that opens the array
-                    while i < len && bytes[i] != b'[' { i += 1; }
-                    i += 1; // skip '['
-                    // Now extract each top-level '{...}' object
-                    while i < len {
-                        // Skip whitespace and commas
-                        while i < len && (bytes[i] == b' ' || bytes[i] == b'\n' || bytes[i] == b'\r' || bytes[i] == b'\t' || bytes[i] == b',') { i += 1; }
-                        if i >= len || bytes[i] != b'{' { break; }
-                        // Find matching closing brace
-                        let obj_start = i;
-                        let mut depth = 0i32;
-                        let mut in_str = false;
-                        let mut esc = false;
-                        let mut j = i;
-                        while j < len {
-                            let b = bytes[j];
-                            if esc { esc = false; j += 1; continue; }
-                            if b == b'\\' && in_str { esc = true; j += 1; continue; }
-                            if b == b'"' { in_str = !in_str; j += 1; continue; }
-                            if !in_str {
-                                if b == b'{' { depth += 1; }
-                                else if b == b'}' { depth -= 1; if depth == 0 { j += 1; break; } }
-                            }
-                            j += 1;
-                        }
-                        if depth == 0 {
-                            let obj_str = &cleaned[obj_start..j];
-                            if let Ok(v) = serde_json::from_str::<Value>(obj_str) {
-                                cases.push(v);
-                            }
-                        }
-                        i = j;
-                    }
-                }
-                eprintln!(
-                    "[BRD Gen] Chunk {}/{} — partial parse extracted {}/{} test case objects",
-                    feat_idx + 1, feature_total, cases.len(),
-                    cleaned.matches("\"name\"").count()
-                );
-                cases
-            };
-
-            // Parse each test case
+            let raw_cases = parse_tc_response(&response, feat_idx, feature_total);
             let mut chunk_cases: Vec<BRDTestCase> = Vec::new();
+
             for tc in &raw_cases {
                 let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("Unnamed TC").to_string();
                 if !seen_names.insert(name.clone()) { continue; }
 
-                let feature_category = tc
-                    .get("featureCategory")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(feature_name.as_str())
-                    .to_string();
+                let feature_category = tc.get("featureCategory").and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty()).unwrap_or(feature_name.as_str()).to_string();
 
                 let raw_scenario = tc.get("scenarioType").and_then(|v| v.as_str()).unwrap_or("TC_HAPPY");
                 let scenario_type = match raw_scenario {
@@ -1133,17 +1204,15 @@ Respond ONLY with valid JSON (no explanation, no markdown, just JSON):
 
                 let steps = tc.get("steps").and_then(|v| v.as_array())
                     .map(|arr| arr.iter().enumerate().map(|(i, s)| BRDTestCaseStep {
-                        step_number: s.get("stepNumber").and_then(|v| v.as_i64()).unwrap_or((i + 1) as i64) as i32,
+                        step_number: s.get("stepNumber").and_then(|v| v.as_i64()).unwrap_or((i+1) as i64) as i32,
                         action: s.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    }).collect())
-                    .unwrap_or_default();
+                    }).collect()).unwrap_or_default();
 
                 let expected = tc.get("expectedResult").and_then(|v| v.as_array())
                     .map(|arr| arr.iter().enumerate().map(|(i, s)| BRDTestCaseExpectedResult {
-                        step_number: s.get("stepNumber").and_then(|v| v.as_i64()).unwrap_or((i + 1) as i64) as i32,
+                        step_number: s.get("stepNumber").and_then(|v| v.as_i64()).unwrap_or((i+1) as i64) as i32,
                         result: s.get("result").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    }).collect())
-                    .unwrap_or_default();
+                    }).collect()).unwrap_or_default();
 
                 chunk_cases.push(BRDTestCase {
                     id: Uuid::new_v4().to_string(),
@@ -1161,43 +1230,32 @@ Respond ONLY with valid JSON (no explanation, no markdown, just JSON):
                 });
             }
 
-            eprintln!(
-                "[BRD Gen] Chunk {}/{} — {} test cases generated for \"{}\"",
-                feat_idx + 1, feature_total, chunk_cases.len(), feature_name
-            );
-
+            eprintln!("[BRD Gen] Chunk {}/{} — {} TC untuk \"{}\"", feat_idx + 1, feature_total, chunk_cases.len(), feature_name);
             if chunk_cases.is_empty() { continue; }
 
-            // Persist this chunk to storage immediately so the frontend can read it
             {
                 let mut store = self.load();
                 store.test_cases.extend(chunk_cases.clone());
                 let _ = self.save(&store);
             }
 
-            // Emit progress event so the frontend can append these cards right away
-            let _ = self.app_handle.emit(
-                "brd-chunk-progress",
-                BrdChunkProgress {
-                    feature_index: feat_idx + 1,
-                    feature_total,
-                    feature_name: feature_name.clone(),
-                    test_cases: chunk_cases.clone(),
-                    test_execution_id: exec_id.clone(),
-                },
-            );
+            let _ = self.app_handle.emit("brd-chunk-progress", BrdChunkProgress {
+                feature_index: feat_idx + 1,
+                feature_total,
+                feature_name: feature_name.clone(),
+                test_cases: chunk_cases.clone(),
+                test_execution_id: exec_id.clone(),
+            });
 
             all_test_cases.extend(chunk_cases);
         }
 
         if all_test_cases.is_empty() {
             return Err(ServiceError::Api(
-                "Tidak ada test case yang berhasil digenerate. Cek koneksi ke Ollama model dan pastikan model berjalan."
-                    .into(),
+                "Tidak ada test case yang berhasil digenerate. Cek koneksi ke Ollama model dan pastikan model berjalan.".into(),
             ));
         }
 
-        // Cases were already persisted individually after each chunk — return the full list.
         Ok(BRDGenerationResult {
             success: true,
             feature_name: title,

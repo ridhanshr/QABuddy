@@ -146,6 +146,7 @@ pub fn run() {
             commands::jira::organize_tests_into_xray,
             commands::jira::get_xray_folders,
             commands::jira::get_xray_folder_issues,
+            commands::jira::add_tests_to_execution,
             commands::jira::check_test_steps,
             commands::jira::fetch_test_steps,
             commands::jira::update_test_cases_from_confluence,
