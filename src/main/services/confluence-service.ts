@@ -55,6 +55,58 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+function isScreenCaptureExpandTitle(title: string): boolean {
+  return title === "Screen Capture" || title === "Click here to expand...";
+}
+
+function extractAttachmentRefs(block: string): Array<{ name: string; index: number; end: number }> {
+  const refs: Array<{ name: string; index: number; end: number }> = [];
+  const patterns = [
+    /<[^>]*\bri:filename=["']([^"']+)["'][^>]*>/gi,
+    /<img\b[^>]*\bdata-linked-resource-default-alias=["']([^"']+)["'][^>]*>/gi,
+    /<[^>]*\bdata-file-src=["'][^"']*\/([^"'\/?]+)(?:\?[^"']*)?["'][^>]*>/gi,
+    /<[^>]*\bdata-qa-attachment-name=["']([^"']+)["'][^>]*>/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(block)) !== null) {
+      refs.push({
+        name: decodeHtmlEntities(match[1]),
+        index: match.index,
+        end: match.index + match[0].length,
+      });
+    }
+  }
+
+  refs.sort((a, b) => a.index - b.index);
+  return refs.filter((ref, index) => !refs.slice(0, index).some((prev) => prev.name === ref.name && prev.index === ref.index));
+}
+
+function latestAttachmentGroupBefore(html: string, index: number): string {
+  const before = html.slice(0, index);
+  const titleRegex =
+    /<span\b[^>]*class=["'][^"']*\bexpand-control-text\b[^"']*["'][^>]*>([\s\S]*?)<\/span>|<ac:parameter\b[^>]*ac:name=["']title["'][^>]*>([\s\S]*?)<\/ac:parameter>/gi;
+  let group = "";
+  let match;
+  while ((match = titleRegex.exec(before)) !== null) {
+    const title = stripHtml(match[1] || match[2] || "").trim();
+    if (title && !isScreenCaptureExpandTitle(title)) {
+      group = title;
+    }
+  }
+  return group;
+}
+
+function stripAttachmentMarkup(block: string): string {
+  return block
+    .replace(/<ac:image\b[\s\S]*?<\/ac:image>/gi, "")
+    .replace(/<ac:link\b[\s\S]*?<\/ac:link>/gi, "")
+    .replace(/<span\b[^>]*class=["'][^"']*\bconfluence-embedded-file-wrapper\b[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, "")
+    .replace(/<img\b[^>]*(?:data-linked-resource-default-alias|data-image-src|data-file-src)[^>]*>/gi, "")
+    .replace(/<a\b[^>]*data-file-src=["'][^"']+["'][^>]*>[\s\S]*?<\/a>/gi, "");
+}
+
 export class ConfluenceService {
   private readonly config: ConfluenceConfig;
   private readonly rawClient: ConfluenceClient;
@@ -587,7 +639,7 @@ export class ConfluenceService {
       steps: "",
       expectedResult: "",
       result: "PASS",
-      images: [] as { id: string; name: string; data: string; order: number; note?: string }[],
+      images: [] as { id: string; name: string; data: string; order: number; note?: string; group?: string }[],
     };
     const debugTable: ParseConfluenceParseDebugTable | undefined = debug
       ? {
@@ -684,23 +736,20 @@ export class ConfluenceService {
           if (orderedAttachmentBlocks.length > 0) {
             let attachmentIndex = 0;
             for (const block of orderedAttachmentBlocks) {
-              attachmentIndex++;
               const orderMatch = block.match(/data-qa-attachment-order=["'](\d+)["']/i);
               const noteMatch = block.match(/data-qa-attachment-note=["']([^"']*)["']/i);
-              const nameMatch =
-                block.match(/ri:filename="([^"]+)"/i) ||
-                block.match(/data-linked-resource-default-alias="([^"]+)"/i) ||
-                block.match(/data-file-src="[^"]*\/([^"\/]+)"/i) ||
-                block.match(/data-qa-attachment-name=["']([^"']+)["']/i);
-              const name = nameMatch?.[1];
-              if (name) {
+              const groupMatch = block.match(/data-qa-attachment-group=["']([^"']*)["']/i);
+              const attachmentNames = extractAttachmentRefs(block).map((ref) => ref.name);
+              for (const name of attachmentNames) {
                 entry.images.push({
                   id: `${name}::${attachmentIndex}`,
                   name,
                   data: "",
-                  order: orderMatch ? Number(orderMatch[1]) : attachmentIndex,
+                  order: orderMatch ? Number(orderMatch[1]) : attachmentIndex + 1,
                   note: noteMatch ? decodeHtmlEntities(noteMatch[1]) : "",
+                  group: groupMatch ? decodeHtmlEntities(groupMatch[1]) : "",
                 });
+                attachmentIndex++;
               }
             }
             debugTable?.mappedFields.push("images");
@@ -715,24 +764,36 @@ export class ConfluenceService {
           }
 
           const blockRegex = /<li\b[^>]*>[\s\S]*?<\/li>|<p\b[^>]*>[\s\S]*?<\/p>/gi;
-          const blocks = value.match(blockRegex) || [];
           let attachmentIndex = 0;
           let pendingNote = "";
-          for (const block of blocks) {
-            const nameMatch =
-              block.match(/ri:filename="([^"]+)"/i) ||
-              block.match(/data-linked-resource-default-alias="([^"]+)"/i) ||
-              block.match(/data-file-src="[^"]*\/([^"\/]+)"/i);
-            if (nameMatch) {
-              attachmentIndex++;
-              const name = nameMatch[1];
-              entry.images.push({
-                id: `${name}::${attachmentIndex}`,
-                name,
-                data: "",
-                order: attachmentIndex,
-                note: pendingNote,
-              });
+          let blockMatch;
+          let blockCount = 0;
+          while ((blockMatch = blockRegex.exec(value)) !== null) {
+            blockCount++;
+            const block = blockMatch[0];
+            const attachmentRefs = extractAttachmentRefs(block);
+            if (attachmentRefs.length > 0) {
+              const group = latestAttachmentGroupBefore(value, blockMatch.index);
+              for (let refIndex = 0; refIndex < attachmentRefs.length; refIndex++) {
+                const ref = attachmentRefs[refIndex];
+                const segmentStart = refIndex === 0 ? 0 : attachmentRefs[refIndex - 1].end;
+                const segment = block.slice(segmentStart, ref.index);
+                const inlineNote = this.extractTextValue(stripAttachmentMarkup(segment)).trim();
+                const note = inlineNote && inlineNote !== "-"
+                  ? inlineNote
+                  : refIndex === 0
+                    ? pendingNote
+                    : "";
+                attachmentIndex++;
+                entry.images.push({
+                  id: `${ref.name}::${attachmentIndex}`,
+                  name: ref.name,
+                  data: "",
+                  order: attachmentIndex,
+                  note,
+                  group,
+                });
+              }
               pendingNote = "";
               continue;
             }
@@ -748,7 +809,7 @@ export class ConfluenceService {
             status: "mapped",
             mappedField: "images",
             rawHtml: rowHtml,
-            reason: blocks.length === 0 ? "Screen Capture kosong" : "Screen Capture dipetakan tanpa marker attachment eksplisit",
+            reason: blockCount === 0 ? "Screen Capture kosong" : "Screen Capture dipetakan tanpa marker attachment eksplisit",
             valuePreview,
           });
           break;

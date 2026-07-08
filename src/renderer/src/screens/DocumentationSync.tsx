@@ -23,6 +23,7 @@ export default function DocumentationSync() {
     moveConfAttachment,
     moveConfAttachmentByOffset,
     updateConfAttachmentNote,
+    updateConfAttachmentGroup,
     removeImage,
     handleConfFileAttachment,
     handleConfFileDrop,
@@ -94,6 +95,14 @@ export default function DocumentationSync() {
   };
 
   const renderEntryCard = (item: any, globalIndex: number) => {
+    const attachmentGroups = Array.from<string>(
+      new Set(
+        (item.images || [])
+          .map((image: ConfAttachment) => (image.group || "").trim())
+          .filter(Boolean)
+      )
+    );
+
     return (
       <div key={item.id} style={{ padding: 24, border: '1px solid var(--outline-variant)', borderRadius: 12, background: 'var(--surface-container-lowest)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingBottom: 12, borderBottom: '1px solid var(--outline-variant)' }}>
@@ -178,8 +187,11 @@ export default function DocumentationSync() {
 
         <div className="field-group" style={{ marginTop: 24 }}>
           <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Screen Capture (Paste images, drag files, or click to attach)</label>
-          <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 6, marginBottom: 10 }}>Urutan attachment disimpan eksplisit. Drag-and-drop kartu untuk mengubah urutan sebelum sync.</p>
+          <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 6, marginBottom: 10 }}>Urutan attachment disimpan eksplisit. Isi Expand bila attachment perlu masuk ke macro expand tertentu.</p>
           <div onPaste={(e) => handleImagePaste(item.id, e)} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files.length > 0) handleConfFileDrop(item.id, e.dataTransfer.files); }} style={{ minHeight: 120, border: '2px dashed var(--outline-variant)', borderRadius: 12, padding: 20, display: 'flex', flexWrap: 'wrap', gap: 12, background: 'var(--surface-container-lowest)', cursor: 'text', alignItems: item.images.length === 0 ? 'center' : 'flex-start', justifyContent: item.images.length === 0 ? 'center' : 'flex-start', transition: 'border-color 0.2s, background 0.2s' }}>
+            <datalist id={`attachment-expand-options-${item.id}`}>
+              {attachmentGroups.map((group) => <option key={group} value={group} />)}
+            </datalist>
             {item.images.length === 0 && (
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--on-surface-variant)', pointerEvents: 'none' }}>
                 <span className="material-symbols" style={{ fontSize: 32, marginBottom: 8, color: 'var(--primary)' }}>add_photo_alternate</span>
@@ -214,6 +226,16 @@ export default function DocumentationSync() {
                     </div>
                   )}
                   <div style={{ padding: '8px 10px 10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <span className="material-symbols" style={{ fontSize: 16, color: 'var(--primary)' }}>unfold_more</span>
+                      <input
+                        value={img.group || ""}
+                        list={`attachment-expand-options-${item.id}`}
+                        onChange={(e) => updateConfAttachmentGroup(item.id, img.id, e.target.value)}
+                        placeholder="Expand (optional)"
+                        style={{ width: '100%', height: 32, boxSizing: 'border-box', fontSize: 12, borderRadius: 6, border: '1px solid var(--outline-variant)', background: 'var(--surface)', color: 'var(--on-surface)', padding: '0 9px' }}
+                      />
+                    </div>
                     <textarea value={img.note || ""} onChange={(e) => updateConfAttachmentNote(item.id, img.id, e.target.value)} placeholder="Catatan / label attachment" rows={3} style={{ width: '100%', resize: 'vertical', minHeight: 62, boxSizing: 'border-box', fontSize: 12, borderRadius: 6, border: '1px solid var(--outline-variant)', background: 'var(--surface)', color: 'var(--on-surface)', padding: '8px 10px' }} />
                   </div>
                   <button onMouseDown={(e) => e.stopPropagation()} onDragStart={(e) => e.preventDefault()} onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeImage(item.id, img.id); }} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }} type="button">

@@ -150,6 +150,17 @@ describe("ConfluenceService", () => {
     expect(parsed[0].images[2].note).toBe("*File EDW Batch SDGCRD");
   });
 
+  it("does not carry previous note to an image that has no note", () => {
+    const html = `<table><tbody><tr><td><strong>No. Test Case</strong></td><td>TC101</td></tr><tr><td><strong>Function</strong></td><td>Attachment Notes Reset</td></tr><tr><td><p><strong>Screen Capture</strong></p></td><td><div class="content-wrapper"><div class="expand-content"><div class="expand-container" data-macro-name="expand"><span class="expand-control-text conf-macro-render">Portal BRICC</span><div class="expand-content"><ol><li>Login Portal BRICC<br><span><img data-linked-resource-default-alias="image-1.png" /></span></li><li><span><img data-linked-resource-default-alias="image-2.png" /></span></li></ol></div></div></div></div></td></tr></tbody></table>`;
+
+    const parsed = service.parseEntriesFromContent(html);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].images).toHaveLength(2);
+    expect(parsed[0].images[0].note).toBe("Login Portal BRICC");
+    expect(parsed[0].images[1].note).toBe("");
+  });
+
   it("replaces only the edited table when merging back to storage content", () => {
     const originalFirst = makeEntry("TC-001", "Login", "AUTH-1");
     const originalSecond = makeEntry("TC-002", "Transfer", "AUTH-2");

@@ -64,6 +64,7 @@ export type ConfAttachment = {
   data: string;
   order: number;
   note?: string;
+  group?: string;
 };
 
 export type HealthcheckResult = {
@@ -128,6 +129,7 @@ function createConfAttachment(name: string, data: string, order: number): ConfAt
     data,
     order,
     note: "",
+    group: "",
   };
 }
 
@@ -1719,6 +1721,7 @@ export function useAppState() {
             data: image.data || "",
             order: typeof image.order === "number" ? image.order : index + 1,
             note: image.note || "",
+            group: image.group || "",
           })),
           true
         );
@@ -2076,6 +2079,12 @@ export function useAppState() {
   const updateConfAttachmentNote = (entryId: string, attachmentId: string, note: string) => {
     updateConfEntryImages(entryId, (images) =>
       images.map((image) => image.id === attachmentId ? { ...image, note } : image)
+    );
+  };
+
+  const updateConfAttachmentGroup = (entryId: string, attachmentId: string, group: string) => {
+    updateConfEntryImages(entryId, (images) =>
+      images.map((image) => image.id === attachmentId ? { ...image, group } : image)
     );
   };
 
@@ -2562,6 +2571,7 @@ export function useAppState() {
     moveConfAttachment,
     moveConfAttachmentByOffset,
     updateConfAttachmentNote,
+    updateConfAttachmentGroup,
     extractCases,
     exportCases,
     handleJqlSearch,

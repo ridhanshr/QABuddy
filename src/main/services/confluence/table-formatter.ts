@@ -73,6 +73,72 @@ export function linkifyJiraKeys(text: string, jiraBaseUrl?: string, jiraServerId
   );
 }
 
+function generateAttachmentItems(attachments: any[]): string {
+  let previousNote = "";
+  return attachments
+    .map((att: any) => {
+      const noteHtml = att.note && att.note !== previousNote
+        ? att.note
+            .split("\n")
+            .map((line: string) => `<p data-qa-attachment-note="true">${escapeHtmlText(line)}</p>`)
+            .join("")
+        : "";
+      previousNote = att.note || previousNote;
+      const safeName = escapeHtmlAttribute(att.name);
+      const commonAttrs = `data-qa-attachment-order="${att.order}" data-qa-attachment-name="${safeName}" data-qa-attachment-note="${escapeHtmlAttribute(att.note || "")}"`;
+      if (att.group) {
+        const safeGroup = escapeHtmlAttribute(att.group);
+        if (att.data && att.data.startsWith("data:image/")) {
+          return `${noteHtml}<li ${commonAttrs} data-qa-attachment-group="${safeGroup}"><ac:image ac:height="400"><ri:attachment ri:filename="${safeName}" /></ac:image></li>`;
+        }
+        return `${noteHtml}<li ${commonAttrs} data-qa-attachment-group="${safeGroup}"><ac:link><ri:attachment ri:filename="${safeName}" /></ac:link></li>`;
+      }
+      if (att.data && att.data.startsWith("data:image/")) {
+        return `${noteHtml}<li ${commonAttrs}><ac:image ac:height="400"><ri:attachment ri:filename="${safeName}" /></ac:image></li>`;
+      }
+      return `${noteHtml}<li ${commonAttrs}><ac:link><ri:attachment ri:filename="${safeName}" /></ac:link></li>`;
+    })
+    .join("");
+}
+
+function generateScreenCaptureBody(attachments: any[]): string {
+  if (attachments.length === 0) return "<p>-</p>";
+
+  const hasGroups = attachments.some((att: any) => att.group);
+  if (!hasGroups) {
+    return `<ol data-qa-attachments="true">${generateAttachmentItems(attachments)}</ol>`;
+  }
+
+  const parts: string[] = [];
+  let currentGroup = "";
+  let currentItems: any[] = [];
+  const flush = () => {
+    if (currentItems.length === 0) return;
+    const itemsHtml = `<ol data-qa-attachments="true">${generateAttachmentItems(currentItems)}</ol>`;
+    if (currentGroup) {
+      parts.push(`
+        <ac:structured-macro ac:name="expand" ac:schema-version="1">
+          <ac:parameter ac:name="title">${escapeHtmlText(currentGroup)}</ac:parameter>
+          <ac:rich-text-body>${itemsHtml}</ac:rich-text-body>
+        </ac:structured-macro>`);
+    } else {
+      parts.push(itemsHtml);
+    }
+    currentItems = [];
+  };
+
+  for (const attachment of attachments) {
+    const group = attachment.group || "";
+    if (group !== currentGroup) {
+      flush();
+      currentGroup = group;
+    }
+    currentItems.push(attachment);
+  }
+  flush();
+  return parts.join("");
+}
+
 export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraServerId?: string): string {
   const tables: string[] = [];
   for (const entry of entries) {
@@ -86,23 +152,8 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
     const scenarioLinked = linkifyJiraKeys(safeScenario, jiraBaseUrl, jiraServerId);
 
     const orderedAttachments = normalizeAttachmentOrder(entry.images || []);
-    let previousNote = "";
-    const attachmentsHtml = orderedAttachments
-      .map((att: any) => {
-        const noteHtml = att.note && att.note !== previousNote
-          ? att.note
-              .split("\n")
-              .map((line: string) => `<p data-qa-attachment-note="true">${escapeHtmlText(line)}</p>`)
-              .join("")
-          : "";
-        previousNote = att.note || previousNote;
-        const safeName = escapeHtmlAttribute(att.name);
-        if (att.data && att.data.startsWith("data:image/")) {
-          return `${noteHtml}<li data-qa-attachment-order="${att.order}" data-qa-attachment-name="${safeName}" data-qa-attachment-note="${escapeHtmlAttribute(att.note || "")}"><ac:image ac:height="400"><ri:attachment ri:filename="${safeName}" /></ac:image></li>`;
-        }
-        return `${noteHtml}<li data-qa-attachment-order="${att.order}" data-qa-attachment-name="${safeName}" data-qa-attachment-note="${escapeHtmlAttribute(att.note || "")}"><ac:link><ri:attachment ri:filename="${safeName}" /></ac:link></li>`;
-      })
-      .join("");
+    const screenCaptureTitle = orderedAttachments.some((att: any) => att.group) ? "Click here to expand..." : "Screen Capture";
+    const attachmentsHtml = generateScreenCaptureBody(orderedAttachments);
 
     const kategoriRow = safeCategory
       ? `
@@ -158,9 +209,9 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
             <td class="confluenceTd"><p><strong>Screen Capture</strong></p></td>
             <td class="confluenceTd">
               <ac:structured-macro ac:name="expand" ac:schema-version="1">
-                <ac:parameter ac:name="title">Screen Capture</ac:parameter>
+                <ac:parameter ac:name="title">${screenCaptureTitle}</ac:parameter>
                 <ac:rich-text-body>
-                  ${attachmentsHtml ? `<ol data-qa-attachments="true">${attachmentsHtml}</ol>` : "<p>-</p>"}
+                  ${attachmentsHtml}
                 </ac:rich-text-body>
               </ac:structured-macro>
             </td>
