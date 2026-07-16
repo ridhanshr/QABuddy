@@ -138,6 +138,44 @@ describe("ConfluenceService", () => {
     expect(parsed[0].images).toHaveLength(1);
   });
 
+  it("parses steps and expected result even when another cell contains a nested table", () => {
+    const html = `
+      <table class="wrapped confluenceTable">
+        <tbody>
+          <tr><td><strong>No. Test Case</strong></td><td>TC900</td></tr>
+          <tr><td><strong>Function</strong></td><td>Nested Table Case</td></tr>
+          <tr>
+            <td><strong>Input Data</strong></td>
+            <td>
+              <div class="table-wrap">
+                <table class="wrapped confluenceTable">
+                  <tbody>
+                    <tr><td>Inner A</td></tr>
+                    <tr><td>Inner B</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Steps</strong></td>
+            <td><ol><li>Login portal MSS</li><li>Lakukan pengajuan LOA</li></ol></td>
+          </tr>
+          <tr>
+            <td><strong>Expected Result</strong></td>
+            <td><ol><li>Data lolos validasi 1 dan validasi 2</li><li>Data pengajuan auto terapprove</li></ol></td>
+          </tr>
+        </tbody>
+      </table>`;
+
+    const parsed = service.parseEntriesFromContent(html);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].testCaseNo).toBe("TC900");
+    expect(parsed[0].steps).toBe("Login portal MSS\nLakukan pengajuan LOA");
+    expect(parsed[0].expectedResult).toBe("Data lolos validasi 1 dan validasi 2\nData pengajuan auto terapprove");
+  });
+
   it("parses screen capture notes that appear before attachments", () => {
     const html = `<table><tbody><tr><td><strong>No. Test Case</strong></td><td>TC100</td></tr><tr><td><strong>Function</strong></td><td>Attachment Notes</td></tr><tr><td><p><strong>Screen Capture</strong></p></td><td><div class="content-wrapper"><div class="expand-content"><ul><li data-uuid="1">Before update credit limit (MC)</li></ul><p><span><img data-linked-resource-default-alias="image-1.png" /></span></p><p>VISA</p><p><span><img data-linked-resource-default-alias="image-2.png" /></span></p><p><em>*File EDW Batch SDGCRD</em></p><p><span><a data-file-src="/download/attachments/x/SDGCRD_20260507.txt">file</a></span></p></div></div></td></tr></tbody></table>`;
 
