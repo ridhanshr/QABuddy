@@ -138,6 +138,30 @@ describe("ConfluenceService", () => {
     expect(parsed[0].images).toHaveLength(1);
   });
 
+  it("preserves ordered list metadata for sync back to Confluence", () => {
+    const html = `<table><tbody>
+      <tr><td><strong>No. Test Case</strong></td><td>TC901</td></tr>
+      <tr><td><strong>Function</strong></td><td>Ordered Lists</td></tr>
+      <tr><td><strong>Input Data</strong></td><td><ol><li>Alpha</li><li>Beta</li></ol></td></tr>
+      <tr><td><strong>Steps</strong></td><td><ol><li>Login portal MSS</li><li>Lakukan pengajuan LOA</li></ol></td></tr>
+      <tr><td><strong>Expected Result</strong></td><td><ol><li>Data lolos validasi 1</li><li>Data pengajuan auto terapprove</li></ol></td></tr>
+    </tbody></table>`;
+
+    const parsed = service.parseEntriesFromContent(html);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].inputDataFormat).toBe("ordered");
+    expect(parsed[0].stepsFormat).toBe("ordered");
+    expect(parsed[0].expectedResultFormat).toBe("ordered");
+
+    const regenerated = service.generateXhtmlTable(parsed);
+    const compact = regenerated.replace(/\s+/g, " ");
+
+    expect(compact).toContain("<td class=\"confluenceTd\"> <ol><li>Alpha</li><li>Beta</li></ol> </td>");
+    expect(compact).toContain("<td class=\"confluenceTd\"> <ol><li>Login portal MSS</li><li>Lakukan pengajuan LOA</li></ol> </td>");
+    expect(compact).toContain("<td class=\"confluenceTd\"> <ol><li>Data lolos validasi 1</li><li>Data pengajuan auto terapprove</li></ol> </td>");
+  });
+
   it("parses steps and expected result even when another cell contains a nested table", () => {
     const html = `
       <table class="wrapped confluenceTable">

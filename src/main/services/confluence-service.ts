@@ -55,20 +55,27 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+function detectListFormat(html: string): "plain" | "ordered" | "unordered" {
+  const normalized = decodeHtmlEntities(html);
+  if (/<ol\b/i.test(normalized)) return "ordered";
+  if (/<ul\b/i.test(normalized)) return "unordered";
+  return "plain";
+}
+
 function isScreenCaptureExpandTitle(title: string): boolean {
   return title === "Screen Capture" || title === "Click here to expand...";
 }
 
 function extractAttachmentRefs(block: string): Array<{ name: string; index: number; end: number }> {
-  const refs: Array<{ name: string; index: number; end: number }> = [];
   const patterns = [
     /<[^>]*\bri:filename=["']([^"']+)["'][^>]*>/gi,
-    /<img\b[^>]*\bdata-linked-resource-default-alias=["']([^"']+)["'][^>]*>/gi,
+    /<[^>]*\bdata-linked-resource-default-alias=["']([^"']+)["'][^>]*>/gi,
     /<[^>]*\bdata-file-src=["'][^"']*\/([^"'\/?]+)(?:\?[^"']*)?["'][^>]*>/gi,
     /<[^>]*\bdata-qa-attachment-name=["']([^"']+)["'][^>]*>/gi,
   ];
 
   for (const pattern of patterns) {
+    const refs: Array<{ name: string; index: number; end: number }> = [];
     let match;
     while ((match = pattern.exec(block)) !== null) {
       refs.push({
@@ -77,10 +84,13 @@ function extractAttachmentRefs(block: string): Array<{ name: string; index: numb
         end: match.index + match[0].length,
       });
     }
+    if (refs.length > 0) {
+      refs.sort((a, b) => a.index - b.index);
+      return refs;
+    }
   }
 
-  refs.sort((a, b) => a.index - b.index);
-  return refs.filter((ref, index) => !refs.slice(0, index).some((prev) => prev.name === ref.name && prev.index === ref.index));
+  return [];
 }
 
 function latestAttachmentGroupBefore(html: string, index: number): string {
@@ -678,8 +688,11 @@ export class ConfluenceService {
       scenario: "",
       category: "Positive",
       inputData: "",
+      inputDataFormat: "plain",
       steps: "",
+      stepsFormat: "plain",
       expectedResult: "",
+      expectedResultFormat: "plain",
       result: "PASS",
       images: [] as { id: string; name: string; data: string; order: number; note?: string; group?: string }[],
     };
@@ -755,16 +768,19 @@ export class ConfluenceService {
           break;
         case "Input Data":
           entry.inputData = this.extractTextLines(value);
+          entry.inputDataFormat = detectListFormat(value);
           debugTable?.mappedFields.push("inputData");
           recordRow({ label, status: "mapped", mappedField: "inputData", rawHtml: rowHtml, valuePreview });
           break;
         case "Steps":
           entry.steps = this.extractTextLines(value);
+          entry.stepsFormat = detectListFormat(value);
           debugTable?.mappedFields.push("steps");
           recordRow({ label, status: "mapped", mappedField: "steps", rawHtml: rowHtml, valuePreview });
           break;
         case "Expected Result":
           entry.expectedResult = this.extractTextLines(value);
+          entry.expectedResultFormat = detectListFormat(value);
           debugTable?.mappedFields.push("expectedResult");
           recordRow({ label, status: "mapped", mappedField: "expectedResult", rawHtml: rowHtml, valuePreview });
           break;

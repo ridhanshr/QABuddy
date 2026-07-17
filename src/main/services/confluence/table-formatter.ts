@@ -25,8 +25,48 @@ export function escapeHtmlText(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-export function toListItems(text: string): string {
+type ListFormat = "plain" | "ordered" | "unordered";
+
+function inferListFormat(text: string): ListFormat {
+  const lines = text.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (lines.length === 0) return "plain";
+
+  const orderedPattern = /^\d+[\.\)]\s+/;
+  if (lines.every((line) => orderedPattern.test(line))) {
+    return "ordered";
+  }
+
+  const unorderedPattern = /^[-*]\s+/;
+  if (lines.every((line) => unorderedPattern.test(line))) {
+    return "unordered";
+  }
+
+  return "plain";
+}
+
+function stripListPrefix(line: string, format: ListFormat): string {
+  if (format === "ordered") {
+    return line.replace(/^\d+[\.\)]\s+/, "");
+  }
+  if (format === "unordered") {
+    return line.replace(/^[-*]\s+/, "");
+  }
+  return line;
+}
+
+export function toListItems(text: string, format?: ListFormat): string {
   const lines = text.split("\n").map((s) => s.trim());
+  const listFormat = format || inferListFormat(text);
+  const cleanedLines = lines.map((line) => stripListPrefix(line, listFormat)).filter(Boolean);
+
+  if (listFormat === "ordered") {
+    return `<ol>${cleanedLines.map((line) => `<li>${escapeHtmlText(line)}</li>`).join("")}</ol>`;
+  }
+
+  if (listFormat === "unordered") {
+    return `<ul>${cleanedLines.map((line) => `<li>${escapeHtmlText(line)}</li>`).join("")}</ul>`;
+  }
+
   const parts: string[] = [];
   let bullets: string[] = [];
 
@@ -37,7 +77,7 @@ export function toListItems(text: string): string {
     }
   };
 
-  for (const line of lines) {
+  for (const line of cleanedLines) {
     if (!line) {
       flushBullets();
       continue;
@@ -146,9 +186,9 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
     const safeFunctionName = escapeHtmlText(entry.functionName);
     const safeCategory = escapeHtmlText(entry.category);
     const safeScenario = escapeHtmlText(entry.scenario);
-    const inputItems = toListItems(entry.inputData);
-    const stepsItems = toListItems(entry.steps);
-    const expectedItems = toListItems(entry.expectedResult);
+    const inputItems = toListItems(entry.inputData, entry.inputDataFormat);
+    const stepsItems = toListItems(entry.steps, entry.stepsFormat);
+    const expectedItems = toListItems(entry.expectedResult, entry.expectedResultFormat);
     const scenarioLinked = linkifyJiraKeys(safeScenario, jiraBaseUrl, jiraServerId);
 
     const orderedAttachments = normalizeAttachmentOrder(entry.images || []);

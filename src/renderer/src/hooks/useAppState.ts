@@ -1426,10 +1426,13 @@ export function useAppState() {
           issueKey,
           scenario: entry.scenario || "",
           steps: entry.steps || "",
+          stepsFormat: entry.stepsFormat || "plain",
           expectedResult: entry.expectedResult || "",
+          expectedResultFormat: entry.expectedResultFormat || "plain",
           functionName: entry.functionName || "",
           testCaseNo: entry.testCaseNo || "",
           inputData: entry.inputData || "",
+          inputDataFormat: entry.inputDataFormat || "plain",
           selected: issueKey.length > 0,
         };
       });
