@@ -9,6 +9,7 @@ mod runtime_smoke;
 
 use config::store::ConfigStore;
 use services::brd_service::BRDService;
+use services::db::DbPool;
 use services::defect_repository::DefectRepositoryService;
 use services::confluence::ConfluenceService;
 use services::jira::JiraService;
@@ -19,6 +20,7 @@ use services::qa::QaService;
 use services::rag::RagService;
 use services::update::UpdateService;
 use tokio::sync::Mutex;
+use std::sync::Arc;
 use tauri::Manager;
 
 /// Shared application state, managed by Tauri and injected into commands via
@@ -35,6 +37,9 @@ pub struct AppState {
     pub ocr_service: Mutex<OcrService>,
     pub defect_repository_service: Mutex<DefectRepositoryService>,
     pub brd_service: Mutex<BRDService>,
+    /// MySQL connection pool. Wrapped in Arc<Mutex<Option>> so it can be
+    /// populated asynchronously after startup without blocking the UI.
+    pub db_pool: Arc<Mutex<Option<DbPool>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -53,6 +58,27 @@ pub fn run() {
                 )?;
             }
 
+            // Load .env from the project root (dev) or app bundle dir (prod).
+            // Errors are non-fatal — env vars may already be set in the environment.
+            let _ = dotenvy::dotenv();
+
+            // db_pool starts as None; a background task fills it after the UI is ready.
+            // This avoids block_on inside setup() which causes a deadlock/blank screen.
+            let db_pool: Arc<Mutex<Option<DbPool>>> = Arc::new(Mutex::new(None));
+            let db_pool_clone = Arc::clone(&db_pool);
+            tauri::async_runtime::spawn(async move {
+                match services::db::create_pool().await {
+                    Ok(pool) => {
+                        let mut guard = db_pool_clone.lock().await;
+                        *guard = Some(pool);
+                        log::info!("Central DB pool ready.");
+                    }
+                    Err(e) => {
+                        log::warn!("Central DB unavailable: {e}");
+                    }
+                }
+            });
+
             let config_store = ConfigStore::new(app.handle())?;
             app.manage(AppState {
                 config: Mutex::new(config_store),
@@ -66,6 +92,7 @@ pub fn run() {
                 ocr_service: Mutex::new(OcrService::new()),
                 defect_repository_service: Mutex::new(DefectRepositoryService::new(app.handle())),
                 brd_service: Mutex::new(BRDService::new(app.handle())),
+                db_pool,
             });
 
             Ok(())
@@ -173,6 +200,17 @@ pub fn run() {
             commands::jira::get_per_uqa_reminder,
             commands::jira::update_per_uqa_reminder,
             commands::cancel::cancel_request,
+            commands::db::check_db_connection,
+            commands::db::save_uqa_test_plan,
+            commands::db::get_db_test_plans,
+            commands::db::check_test_plans_in_db,
+            commands::db::save_test_executions,
+            commands::db::check_test_executions_in_db,
+            commands::db::save_test_repositories,
+            commands::db::get_test_repositories_in_db,
+            commands::db::save_uqa_projects,
+            commands::db::check_uqa_projects_in_db,
+            commands::jira::fetch_uqa_with_dates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

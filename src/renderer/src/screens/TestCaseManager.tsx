@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
-import type { JiraProject, BRDTestCase, BRDGenerationResult, SemanticSearchResult, XrayFolder } from "@shared/types";
+import type { BRDTestCase, BRDGenerationResult, SemanticSearchResult, XrayFolder } from "@shared/types";
 
 type Tab = "search" | "creation";
 
@@ -224,7 +224,7 @@ function TestCaseCard({
 const CACHE_TTL = 15_000;
 
 export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
-  const { jiraProjects } = useApp();
+  const { testRepositoryProjects } = useApp();
 
   // ── Tab State ──
   const [activeTab, setActiveTab] = useState<Tab>(initialTab || "search");
@@ -421,7 +421,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
               <SearchableSelect
                 value={searchProject}
                 onChange={setSearchProject}
-                options={jiraProjects.map((p: JiraProject) => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
+                options={testRepositoryProjects.map((p) => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
                 placeholder="Select project..."
               />
             </div>
@@ -618,7 +618,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                 <SearchableSelect
                   value={generationProject}
                   onChange={handleGenerationProjectChange}
-                  options={jiraProjects.map((p: JiraProject) => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
+                  options={testRepositoryProjects.map((p) => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
                   placeholder="Select target project..."
                 />
               </div>

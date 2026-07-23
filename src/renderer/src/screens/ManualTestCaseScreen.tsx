@@ -30,7 +30,7 @@ export default function ManualTestCaseScreen() {
     organizeXrayFolders,
     organizeFolderLoading,
     submitOrganize,
-    jiraProjects,
+    testRepositoryProjects,
     // Update from Confluence
     confImportMode,
     setConfImportMode,
@@ -72,6 +72,7 @@ export default function ManualTestCaseScreen() {
     setManualProjectKey,
     manualXrayFolders,
     manualFolderLoading,
+    refreshManualXrayFolders,
     manualDuplicateResults,
     manualPendingDuplicates,
     setManualPendingDuplicates,
@@ -180,11 +181,10 @@ export default function ManualTestCaseScreen() {
         <div style={{ display: 'flex', gap: 24, marginTop: 24, borderBottom: '1px solid var(--outline-variant)' }}>
           {(
             [
-              { key: "creator", label: "Creation", icon: "add_circle" },
               { key: "search", label: "Test Case Search", icon: "search" },
-              { key: "organizer", label: "Xray Organizer", icon: "account_tree" },
-              { key: "update-from-conf", label: "Update from Confluence", icon: "cloud_sync" },
+              { key: "creator", label: "Creation", icon: "add_circle" },
               { key: "test-executions", label: "Test Executions", icon: "fact_check" },
+              { key: "organizer", label: "Xray Organizer", icon: "account_tree" },
             ] as const
           ).map(({ key, label, icon }) => {
             const isCreationGroup = key === "creator" && (manualTab === "creator" || manualTab === "generate-with-ai");
@@ -308,7 +308,7 @@ export default function ManualTestCaseScreen() {
             </div>
             <div style={{ flex: 1, minWidth: 240, maxWidth: 400 }}>
               <SearchableSelect
-                options={jiraProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
+                options={testRepositoryProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
                 value={manualProjectKey}
                 onChange={setManualProjectKey}
                 placeholder="-- Select Jira Project --"
@@ -328,7 +328,7 @@ export default function ManualTestCaseScreen() {
             )}
             {!manualProjectKey && (
               <span style={{ fontSize: 12, color: 'var(--on-surface-variant)', flexShrink: 0 }}>
-                {jiraProjects.length === 0 ? 'Memuat project...' : 'Pilih project untuk melanjutkan'}
+                {testRepositoryProjects.length === 0 ? 'Memuat project dari DB...' : 'Pilih project untuk melanjutkan'}
               </span>
             )}
           </div>
@@ -379,7 +379,18 @@ export default function ManualTestCaseScreen() {
                       />
                     </div>
                     <div className="field-group">
-                      <label>Xray Folder Path</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <label style={{ margin: 0 }}>Xray Folder Path</label>
+                        <button
+                          type="button"
+                          title="Refresh daftar folder dari Jira"
+                          onClick={refreshManualXrayFolders}
+                          disabled={manualFolderLoading || !manualProjectKey}
+                          style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--on-surface-variant)', opacity: (manualFolderLoading || !manualProjectKey) ? 0.4 : 1 }}
+                        >
+                          <span className="material-symbols" style={{ fontSize: 16 }}>refresh</span>
+                        </button>
+                      </div>
                       <SearchableSelect
                         options={manualFlattenFolderOptions}
                         value={item.xrayFolder}
@@ -482,7 +493,7 @@ export default function ManualTestCaseScreen() {
               <div className="field-group">
                 <label>Project</label>
                 <SearchableSelect
-                  options={jiraProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
+                  options={testRepositoryProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
                   value={organizeProjectKey}
                   onChange={setOrganizeProjectKey}
                   placeholder="-- Select Project --"
@@ -528,343 +539,6 @@ export default function ManualTestCaseScreen() {
                   Fitur ini berguna untuk merapikan Test Case yang sudah terlanjur dibuat tapi belum masuk ke struktur folder Xray. 
                   Pastikan tiket yang dimasukkan adalah tipe <strong>Test</strong> agar kompatibel dengan folder Xray.
                 </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {manualTab === "update-from-conf" && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-          {/* Mode selector */}
-          <div className="card" style={{ padding: 24 }}>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-              <span className="material-symbols" style={{ fontSize: 24, color: 'var(--primary)' }}>settings</span>
-              <div>
-                <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Pilih Mode</h4>
-                <p style={{ fontSize: 13, color: 'var(--on-surface-variant)' }}>
-                  {confImportMode === "auto" 
-                    ? "Auto: Ekstrak Issue Key otomatis dari field Scenario di Confluence"
-                    : confImportMode === "jql-match"
-                    ? "JQL Match: Cocokkan dengan hasil query JQL"
-                    : "Xray Folder: Cocokkan dengan issue di folder Xray terpilih"}
-                </p>
-              </div>
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                <button
-                  className={confImportMode === "auto" ? "primary-button" : "secondary-button"}
-                  onClick={() => setConfImportMode("auto")}
-                  style={{ padding: '6px 16px', fontSize: 13, borderRadius: 20 }}
-                >
-                  Auto
-                </button>
-                <button
-                  className={confImportMode === "jql-match" ? "primary-button" : "secondary-button"}
-                  onClick={() => setConfImportMode("jql-match")}
-                  style={{ padding: '6px 16px', fontSize: 13, borderRadius: 20 }}
-                >
-                  JQL Match
-                </button>
-                <button
-                  className={confImportMode === "xray-folder" ? "primary-button" : "secondary-button"}
-                  onClick={() => setConfImportMode("xray-folder")}
-                  style={{ padding: '6px 16px', fontSize: 13, borderRadius: 20 }}
-                >
-                  Xray Folder
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Confluence URL input */}
-          <div className="card" style={{ padding: 24 }}>
-            <div className="field-group">
-              <label>Confluence Page URL</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  placeholder="https://confluence.domain.com/pages/123456"
-                  value={confImportUrl}
-                  onChange={(e) => setConfImportUrl(e.target.value)}
-                  style={{ flex: 1 }}
-                />
-                <button
-                  className="primary-button"
-                  onClick={fetchConfImportEntries}
-                  disabled={confImportLoading}
-                  style={{ padding: '8px 20px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}
-                >
-                  <span className="material-symbols" style={{ fontSize: 18 }}>{confImportLoading ? 'progress_activity' : 'cloud_download'}</span>
-                  {confImportLoading ? 'Loading...' : 'Fetch Entries'}
-                </button>
-              </div>
-            </div>
-
-            {/* JQL input (only in JQL Match mode) */}
-            {confImportMode === "jql-match" && (
-              <div className="field-group" style={{ marginTop: 16 }}>
-                <label>JQL Query</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    placeholder='e.g. project = QA AND issuetype = Test AND description IS EMPTY'
-                    value={confImportJql}
-                    onChange={(e) => setConfImportJql(e.target.value)}
-                    style={{ flex: 1, fontFamily: 'monospace', fontSize: 13 }}
-                  />
-                  <button
-                    className="secondary-button"
-                    onClick={searchJiraForImport}
-                    disabled={confImportLoading || confImportEntries.length === 0}
-                    style={{ padding: '8px 20px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}
-                  >
-                    <span className="material-symbols" style={{ fontSize: 18 }}>search</span>
-                    Match
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => {
-                      setConfImportJqlMatched(false);
-                      setConfImportJqlMatchedIds(new Set());
-                      setConfImportEntries(prev =>
-                        prev.map(e => ({ ...e, selected: !!e.issueKey }))
-                      );
-                      setConfImportJql("");
-                    }}
-                    disabled={!confImportJqlMatched}
-                    style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}
-                  >
-                    <span className="material-symbols" style={{ fontSize: 18 }}>clear</span>
-                    Clear
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Xray Folder selector (only in Xray Folder mode) */}
-            {confImportMode === "xray-folder" && (
-              <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div className="field-group">
-                  <label>Project</label>
-                  <SearchableSelect
-                    options={jiraProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
-                    value={confImportProjectKey}
-                    onChange={setConfImportProjectKey}
-                    placeholder="-- Select Project --"
-                  />
-                </div>
-                <div className="field-group">
-                  <label>Xray Folder</label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <div style={{ flex: 1 }}>
-                      <SearchableSelect
-                        options={confImportFlattenFolderOptions}
-                        value={confImportSelectedFolder}
-                        onChange={setConfImportSelectedFolder}
-                        placeholder={confImportFolderLoading ? 'Loading folders...' : !confImportProjectKey ? '-- Select Project First --' : '-- Select Folder --'}
-                        disabled={confImportFolderLoading || !confImportProjectKey}
-                      />
-                    </div>
-                    <button
-                      className="secondary-button"
-                      onClick={searchJiraForImport}
-                      disabled={confImportLoading || confImportEntries.length === 0 || !confImportProjectKey || !confImportSelectedFolder}
-                      style={{ padding: '8px 20px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}
-                    >
-                      <span className="material-symbols" style={{ fontSize: 18 }}>folder_match</span>
-                      Match from Folder
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={() => {
-                        setConfImportJqlMatched(false);
-                        setConfImportJqlMatchedIds(new Set());
-                        setConfImportEntries(prev =>
-                          prev.map(e => ({ ...e, selected: !!e.issueKey }))
-                        );
-                      }}
-                      disabled={!confImportJqlMatched}
-                      style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}
-                    >
-                      <span className="material-symbols" style={{ fontSize: 18 }}>clear</span>
-                      Clear
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Entries table */}
-          {confImportEntries.length > 0 && (
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--outline-variant)' }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>
-                  {confImportJqlMatched
-                    ? `${confImportEntries.filter(e => confImportJqlMatchedIds.has(e.id)).length} matched of ${confImportEntries.length} entries`
-                    : `${confImportEntries.length} entries found`
-                  }
-                </span>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    className="secondary-button"
-                    onClick={() => toggleAllConfImportEntries(true)}
-                    style={{ padding: '4px 12px', fontSize: 12, borderRadius: 6 }}
-                  >
-                    Select All
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => toggleAllConfImportEntries(false)}
-                    style={{ padding: '4px 12px', fontSize: 12, borderRadius: 6 }}
-                  >
-                    Deselect All
-                  </button>
-                  <button
-                    className="primary-button"
-                    onClick={submitUpdateFromConfluence}
-                    disabled={confImportLoading || confImportEntries.every(e => !e.selected || !e.issueKey)}
-                    style={{ padding: '6px 20px', fontSize: 13, borderRadius: 8 }}
-                  >
-                    <span className="material-symbols" style={{ fontSize: 18 }}>{confImportLoading ? 'progress_activity' : 'sync'}</span>
-                    {confImportLoading ? 'Updating...' : 'Update Selected'}
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ background: 'var(--surface-container)', borderBottom: '1px solid var(--outline-variant)' }}>
-                      <th style={{ padding: '10px 16px', textAlign: 'left', width: 40 }}>
-                        <span className="material-symbols" style={{ fontSize: 16, color: 'var(--on-surface-variant)' }}>check</span>
-                      </th>
-                      <th style={{ padding: '10px 16px', textAlign: 'left' }}>Issue Key</th>
-                      <th style={{ padding: '10px 16px', textAlign: 'left' }}>Scenario</th>
-                      <th style={{ padding: '10px 16px', textAlign: 'left' }}>Steps</th>
-                      <th style={{ padding: '10px 16px', textAlign: 'left' }}>Expected Result</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(confImportJqlMatched
-                      ? confImportEntries.filter(e => confImportJqlMatchedIds.has(e.id))
-                      : confImportEntries
-                    ).map((entry) => (
-                      <tr 
-                        key={entry.id}
-                        style={{ 
-                          borderBottom: '1px solid var(--outline-variant)',
-                          background: entry.selected ? 'rgba(var(--primary-rgb), 0.03)' : 'transparent',
-                          opacity: entry.issueKey ? 1 : 0.5,
-                        }}
-                      >
-                        <td style={{ padding: '8px 16px' }}>
-                          <input 
-                            type="checkbox"
-                            checked={entry.selected}
-                            disabled={!entry.issueKey}
-                            onChange={() => toggleConfImportEntry(entry.id)}
-                          />
-                        </td>
-                        <td style={{ padding: '8px 16px', fontWeight: 600 }}>
-                          {entry.issueKey ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                              {confImportJqlMatched && confImportJqlMatchedIds.has(entry.id) && (
-                                <span className="material-symbols" style={{ fontSize: 14, color: 'var(--success)' }}>check_circle</span>
-                              )}
-                              <input
-                                type="text"
-                                value={entry.issueKey}
-                                onChange={(e) => updateConfImportEntryKey(entry.id, e.target.value)}
-                                onBlur={() => fetchAndSetStepsForEntry(entry.id, entry.issueKey)}
-                                  style={{
-                                    width: 130,
-                                    padding: '2px 6px',
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    fontFamily: 'monospace',
-                                    border: '1px solid var(--outline-variant)',
-                                    borderRadius: 4,
-                                    background: 'transparent',
-                                    color: 'inherit',
-                                  }}
-                                />
-                                <button
-                                  className="icon-button"
-                                  onClick={() => fetchAndSetStepsForEntry(entry.id, entry.issueKey)}
-                                  disabled={confImportFetchingSteps.has(entry.id)}
-                                  title="Fetch steps dari Xray"
-                                  style={{ padding: 2, fontSize: 16, lineHeight: 1, opacity: confImportFetchingSteps.has(entry.id) ? 0.6 : 0.7 }}
-                                >
-                                  <span className={`material-symbols ${confImportFetchingSteps.has(entry.id) ? 'spin' : ''}`} style={{ fontSize: 16 }}>
-                                    {confImportFetchingSteps.has(entry.id) ? 'progress_activity' : 'download'}
-                                  </span>
-                                </button>
-                              {confImportJqlMatched && !confImportJqlMatchedIds.has(entry.id) && (
-                                <span className="material-symbols" style={{ fontSize: 14, color: 'var(--warning)' }}>warning</span>
-                              )}
-                            </div>
-                          ) : (
-                            <span style={{ color: 'var(--error)', fontSize: 12 }}>No key</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '8px 16px', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {entry.scenario}
-                        </td>
-                        <td style={{ padding: '8px 16px', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--on-surface-variant)' }}>
-                          {entry.steps?.split('\n').slice(0, 3).join(' | ') || '-'}
-                        </td>
-                        <td style={{ padding: '8px 16px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--on-surface-variant)' }}>
-                          {entry.expectedResult?.split('\n')[0] || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Result summary */}
-          {confImportResult && (
-            <div className="card" style={{ padding: 20, borderLeft: `4px solid ${confImportResult.failed.length === 0 ? 'var(--success)' : confImportResult.success.length > 0 ? 'var(--warning)' : 'var(--error)'}` }}>
-              <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Update Result</h4>
-              <div style={{ display: 'flex', gap: 24 }}>
-                <div>
-                  <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--success)' }}>{confImportResult.success.length}</span>
-                  <span style={{ fontSize: 13, color: 'var(--on-surface-variant)', marginLeft: 6 }}>Success</span>
-                </div>
-                {confImportResult.failed.length > 0 && (
-                  <div>
-                    <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--error)' }}>{confImportResult.failed.length}</span>
-                    <span style={{ fontSize: 13, color: 'var(--on-surface-variant)', marginLeft: 6 }}>Failed</span>
-                  </div>
-                )}
-              </div>
-              {confImportResult.success.length > 0 && (
-                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--on-surface-variant)' }}>
-                  Keys: {confImportResult.success.map(s => s.key).join(', ')}
-                </div>
-              )}
-              {confImportResult.failed.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  {confImportResult.failed.map((f, i) => (
-                    <div key={i} style={{ fontSize: 12, color: 'var(--error)', marginTop: 4 }}>{f.key}: {f.error}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="card" style={{ padding: 24, background: 'rgba(var(--primary-rgb), 0.05)', border: '1px dashed var(--primary)' }}>
-            <div style={{ display: 'flex', gap: 16 }}>
-              <span className="material-symbols" style={{ color: 'var(--primary)' }}>info</span>
-              <div>
-                <h4 style={{ fontSize: 14, fontWeight: 600, color: 'var(--primary)', marginBottom: 8 }}>Cara Penggunaan</h4>
-                <div style={{ fontSize: 13, color: 'var(--on-surface-variant)', lineHeight: 1.6 }}>
-                  <p><strong>Mode Auto:</strong> Cukup masukkan URL Confluence. System akan auto-extract Issue Key dari field Scenario dan siapkan entries untuk diupdate.</p>
-                  <p><strong>Mode JQL Match:</strong> Masukkan URL Confluence + JQL query. System akan parse entries, lalu cocokkan <strong>scenario</strong> dengan <strong>summary</strong> hasil JQL, perbarui Issue Key, dan tampilkan hanya entry yang cocok. Kosongkan JQL untuk melihat semua entry.</p>
-                  <p><strong>Mode Xray Folder:</strong> Pilih Project + Folder Xray. System akan fetch semua issue di folder tersebut, lalu cocokkan dengan scenario Confluence (otomatis strip prefix project). Tidak perlu JQL atau edit manual.</p>
-                  <p>Pastikan tabel Confluence memiliki format: <strong>No. Test Case</strong>, <strong>Scenario</strong> (mengandung link Jira issue), <strong>Steps</strong>, <strong>Expected Result</strong>.</p>
-                </div>
               </div>
             </div>
           </div>

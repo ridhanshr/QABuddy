@@ -4,6 +4,7 @@ pub mod config;
 pub mod confluence;
 pub mod cancel;
 pub mod dashboard;
+pub mod db;
 pub mod defect;
 pub mod files;
 pub mod jira;

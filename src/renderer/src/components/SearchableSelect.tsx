@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import ReactDOM from "react-dom";
 
 export interface SearchableSelectProps {
@@ -20,6 +20,7 @@ export default function SearchableSelect({
   const [search, setSearch] = useState("");
   const triggerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
   const filtered = useMemo(
@@ -47,7 +48,13 @@ export default function SearchableSelect({
   };
 
   useEffect(() => {
-    if (open) recalcPosition();
+    if (open) {
+      recalcPosition();
+      // Focus search input without triggering scroll
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus({ preventScroll: true });
+      });
+    }
   }, [open]);
 
   useEffect(() => {
@@ -94,11 +101,11 @@ export default function SearchableSelect({
       }}
     >
       <input
+        ref={searchInputRef}
         type="text"
         placeholder="Search..."
         value={search}
         onChange={e => setSearch(e.target.value)}
-        autoFocus
         onClick={e => e.stopPropagation()}
         style={{
           padding: "8px 12px",
@@ -158,7 +165,7 @@ export default function SearchableSelect({
   return (
     <div ref={triggerRef} style={{ position: "relative", width: "100%" }}>
       <div
-        onClick={() => { if (!disabled) { setOpen(o => !o); setSearch(""); } }}
+        onClick={(e) => { e.preventDefault(); if (!disabled) { setOpen(o => !o); setSearch(""); } }}
         style={{
           display: "flex",
           alignItems: "center",

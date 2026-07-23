@@ -72,6 +72,13 @@ import type {
   XrayExecutionDetails,
   XrayExecutionSnapshot,
   XrayFolder,
+  DbTestPlan,
+  SaveTestPlanInput,
+  SaveTestExecutionInput,
+  SaveTestRepositoryInput,
+  DbTestRepository,
+  UqaWithDates,
+  SaveUqaProjectInput,
 } from "@shared/types";
 
 /** Subscribe to a Tauri event, returning an unsubscribe function. */
@@ -339,6 +346,28 @@ const api = {
   // ── OCR ──────────────────────────────────────────────────────────────
   ocrExtractFromFile: (filePath: string) =>
     cmd<OcrResult | null>("ocr_extract_from_file", { filePath }),
+
+  // ── Central Database ──────────────────────────────────────────────────
+  checkDbConnection: () => cmd<string>("check_db_connection"),
+  saveUqaTestPlan: (input: SaveTestPlanInput) =>
+    cmd<void>("save_uqa_test_plan", { input }),
+  getDbTestPlans: () => cmd<DbTestPlan[]>("get_db_test_plans"),
+  checkTestPlansInDb: (tpKeys: string[]) =>
+    cmd<string[]>("check_test_plans_in_db", { tpKeys }),
+  saveTestExecutions: (executions: SaveTestExecutionInput[]) =>
+    cmd<void>("save_test_executions", { executions }),
+  checkTestExecutionsInDb: (teKeys: string[]) =>
+    cmd<string[]>("check_test_executions_in_db", { teKeys }),
+  saveTestRepositories: (repositories: SaveTestRepositoryInput[]) =>
+    cmd<void>("save_test_repositories", { repositories }),
+  getTestRepositoriesInDb: () =>
+    cmd<DbTestRepository[]>("get_test_repositories_in_db"),
+  fetchUqaWithDates: () =>
+    cmd<UqaWithDates[]>("fetch_uqa_with_dates"),
+  saveUqaProjects: (projects: SaveUqaProjectInput[]) =>
+    cmd<void>("save_uqa_projects", { projects }),
+  checkUqaProjectsInDb: (uqaKeys: string[]) =>
+    cmd<string[]>("check_uqa_projects_in_db", { uqaKeys }),
 };
 
 export type TauriApi = typeof api;

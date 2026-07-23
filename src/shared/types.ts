@@ -563,6 +563,87 @@ export interface DesktopApi {
   semanticSearchTestCases: (query: string, projectKey: string) => Promise<SemanticSearchResult[]>;
   // OCR
   ocrExtractFromFile: (filePath: string) => Promise<OcrResult | null>;
+
+  // ── Central Database ──────────────────────────────────────────────────
+  checkDbConnection: () => Promise<string>;
+  saveUqaTestPlan: (input: SaveTestPlanInput) => Promise<void>;
+  getDbTestPlans: () => Promise<DbTestPlan[]>;
+  checkTestPlansInDb: (tpKeys: string[]) => Promise<string[]>;
+  saveTestExecutions: (executions: SaveTestExecutionInput[]) => Promise<void>;
+  checkTestExecutionsInDb: (teKeys: string[]) => Promise<string[]>;
+  saveTestRepositories: (repositories: SaveTestRepositoryInput[]) => Promise<void>;
+  getTestRepositoriesInDb: () => Promise<DbTestRepository[]>;
+  fetchUqaWithDates: () => Promise<UqaWithDates[]>;
+  saveUqaProjects: (projects: SaveUqaProjectInput[]) => Promise<void>;
+  checkUqaProjectsInDb: (uqaKeys: string[]) => Promise<string[]>;
+}
+
+export interface UqaWithDates {
+  uqaKey: string;
+  summary: string;
+  status: string;
+  assignee: string;
+  productTester: string;
+  startSit: string | null;
+  finishSit: string | null;
+  startUat: string | null;
+}
+
+export interface SaveUqaProjectInput {
+  uqa_key: string;
+  project_name: string;
+  assignee?: string;
+  product_tester?: string;
+  status?: string;
+  start_sit?: string;
+  finish_sit?: string;
+  start_uat?: string;
+}
+
+export interface DbUqaProject {
+  uqa_key: string;
+  project_name: string;
+  assignee: string | null;
+  product_tester: string | null;
+  status: string | null;
+  start_sit: string | null;
+  finish_sit: string | null;
+  start_uat: string | null;
+  last_sync: string | null;
+}
+
+export interface SaveTestRepositoryInput {
+  project_key: string;
+  project_name: string;
+}
+
+export interface DbTestRepository {
+  project_key: string;
+  project_name: string;
+  last_sync: string | null;
+}
+
+export interface SaveTestExecutionInput {
+  te_jira_key: string;
+  title: string;
+  tp_jira_key: string;
+  assignee?: string;
+  execution_status?: string;
+}
+
+export interface DbTestPlan {
+  tp_jira_key: string;
+  title: string;
+  uqa_key: string;
+  assignee: string | null;
+  last_sync: string | null;
+}
+
+export interface SaveTestPlanInput {
+  uqa_key: string;
+  tp_jira_key: string;
+  title?: string;
+  assignee?: string;
 }
 
 export interface JiraProject {

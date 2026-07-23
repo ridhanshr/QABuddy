@@ -284,6 +284,9 @@ export function useAppState() {
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [showUpdateProgress, setShowUpdateProgress] = useState(false);
 
+  // Test Repository projects fetched from DB (used for project dropdowns in Test Case Management)
+  const [testRepositoryProjects, setTestRepositoryProjects] = useState<{ key: string; name: string }[]>([]);
+
   // Advanced Jira Organizer state
   const [jiraProjects, setJiraProjects] = useState<JiraProject[]>([]);
   const [jiraBoards, setJiraBoards] = useState<JiraBoard[]>([]);
@@ -321,8 +324,8 @@ export function useAppState() {
   })();
   const jiraMetadataCache = useRef(_jiraMetaInit);
 
-  // sessionStorage cache for Xray folders (per project key), TTL 30 min
-  const XRAY_FOLDER_CACHE_TTL = 30 * 60 * 1000;
+  // sessionStorage cache for Xray folders (per project key), TTL 5 min
+  const XRAY_FOLDER_CACHE_TTL = 5 * 60 * 1000;
   const xrayFolderCacheKey = (projectKey: string) => `qa-buddy-xray-folders-${projectKey}`;
   const readXrayFolderCache = (projectKey: string): XrayFolder[] | null => {
     try {
@@ -340,6 +343,9 @@ export function useAppState() {
     try {
       sessionStorage.setItem(xrayFolderCacheKey(projectKey), JSON.stringify({ data: folders, timestamp: Date.now() }));
     } catch { /* quota — silently ignore */ }
+  };
+  const clearXrayFolderCache = (projectKey: string) => {
+    try { sessionStorage.removeItem(xrayFolderCacheKey(projectKey)); } catch { /* ignore */ }
   };
 
   const [jqlProject, setJqlProject] = useState<string[]>([]);
@@ -384,10 +390,11 @@ export function useAppState() {
   const [ragSyncSpace, setRagSyncSpace] = useState("");
   const [ragSyncProject, setRagSyncProject] = useState("");
 
-  const [confTab, setConfTab] = useState<"form" | "settings">("form");
+  const [confTab, setConfTab] = useState<"form" | "settings" | "update-from-conf">("form");
   const [confLoading, setConfLoading] = useState(false);
   const [confProgressHidden, setConfProgressHidden] = useState(false);
   const [confPagePreview, setConfPagePreview] = useState<{ title: string; content: string; version: number } | null>(null);
+  const confImageWidth = 1200;
   const [confPageLoading, setConfPageLoading] = useState(false);
   const [confSyncPreview, setConfSyncPreview] = useState<ConfluencePreviewResult | null>(null);
   const [confPreviewLoading, setConfPreviewLoading] = useState(false);
@@ -655,6 +662,14 @@ export function useAppState() {
 
     fetchAndCacheJiraMetadata();
   }, [activeView, config.jira.baseUrl, config.jira.token]);
+
+  // Fetch test repository projects from DB for views that use the project dropdown
+  useEffect(() => {
+    if (activeView !== "manual-test-case" && activeView !== "documentation-sync") return;
+    window.qaBuddy.getTestRepositoriesInDb()
+      .then((repos) => setTestRepositoryProjects(repos.map((r) => ({ key: r.project_key, name: r.project_name }))))
+      .catch(() => {});
+  }, [activeView]);
 
   // Load boards when project changes
   useEffect(() => {
@@ -1087,6 +1102,16 @@ export function useAppState() {
       .catch(() => setManualXrayFolders([]))
       .finally(() => setManualFolderLoading(false));
   }, [manualProjectKey]);
+
+  const refreshManualXrayFolders = () => {
+    if (!manualProjectKey) return;
+    clearXrayFolderCache(manualProjectKey);
+    setManualFolderLoading(true);
+    window.qaBuddy.getXrayFolders(manualProjectKey)
+      .then(f => { writeXrayFolderCache(manualProjectKey, f); setManualXrayFolders(f); })
+      .catch(() => setManualXrayFolders([]))
+      .finally(() => setManualFolderLoading(false));
+  };
 
   const connectionPills = useMemo(
     () => [
@@ -1904,6 +1929,23 @@ export function useAppState() {
     }
   }
 
+  async function resizeImageDataUri(dataUri: string, maxWidth: number): Promise<string> {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        if (img.width <= maxWidth) { resolve(dataUri); return; }
+        const ratio  = maxWidth / img.width;
+        const canvas = document.createElement("canvas");
+        canvas.width  = maxWidth;
+        canvas.height = Math.round(img.height * ratio);
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      img.onerror = () => resolve(dataUri);
+      img.src = dataUri;
+    });
+  }
+
   async function syncConfluence() {
     const pageId = config.confluence.targetPageId;
     if (!pageId.trim()) {
@@ -1924,8 +1966,23 @@ export function useAppState() {
     setConfLoading(true);
     setConfProgressHidden(false);
     try {
+      // Resize images to confImageWidth before uploading
+      const resizedEntries = await Promise.all(
+        dirtyEntries.map(async (entry) => ({
+          ...entry,
+          images: await Promise.all(
+            (entry.images ?? []).map(async (img: any) => ({
+              ...img,
+              data: img.data?.startsWith("data:image/")
+                ? await resizeImageDataUri(img.data, confImageWidth)
+                : img.data,
+            }))
+          ),
+        }))
+      );
+
       const result = await window.qaBuddy.syncToConfluence(pageId, {
-        entries: dirtyEntries,
+        entries: resizedEntries,
         deletedTableIndices: deletedConfTableIndices,
       });
       const refreshed = await window.qaBuddy.parseConfluenceEntries(pageId);
@@ -2082,6 +2139,20 @@ export function useAppState() {
       ...current,
       createEmptyConfEntry(true, section || "")
     ]);
+  };
+
+  const clearConfEntries = async () => {
+    setConfEntries([createEmptyConfEntry()]);
+    const clearedConfig = {
+      ...config,
+      confluence: { ...config.confluence, targetPageId: "" },
+    };
+    setConfig(clearedConfig);
+    try {
+      await window.qaBuddy.saveConfig(clearedConfig);
+    } catch {
+      // non-critical — entries are already cleared in UI
+    }
   };
 
   const updateConfEntry = (id: string, field: string, value: any) => {
@@ -2583,6 +2654,7 @@ export function useAppState() {
     setManualProjectKey,
     manualXrayFolders,
     manualFolderLoading,
+    refreshManualXrayFolders,
     manualDuplicateResults,
     manualPendingDuplicates,
     setManualPendingDuplicates,
@@ -2615,6 +2687,7 @@ export function useAppState() {
     confImportFolderLoading,
     confImportSelectedFolder,
     setConfImportSelectedFolder,
+    testRepositoryProjects,
     jiraProjects,
     setJiraProjects,
     jiraBoards,
@@ -2735,6 +2808,7 @@ export function useAppState() {
     syncConfluence,
     handleConfFileUpload,
     addConfEntry,
+    clearConfEntries,
     updateConfEntry,
     removeConfEntry,
     fetchConfSteps,

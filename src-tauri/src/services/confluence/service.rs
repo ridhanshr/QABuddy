@@ -130,8 +130,170 @@ impl ConfluenceService {
         out
     }
 
+    /// Build the HTML for a single Result cell (coloured PASS/FAILED).
+    fn result_cell_html(result: &str) -> String {
+        match result.trim().to_uppercase().as_str() {
+            "PASS" => format!(
+                r#"<strong><span style="color: rgb(0,128,0);">{}</span></strong>"#,
+                escape_html(result)
+            ),
+            "FAILED" | "FAIL" => format!(
+                r#"<strong><span style="color: rgb(255,0,0);">{}</span></strong>"#,
+                escape_html(result)
+            ),
+            _ => escape_html(result),
+        }
+    }
+
+    /// Build the Screen Capture cell HTML: one Expand macro containing all images.
+    fn screen_capture_cell_html(
+        entry_id: &str,
+        images: &[serde_json::Value],
+        uploaded: &std::collections::HashMap<(String, String), String>,
+    ) -> String {
+        let mut sorted = images.to_vec();
+        sorted.sort_by_key(|img| img["order"].as_u64().unwrap_or(0));
+
+        let mut inner = String::new();
+        for img in &sorted {
+            let orig_name = img["name"].as_str().unwrap_or("").to_string();
+            let key = (entry_id.to_string(), orig_name);
+            if let Some(uploaded_name) = uploaded.get(&key) {
+                inner.push_str(&format!(
+                    r#"<p><ac:image ac:width="1200"><ri:attachment ri:filename="{}" /></ac:image></p>"#,
+                    escape_html(uploaded_name)
+                ));
+            }
+        }
+
+        if inner.is_empty() {
+            return String::new();
+        }
+
+        // All images in one Expand macro
+        format!(
+            r#"<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">Click here to expand...</ac:parameter><ac:rich-text-body>{}</ac:rich-text-body></ac:structured-macro>"#,
+            inner
+        )
+    }
+
+    /// Update existing vertical-card tables in `content` in-place.
+    ///
+    /// Strategy: scan for every `<table>…</table>` block; if it is a vertical
+    /// table whose "No. Test Case" row value matches one of the payload entries,
+    /// replace the value cells for all known fields with the new data.
+    /// Returns the mutated content and a set of entry IDs that were matched.
+    fn patch_existing_tables(
+        content: &str,
+        entries: &[serde_json::Value],
+        uploaded: &std::collections::HashMap<(String, String), String>,
+    ) -> (String, std::collections::HashSet<String>) {
+        // Build lookup: normalised testCaseNo → entry
+        let mut by_tc: std::collections::HashMap<String, &serde_json::Value> =
+            std::collections::HashMap::new();
+        for entry in entries {
+            let tc = entry["testCaseNo"].as_str().unwrap_or("").trim().to_lowercase();
+            if !tc.is_empty() {
+                by_tc.insert(tc, entry);
+            }
+        }
+
+        let table_re = regex::Regex::new(r"(?is)<table\b[^>]*>[\s\S]*?</table>").unwrap();
+        let mut matched_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut result = content.to_string();
+        let mut offset: isize = 0;
+
+        for m in table_re.find_iter(content) {
+            let original_table = &content[m.start()..m.end()];
+
+            // Only vertical tables (two-column card format)
+            if !is_vertical_table(original_table) {
+                continue;
+            }
+
+            // Extract the testCaseNo value from this table to find matching entry
+            let tc_val = extract_vertical_cell(original_table, "no. test case")
+                .or_else(|| extract_vertical_cell(original_table, "no test case"))
+                .or_else(|| extract_vertical_cell(original_table, "no. tc"))
+                .unwrap_or_default();
+            let tc_key = tc_val.trim().to_lowercase();
+            let entry = match by_tc.get(&tc_key) {
+                Some(e) => e,
+                None => continue,
+            };
+
+            let entry_id = entry["id"].as_str().unwrap_or("").to_string();
+            let images = entry["images"].as_array().cloned().unwrap_or_default();
+
+            // Build field replacements — labels must exactly match the trimmed
+            // lowercased first-cell text in the template tables.
+            // "expected result" must come before "result" even though we use
+            // exact match now, keeping the order explicit for readability.
+            let replacements: Vec<(&str, String)> = vec![
+                ("function",         escape_html(entry["functionName"].as_str().unwrap_or(""))),
+                ("scenario",         escape_html(entry["scenario"].as_str().unwrap_or(""))),
+                ("input data",       escape_html(entry["inputData"].as_str().unwrap_or(""))),
+                ("steps",            text_to_list_html(entry["steps"].as_str().unwrap_or(""))),
+                ("expected result",  text_to_list_html(entry["expectedResult"].as_str().unwrap_or(""))),
+                ("result",           Self::result_cell_html(entry["result"].as_str().unwrap_or(""))),
+                ("screen capture",   Self::screen_capture_cell_html(&entry_id, &images, uploaded)),
+            ];
+
+            let mut new_table = original_table.to_string();
+            for (label, new_value) in &replacements {
+                new_table = replace_vertical_cell_value(&new_table, label, new_value);
+            }
+
+            if new_table != original_table {
+                let start = (m.start() as isize + offset) as usize;
+                let end   = (m.end()   as isize + offset) as usize;
+                result.replace_range(start..end, &new_table);
+                offset += new_table.len() as isize - original_table.len() as isize;
+                matched_ids.insert(entry_id);
+            }
+        }
+
+        (result, matched_ids)
+    }
+
+    /// Generate vertical-card XHTML tables for entries that had no match in
+    /// the existing page content (append-only path).
+    pub fn generate_vertical_tables(
+        entries: &[serde_json::Value],
+        uploaded: &std::collections::HashMap<(String, String), String>,
+    ) -> String {
+        let mut html = String::new();
+        for entry in entries {
+            let id            = entry["id"].as_str().unwrap_or("").to_string();
+            let test_case_no  = entry["testCaseNo"].as_str().unwrap_or("").to_string();
+            let function_name = entry["functionName"].as_str().unwrap_or("").to_string();
+            let scenario      = entry["scenario"].as_str().unwrap_or("").to_string();
+            let input_data    = entry["inputData"].as_str().unwrap_or("").to_string();
+            let steps         = entry["steps"].as_str().unwrap_or("").to_string();
+            let expected      = entry["expectedResult"].as_str().unwrap_or("").to_string();
+            let result        = entry["result"].as_str().unwrap_or("").to_string();
+            let images        = entry["images"].as_array().cloned().unwrap_or_default();
+
+            let screen_capture_html = Self::screen_capture_cell_html(&id, &images, uploaded);
+            let result_html         = Self::result_cell_html(&result);
+
+            html.push_str(r#"<table class="wrapped confluenceTable"><colgroup><col style="width: 200px;"/><col/></colgroup><tbody>"#);
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">No. Test Case</th><td class=\"confluenceTd\">{}</td></tr>", escape_html(&test_case_no)));
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">Function</th><td class=\"confluenceTd\">{}</td></tr>", escape_html(&function_name)));
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">Scenario</th><td class=\"confluenceTd\">{}</td></tr>", escape_html(&scenario)));
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">Input Data</th><td class=\"confluenceTd\">{}</td></tr>", escape_html(&input_data)));
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">Steps</th><td class=\"confluenceTd\">{}</td></tr>", text_to_list_html(&steps)));
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">Expected Result</th><td class=\"confluenceTd\">{}</td></tr>", text_to_list_html(&expected)));
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">Result</th><td class=\"confluenceTd\">{}</td></tr>", result_html));
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">Screen Capture</th><td class=\"confluenceTd\">{}</td></tr>", screen_capture_html));
+            html.push_str("</tbody></table><p></p>");
+        }
+        html
+    }
+
     /// Generate a single XHTML `<table>` from import entries (one row each).
     /// Columns: TestCase No | Function Name | Scenario | Steps | Expected Result.
+    /// Kept for parse roundtrip tests only — sync now uses generate_vertical_tables.
     pub fn generate_single_table(entries: &[ConfluenceTestImportEntry]) -> String {
         let mut html = String::from(
             "<table class=\"wrapped confluenceTable\"><colgroup><col/><col/><col/><col/><col/></colgroup>",
@@ -187,46 +349,103 @@ impl ConfluenceService {
         })
     }
 
-    /// Sync entries into a Confluence page: strip prior generated markers,
-    /// append fresh tables, and update the page (bumping its version).
+    /// Sync entries into a Confluence page.
+    ///
+    /// If the page already has vertical-card tables whose "No. Test Case" value
+    /// matches a payload entry, those tables are updated **in-place** (no new
+    /// table is created).  Entries with no matching table are appended at the end.
+    /// Images are uploaded as attachments and referenced in a single Expand macro.
     pub async fn sync_to_confluence(
         &self,
         config: &ConfluenceConfig,
         page_id: &str,
         payload: &SyncToConfluencePayload,
     ) -> Result<SyncToConfluenceResult> {
-        let (title, mut content, version) = self.get_page_preview(config, page_id).await?;
-        content = Self::strip_generated_markers(&content);
+        let (title, content, version) = self.get_page_preview(config, page_id).await?;
 
-        let import_entries: Vec<ConfluenceTestImportEntry> = payload
+        let entry_count = payload.entries.len() as u32;
+
+        // ── 1. Upload all images and build lookup map ────────────────────
+        let mut uploaded: std::collections::HashMap<(String, String), String> =
+            std::collections::HashMap::new();
+        let mut total_images = 0u32;
+
+        for entry in &payload.entries {
+            let entry_id = entry["id"].as_str().unwrap_or("").to_string();
+            let images = entry["images"].as_array().cloned().unwrap_or_default();
+            let mut sorted = images.clone();
+            sorted.sort_by_key(|img| img["order"].as_u64().unwrap_or(0));
+
+            for img in &sorted {
+                let orig_name = img["name"].as_str().unwrap_or("attachment.png").to_string();
+                let data_uri  = img["data"].as_str().unwrap_or("");
+                if data_uri.is_empty() { continue; }
+
+                let base64_data = if let Some(pos) = data_uri.find(',') {
+                    &data_uri[pos + 1..]
+                } else {
+                    data_uri
+                };
+                let bytes = match base64::engine::general_purpose::STANDARD.decode(base64_data) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+
+                let safe_entry = entry_id.replace(['/', '\\', ' '], "_");
+                let upload_name = format!("{safe_entry}_{orig_name}");
+                if self.upload_attachment(config, page_id, &upload_name, bytes).await.is_ok() {
+                    uploaded.insert((entry_id.clone(), orig_name), upload_name);
+                    total_images += 1;
+                }
+            }
+        }
+
+        // ── 2. Patch existing tables in-place ────────────────────────────
+        let (mut content, matched_ids) =
+            Self::patch_existing_tables(&content, &payload.entries, &uploaded);
+
+        // ── 3. Append tables for entries not found in existing content ───
+        let new_entries: Vec<&serde_json::Value> = payload
             .entries
             .iter()
-            .filter_map(|e| serde_json::from_value::<ConfluenceTestImportEntry>(e.clone()).ok())
+            .filter(|e| {
+                let id = e["id"].as_str().unwrap_or("");
+                !matched_ids.contains(id)
+            })
             .collect();
-        let entry_count = import_entries.len() as u32;
-        let tables = Self::generate_single_table(&import_entries);
 
-        let mut new_content = String::new();
-        new_content.push_str("<h1>QA Test Cases</h1>");
-        new_content.push_str("<ac:structured-macro ac:name=\"toc\"/>");
-        new_content.push_str(&tables);
-        new_content.push_str("\n<p>Generated by QA Buddy</p>");
-        content.push_str(&new_content);
+        if !new_entries.is_empty() {
+            // Remove the "Generated by QA Buddy" trailer if present so we append before it
+            content = Self::strip_generated_markers(&content);
+            let new_tables = Self::generate_vertical_tables(
+                &new_entries.into_iter().cloned().collect::<Vec<_>>(),
+                &uploaded,
+            );
+            content.push_str(&new_tables);
+        }
 
+        // Always refresh the trailer
+        content = Self::strip_generated_markers(&content);
+        content.push_str("\n<p>Generated by QA Buddy</p>");
+
+        // ── 4. Write back to Confluence ──────────────────────────────────
         let updated = self.update_page(config, page_id, &title, &content, version).await?;
         let page_url = updated
             .get("_links")
             .and_then(|l| l.get("base"))
             .and_then(|b| b.as_str())
-            .map(|b| format!("{}{}", normalize_url(b), format!("/pages/viewpage.action?pageId={page_id}")))
+            .map(|b| format!(
+                "{}/pages/viewpage.action?pageId={page_id}",
+                normalize_url(b)
+            ))
             .unwrap_or_else(|| format!("/pages/viewpage.action?pageId={page_id}"));
 
         Ok(SyncToConfluenceResult {
             page_title: title,
             page_url,
             entry_count,
-            image_count: 0,
-            attachment_count: 0,
+            image_count: total_images,
+            attachment_count: total_images,
         })
     }
 
@@ -322,11 +541,99 @@ fn base64_encode(data: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
+/// Extract the plain-text value of a named field row in a vertical-card table.
+/// Exact case-insensitive match on the trimmed label text.
+fn extract_vertical_cell(table_html: &str, field: &str) -> Option<String> {
+    let row_re = regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap();
+    for row_cap in row_re.captures_iter(table_html) {
+        let cells = split_row_cells(&row_cap[1]);
+        if cells.len() < 2 { continue; }
+        let label = strip_inner_tags(&cells[0]).trim().to_lowercase();
+        if label == field {
+            return Some(strip_inner_tags(&cells[1]).trim().to_string());
+        }
+    }
+    None
+}
+
+/// Replace the value cell (second `<td>`) of a named field row in a vertical-card table.
+/// Exact case-insensitive match on the trimmed label text of the first cell.
+fn replace_vertical_cell_value(table_html: &str, field: &str, new_value: &str) -> String {
+    let row_re = regex::Regex::new(r"(?is)(<tr\b[^>]*>)([\s\S]*?)(</tr>)").unwrap();
+    let mut result = table_html.to_string();
+    let mut offset: isize = 0;
+
+    for cap in row_re.captures_iter(table_html) {
+        let full_match = cap.get(0).unwrap();
+        let row_inner  = &cap[2];
+        let cells = split_row_cells(row_inner);
+        if cells.len() < 2 { continue; }
+
+        let label = strip_inner_tags(&cells[0]).trim().to_lowercase();
+        if label != field { continue; }
+
+        // Rebuild the row with the new value in the second cell, preserving the th/td tag type
+        let th_re  = regex::Regex::new(r"(?is)(<t[dh]\b[^>]*>)([\s\S]*?)(</t[dh]>)").unwrap();
+        let row_html = full_match.as_str();
+        let mut cell_idx = 0usize;
+        let mut new_row = row_html.to_string();
+        let mut cell_offset: isize = 0;
+
+        for cell_cap in th_re.captures_iter(row_html) {
+            cell_idx += 1;
+            if cell_idx != 2 { continue; } // only replace the value cell
+
+            let cell_match = cell_cap.get(0).unwrap();
+            let open_tag   = &cell_cap[1];
+            let close_tag  = &cell_cap[3];
+            let replacement = format!("{}{}{}", open_tag, new_value, close_tag);
+
+            let start = (cell_match.start() as isize + cell_offset) as usize;
+            let end   = (cell_match.end()   as isize + cell_offset) as usize;
+            new_row.replace_range(start..end, &replacement);
+            cell_offset += replacement.len() as isize - cell_match.len() as isize;
+            break;
+        }
+
+        if new_row != row_html {
+            let start = (full_match.start() as isize + offset) as usize;
+            let end   = (full_match.end()   as isize + offset) as usize;
+            result.replace_range(start..end, &new_row);
+            offset += new_row.len() as isize - row_html.len() as isize;
+        }
+        break; // only one row per field label per table
+    }
+
+    result
+}
+
 /// Minimal HTML-escape for cell values pushed into storage format.
 fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// Convert a numbered-list string like "- 1. foo - 2. bar - 3. baz"
+/// into a Confluence XHTML ordered list `<ol><li>foo</li>…</ol>`.
+/// If the text doesn't look like a numbered list, wraps it in a plain `<p>`.
+fn text_to_list_html(text: &str) -> String {
+    // Split on the " - N." pattern (dash, space, digits, dot).
+    // The leading "- 1." at the very start is also treated as a delimiter.
+    let re = regex::Regex::new(r"(?:^|\s)-\s*\d+\.\s*").unwrap();
+    let parts: Vec<&str> = re.split(text).map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
+    if parts.len() <= 1 {
+        // No list structure detected — emit a plain paragraph.
+        return format!("<p>{}</p>", escape_html(text.trim()));
+    }
+
+    let mut html = String::from("<ol>");
+    for part in parts {
+        html.push_str(&format!("<li>{}</li>", escape_html(part)));
+    }
+    html.push_str("</ol>");
+    html
 }
 
 /// Normalize a field label from a vertical-format table row (left column).
