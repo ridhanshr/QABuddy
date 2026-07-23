@@ -3,6 +3,19 @@ import { createAtlassianClient } from "../http";
 import type { AxiosInstance } from "axios";
 import { logger } from "../logger";
 
+/**
+ * Xray can store imported lines with Markdown-style bullets or ordered-list
+ * prefixes. The Documentation Sync editor works with plain step text, so
+ * remove those transport prefixes when reading it back.
+ */
+export function stripXrayBulletPrefixes(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^(?:(?:[-*•])\s+|\d+[.)]\s+)+/, ""))
+    .filter(Boolean)
+    .join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Typed response shapes
 // ---------------------------------------------------------------------------
@@ -220,8 +233,12 @@ export class JiraClient {
       if (Array.isArray(data) && data.length > 0) {
         const extractRaw = (v: any): string =>
           typeof v === "string" ? v : v?.raw ?? "";
-        const steps = data.map((s: any) => extractRaw(s.step).trim()).filter(Boolean);
-        const results = data.map((s: any) => extractRaw(s.result).trim()).filter(Boolean);
+        const steps = data
+          .map((s: any) => stripXrayBulletPrefixes(extractRaw(s.step)))
+          .filter(Boolean);
+        const results = data
+          .map((s: any) => stripXrayBulletPrefixes(extractRaw(s.result)))
+          .filter(Boolean);
         return steps.length > 0 || results.length > 0 ? { steps, results } : null;
       }
       logger.warn("Xray", `fetchTestSteps(${issueKey}) — data is not a non-empty array, returning null`);

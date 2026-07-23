@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.4 — 23 Jul 2026
+
+### Bug Fixes
+
+- Documentation Sync removes imported list prefixes when fetching Xray steps and expected results.
+- Documentation Sync renders manually entered steps and expected results as Confluence lists.
+
 ## 0.7.0 — 18 Jun 2026
 
 ### ✨ New Features

@@ -25,31 +25,43 @@ export function escapeHtmlText(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-export function toListItems(text: string): string {
+export function toListItems(text: string, plainLinesAsBullets = false): string {
   const lines = text.split("\n").map((s) => s.trim());
   const parts: string[] = [];
-  let bullets: string[] = [];
+  let listItems: string[] = [];
+  let listType: "ul" | "ol" | null = null;
 
-  const flushBullets = () => {
-    if (bullets.length > 0) {
-      parts.push(`<ul>${bullets.map((b) => `<li>${escapeHtmlText(b)}</li>`).join("")}</ul>`);
-      bullets = [];
+  const flushList = () => {
+    if (listItems.length > 0 && listType) {
+      parts.push(`<${listType}>${listItems.map((item) => `<li>${escapeHtmlText(item)}</li>`).join("")}</${listType}>`);
+      listItems = [];
+      listType = null;
     }
+  };
+
+  const addListItem = (type: "ul" | "ol", value: string) => {
+    if (listType && listType !== type) flushList();
+    listType = type;
+    listItems.push(value);
   };
 
   for (const line of lines) {
     if (!line) {
-      flushBullets();
+      flushList();
       continue;
     }
-    if (/^\s*-\s+/.test(line)) {
-      bullets.push(line.replace(/^\s*-\s+/, ""));
+    if (/^[-*•]\s+/.test(line)) {
+      addListItem("ul", line.replace(/^[-*•]\s+/, ""));
+    } else if (/^\d+[.)]\s+/.test(line)) {
+      addListItem("ol", line.replace(/^\d+[.)]\s+/, ""));
+    } else if (plainLinesAsBullets) {
+      addListItem("ul", line);
     } else {
-      flushBullets();
+      flushList();
       parts.push(`<p>${escapeHtmlText(line)}</p>`);
     }
   }
-  flushBullets();
+  flushList();
   return parts.join("");
 }
 
@@ -147,8 +159,10 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
     const safeCategory = escapeHtmlText(entry.category);
     const safeScenario = escapeHtmlText(entry.scenario);
     const inputItems = toListItems(entry.inputData);
-    const stepsItems = toListItems(entry.steps);
-    const expectedItems = toListItems(entry.expectedResult);
+    // Steps and expected results are always collections of actions/outcomes.
+    // Plain lines entered manually should therefore render as a list too.
+    const stepsItems = toListItems(entry.steps, true);
+    const expectedItems = toListItems(entry.expectedResult, true);
     const scenarioLinked = linkifyJiraKeys(safeScenario, jiraBaseUrl, jiraServerId);
 
     const orderedAttachments = normalizeAttachmentOrder(entry.images || []);
