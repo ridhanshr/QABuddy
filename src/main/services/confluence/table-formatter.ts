@@ -25,43 +25,75 @@ export function escapeHtmlText(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-export function toListItems(text: string, plainLinesAsBullets = false): string {
-  const lines = text.split("\n").map((s) => s.trim());
-  const parts: string[] = [];
-  let listItems: string[] = [];
-  let listType: "ul" | "ol" | null = null;
+type ListFormat = "plain" | "ordered" | "unordered";
 
-  const flushList = () => {
-    if (listItems.length > 0 && listType) {
-      parts.push(`<${listType}>${listItems.map((item) => `<li>${escapeHtmlText(item)}</li>`).join("")}</${listType}>`);
-      listItems = [];
-      listType = null;
+function inferListFormat(text: string): ListFormat {
+  const lines = text.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (lines.length === 0) return "plain";
+
+  const orderedPattern = /^\d+[\.\)]\s+/;
+  if (lines.every((line) => orderedPattern.test(line))) {
+    return "ordered";
+  }
+
+  const unorderedPattern = /^[-*]\s+/;
+  if (lines.every((line) => unorderedPattern.test(line))) {
+    return "unordered";
+  }
+
+  return "plain";
+}
+
+function stripListPrefix(line: string, format: ListFormat): string {
+  if (format === "ordered") {
+    return line.replace(/^\d+[\.\)]\s+/, "");
+  }
+  if (format === "unordered") {
+    return line.replace(/^[-*]\s+/, "");
+  }
+  return line;
+}
+
+export function toListItems(text: string, format?: ListFormat, plainLinesAsBullets = false): string {
+  const lines = text.split("\n").map((s) => s.trim());
+  const listFormat = format || inferListFormat(text);
+  const cleanedLines = lines.map((line) => stripListPrefix(line, listFormat)).filter(Boolean);
+
+  if (listFormat === "ordered") {
+    return `<ol>${cleanedLines.map((line) => `<li>${escapeHtmlText(line)}</li>`).join("")}</ol>`;
+  }
+
+  if (listFormat === "unordered") {
+    return `<ul>${cleanedLines.map((line) => `<li>${escapeHtmlText(line)}</li>`).join("")}</ul>`;
+  }
+
+  if (plainLinesAsBullets) {
+    return `<ul>${cleanedLines.map((line) => `<li>${escapeHtmlText(line)}</li>`).join("")}</ul>`;
+  }
+
+  const parts: string[] = [];
+  let bullets: string[] = [];
+
+  const flushBullets = () => {
+    if (bullets.length > 0) {
+      parts.push(`<ul>${bullets.map((bullet) => `<li>${escapeHtmlText(bullet)}</li>`).join("")}</ul>`);
+      bullets = [];
     }
   };
 
-  const addListItem = (type: "ul" | "ol", value: string) => {
-    if (listType && listType !== type) flushList();
-    listType = type;
-    listItems.push(value);
-  };
-
-  for (const line of lines) {
+  for (const line of cleanedLines) {
     if (!line) {
-      flushList();
+      flushBullets();
       continue;
     }
-    if (/^[-*•]\s+/.test(line)) {
-      addListItem("ul", line.replace(/^[-*•]\s+/, ""));
-    } else if (/^\d+[.)]\s+/.test(line)) {
-      addListItem("ol", line.replace(/^\d+[.)]\s+/, ""));
-    } else if (plainLinesAsBullets) {
-      addListItem("ul", line);
+    if (/^\s*-\s+/.test(line)) {
+      bullets.push(line.replace(/^\s*-\s+/, ""));
     } else {
-      flushList();
+      flushBullets();
       parts.push(`<p>${escapeHtmlText(line)}</p>`);
     }
   }
-  flushList();
+  flushBullets();
   return parts.join("");
 }
 
@@ -158,11 +190,9 @@ export function generateXhtmlTable(entries: any[], jiraBaseUrl?: string, jiraSer
     const safeFunctionName = escapeHtmlText(entry.functionName);
     const safeCategory = escapeHtmlText(entry.category);
     const safeScenario = escapeHtmlText(entry.scenario);
-    const inputItems = toListItems(entry.inputData);
-    // Steps and expected results are always collections of actions/outcomes.
-    // Plain lines entered manually should therefore render as a list too.
-    const stepsItems = toListItems(entry.steps, true);
-    const expectedItems = toListItems(entry.expectedResult, true);
+    const inputItems = toListItems(entry.inputData, entry.inputDataFormat);
+    const stepsItems = toListItems(entry.steps, entry.stepsFormat, true);
+    const expectedItems = toListItems(entry.expectedResult, entry.expectedResultFormat, true);
     const scenarioLinked = linkifyJiraKeys(safeScenario, jiraBaseUrl, jiraServerId);
 
     const orderedAttachments = normalizeAttachmentOrder(entry.images || []);

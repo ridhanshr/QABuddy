@@ -55,20 +55,27 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+function detectListFormat(html: string): "plain" | "ordered" | "unordered" {
+  const normalized = decodeHtmlEntities(html);
+  if (/<ol\b/i.test(normalized)) return "ordered";
+  if (/<ul\b/i.test(normalized)) return "unordered";
+  return "plain";
+}
+
 function isScreenCaptureExpandTitle(title: string): boolean {
   return title === "Screen Capture" || title === "Click here to expand...";
 }
 
 function extractAttachmentRefs(block: string): Array<{ name: string; index: number; end: number }> {
-  const refs: Array<{ name: string; index: number; end: number }> = [];
   const patterns = [
     /<[^>]*\bri:filename=["']([^"']+)["'][^>]*>/gi,
-    /<img\b[^>]*\bdata-linked-resource-default-alias=["']([^"']+)["'][^>]*>/gi,
+    /<[^>]*\bdata-linked-resource-default-alias=["']([^"']+)["'][^>]*>/gi,
     /<[^>]*\bdata-file-src=["'][^"']*\/([^"'\/?]+)(?:\?[^"']*)?["'][^>]*>/gi,
     /<[^>]*\bdata-qa-attachment-name=["']([^"']+)["'][^>]*>/gi,
   ];
 
   for (const pattern of patterns) {
+    const refs: Array<{ name: string; index: number; end: number }> = [];
     let match;
     while ((match = pattern.exec(block)) !== null) {
       refs.push({
@@ -77,10 +84,13 @@ function extractAttachmentRefs(block: string): Array<{ name: string; index: numb
         end: match.index + match[0].length,
       });
     }
+    if (refs.length > 0) {
+      refs.sort((a, b) => a.index - b.index);
+      return refs;
+    }
   }
 
-  refs.sort((a, b) => a.index - b.index);
-  return refs.filter((ref, index) => !refs.slice(0, index).some((prev) => prev.name === ref.name && prev.index === ref.index));
+  return [];
 }
 
 function latestAttachmentGroupBefore(html: string, index: number): string {
@@ -160,26 +170,68 @@ export class ConfluenceService {
       .replace(/^\s+|\s+$/g, "");
   }
 
+  private extractBalancedTagBlock(content: string, startIndex: number, tagName: string): { html: string; end: number } | null {
+    const openTag = new RegExp(`<${tagName}\\b`, "i");
+    if (!openTag.test(content.slice(startIndex))) {
+      return null;
+    }
+
+    let depth = 0;
+    const tokenRegex = new RegExp(`<\\/?${tagName}\\b[^>]*>`, "gi");
+    tokenRegex.lastIndex = startIndex;
+
+    let match: RegExpExecArray | null;
+    while ((match = tokenRegex.exec(content)) !== null) {
+      const token = match[0];
+      if (/^<\//.test(token)) {
+        depth--;
+        if (depth === 0) {
+          const end = tokenRegex.lastIndex;
+          return { html: content.slice(startIndex, end), end };
+        }
+      } else {
+        depth++;
+      }
+    }
+
+    return null;
+  }
+
   private collectParsedTables(content: string): Array<{ qaIndex: number; html: string; start: number; end: number; entry: any; section: string }> {
     const tables: Array<{ qaIndex: number; html: string; start: number; end: number; entry: any; section: string }> = [];
     let currentSection = "";
-    const regex = /(<h1\b[^>]*>[\s\S]*?<\/h1>|<table\b[^>]*>[\s\S]*?<\/table>)/gi;
-    let match;
+    const regex = /<h1\b[^>]*>|<table\b[^>]*>/gi;
+    let match: RegExpExecArray | null;
     let qaIndex = 0;
 
     while ((match = regex.exec(content)) !== null) {
       const chunk = match[0];
       if (chunk.startsWith("<h1")) {
-        const text = chunk.replace(/<[^>]+>/g, "").trim();
+        const endMatch = content.slice(regex.lastIndex).match(/<\/h1\s*>/i);
+        if (!endMatch || endMatch.index === undefined) {
+          regex.lastIndex = match.index + chunk.length;
+          continue;
+        }
+        const start = match.index;
+        const end = regex.lastIndex + endMatch.index + endMatch[0].length;
+        const fullChunk = content.slice(start, end);
+        regex.lastIndex = end;
+        const text = fullChunk.replace(/<[^>]+>/g, "").trim();
         if (text) currentSection = text;
       } else {
-        const parsed = this.parseSingleTable(chunk, false);
+        const tableBlock = this.extractBalancedTagBlock(content, match.index, "table");
+        if (!tableBlock) {
+          regex.lastIndex = match.index + chunk.length;
+          continue;
+        }
+        regex.lastIndex = tableBlock.end;
+        const parsed = this.parseSingleTable(tableBlock.html, false);
         if (parsed.entry && parsed.entry.testCaseNo) {
           tables.push({
             qaIndex,
-            html: chunk,
+            html: tableBlock.html,
             start: match.index,
-            end: match.index + chunk.length,
+            end: tableBlock.end,
             entry: parsed.entry,
             section: currentSection,
           });
@@ -636,8 +688,11 @@ export class ConfluenceService {
       scenario: "",
       category: "Positive",
       inputData: "",
+      inputDataFormat: "plain",
       steps: "",
+      stepsFormat: "plain",
       expectedResult: "",
+      expectedResultFormat: "plain",
       result: "PASS",
       images: [] as { id: string; name: string; data: string; order: number; note?: string; group?: string }[],
     };
@@ -713,16 +768,19 @@ export class ConfluenceService {
           break;
         case "Input Data":
           entry.inputData = this.extractTextLines(value);
+          entry.inputDataFormat = detectListFormat(value);
           debugTable?.mappedFields.push("inputData");
           recordRow({ label, status: "mapped", mappedField: "inputData", rawHtml: rowHtml, valuePreview });
           break;
         case "Steps":
           entry.steps = this.extractTextLines(value);
+          entry.stepsFormat = detectListFormat(value);
           debugTable?.mappedFields.push("steps");
           recordRow({ label, status: "mapped", mappedField: "steps", rawHtml: rowHtml, valuePreview });
           break;
         case "Expected Result":
           entry.expectedResult = this.extractTextLines(value);
+          entry.expectedResultFormat = detectListFormat(value);
           debugTable?.mappedFields.push("expectedResult");
           recordRow({ label, status: "mapped", mappedField: "expectedResult", rawHtml: rowHtml, valuePreview });
           break;
@@ -850,14 +908,13 @@ export class ConfluenceService {
     const debugTables: ParseConfluenceParseDebugTable[] = [];
     const unmatchedHtmlChunks: ParseConfluenceParseDebugChunk[] = [];
     let currentSection = "";
-    const regex = /(<h1\b[^>]*>[\s\S]*?<\/h1>|<table\b[^>]*>[\s\S]*?<\/table>)/gi;
-    let match;
+    const regex = /<h1\b[^>]*>|<table\b[^>]*>/gi;
+    let match: RegExpExecArray | null;
     let qaIndex = 0;
     let tableIndex = 0;
     let lastEnd = 0;
 
     while ((match = regex.exec(content)) !== null) {
-      const chunk = match[0];
       const gap = content.slice(lastEnd, match.index).trim();
       if (gap) {
         unmatchedHtmlChunks.push({
@@ -867,11 +924,27 @@ export class ConfluenceService {
         });
       }
 
+      const chunk = match[0];
       if (chunk.startsWith("<h1")) {
-        const text = chunk.replace(/<[^>]+>/g, "").trim();
+        const endMatch = content.slice(regex.lastIndex).match(/<\/h1\s*>/i);
+        if (!endMatch || endMatch.index === undefined) {
+          regex.lastIndex = match.index + chunk.length;
+          continue;
+        }
+        const start = match.index;
+        const end = regex.lastIndex + endMatch.index + endMatch[0].length;
+        const fullChunk = content.slice(start, end);
+        regex.lastIndex = end;
+        const text = fullChunk.replace(/<[^>]+>/g, "").trim();
         if (text) currentSection = text;
       } else {
-        const parsed = this.parseSingleTable(chunk, true);
+        const tableBlock = this.extractBalancedTagBlock(content, match.index, "table");
+        if (!tableBlock) {
+          regex.lastIndex = match.index + chunk.length;
+          continue;
+        }
+        regex.lastIndex = tableBlock.end;
+        const parsed = this.parseSingleTable(tableBlock.html, true);
         const entry = parsed.entry;
         const debugTable = parsed.debug;
         const isParsed = Boolean(entry && entry.testCaseNo);
@@ -886,9 +959,9 @@ export class ConfluenceService {
         if (isParsed) {
           tables.push({
             qaIndex,
-            html: chunk,
+            html: tableBlock.html,
             start: match.index,
-            end: match.index + chunk.length,
+            end: tableBlock.end,
             entry,
             section: currentSection,
           });
@@ -896,7 +969,7 @@ export class ConfluenceService {
         }
       }
 
-      lastEnd = match.index + chunk.length;
+      lastEnd = regex.lastIndex;
       tableIndex++;
     }
 

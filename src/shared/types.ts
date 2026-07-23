@@ -596,10 +596,13 @@ export interface ConfluenceTestImportEntry {
   issueKey: string;
   scenario: string;
   steps: string;
+  stepsFormat?: "plain" | "ordered" | "unordered";
   expectedResult: string;
+  expectedResultFormat?: "plain" | "ordered" | "unordered";
   functionName: string;
   testCaseNo: string;
   inputData: string;
+  inputDataFormat?: "plain" | "ordered" | "unordered";
   selected: boolean;
 }
 
