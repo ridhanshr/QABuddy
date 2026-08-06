@@ -529,6 +529,29 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       } else if (bootstrap.config.jira.baseUrl && bootstrap.config.jira.token) {
         fetchAndCacheJiraMetadata();
       }
+      // Auto-test connections if both tokens available (from DB).
+      // Must save config first so Rust backend uses the DB token, not the stale file token.
+      const effectiveJiraToken = jiraToken || bootstrap.config.jira.token;
+      const effectiveConfToken = confToken || bootstrap.config.confluence.token;
+      if (effectiveJiraToken && effectiveConfToken) {
+        const cfgWithTokens = {
+          ...bootstrap.config,
+          jira: {
+            ...bootstrap.config.jira,
+            username: loggedInUser || bootstrap.config.jira.username,
+            token: effectiveJiraToken,
+          },
+          confluence: {
+            ...bootstrap.config.confluence,
+            username: loggedInUser || bootstrap.config.confluence.username,
+            token: effectiveConfToken,
+          },
+        };
+        void window.qaBuddy.saveConfig(cfgWithTokens)
+          .then(() => window.qaBuddy.testConnections())
+          .then((nextStatus) => setStatus(nextStatus))
+          .catch(() => {});
+      }
     } catch (error) {
       setBanner({
         tone: "error",

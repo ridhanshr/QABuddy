@@ -12,7 +12,7 @@ use crate::models::defect::{
     DefectRecord, DefectRepositoryStats, DuplicateCandidate, DuplicateRelation, JiraIssueSource,
     JiraProjectSource, SearchFilters, SyncState,
 };
-use crate::services::error::{Result, ServiceError};
+use crate::services::error::Result;
 use crate::services::jira::JiraService;
 use crate::services::text_utils::strip_html;
 
@@ -340,7 +340,7 @@ impl DefectRepositoryService {
                     .issue_types
                     .clone()
                     .filter(|items| !items.is_empty())
-                    .unwrap_or_else(|| vec!["Bug".into(), "Task".into(), "Defect".into()]),
+                    .unwrap_or_else(|| vec!["Bug".into(), "Defect".into()]),
             ),
             last_auto_sync_at: source.last_auto_sync_at.clone(),
             ..source.clone()
@@ -523,7 +523,21 @@ impl DefectRepositoryService {
             .iter()
             .find(|s| self.normalize_project_key(&s.project_key) == normalized_project_key)
             .cloned()
-            .ok_or_else(|| ServiceError::NotFound(format!("Source {project_key} not found")))?;
+            .unwrap_or_else(|| crate::models::defect::JiraProjectSource {
+                id: format!("auto-{}", project_key.to_lowercase()),
+                project_key: project_key.to_string(),
+                project_name: project_key.to_string(),
+                is_active: true,
+                last_synced_at: None,
+                auto_sync_enabled: Some(false),
+                auto_sync_days: None,
+                auto_sync_time: None,
+                issue_types: Some(vec!["Bug".to_string(), "Defect".to_string()]),
+                last_auto_sync_at: None,
+                sync_mode: crate::models::defect::DefectSyncMode::Initial,
+                sync_status: crate::models::defect::DefectSyncStatus::Idle,
+                error_message: None,
+            });
         let sync_state = data
             .sync_states
             .iter()
@@ -539,7 +553,7 @@ impl DefectRepositoryService {
         let client = jira.client(&config.jira)?;
         let issue_types = source.issue_types.clone().unwrap_or_default();
         let selected_types = if issue_types.is_empty() {
-            vec!["Bug".to_string(), "Task".to_string(), "Defect".to_string()]
+            vec!["Bug".to_string(), "Defect".to_string()]
         } else {
             issue_types
         };
@@ -548,10 +562,22 @@ impl DefectRepositoryService {
             .map(|t| format!("issuetype = \"{}\"", t))
             .collect::<Vec<_>>()
             .join(" OR ");
-        let jql = if cursor.trim().is_empty() {
+        // Jira JQL only accepts "yyyy-MM-dd HH:mm" or "yyyy-MM-dd", not RFC3339
+        let jira_cursor = if cursor.trim().is_empty() {
+            String::new()
+        } else {
+            // Try parsing as RFC3339 first, then fall back to using as-is if already correct format
+            if let Ok(dt) = cursor.parse::<chrono::DateTime<Utc>>() {
+                dt.format("%Y-%m-%d %H:%M").to_string()
+            } else {
+                // Already in "yyyy-MM-dd HH:mm" or similar — truncate to safe format
+                cursor.chars().take(16).collect()
+            }
+        };
+        let jql = if jira_cursor.is_empty() {
             format!("project = \"{project_key}\" AND ({type_filter}) ORDER BY updated ASC")
         } else {
-            format!("project = \"{project_key}\" AND ({type_filter}) AND updated >= \"{cursor}\" ORDER BY updated ASC")
+            format!("project = \"{project_key}\" AND ({type_filter}) AND updated >= \"{jira_cursor}\" ORDER BY updated ASC")
         };
 
         let mut issues: Vec<Value> = Vec::new();
@@ -617,18 +643,19 @@ impl DefectRepositoryService {
             data.defects.extend(new_defects);
         }
 
-        let now = Utc::now().to_rfc3339();
+        let now_rfc = Utc::now().to_rfc3339();
+        let now_jira = Utc::now().format("%Y-%m-%d %H:%M").to_string();
         data.sync_states.retain(|s| self.normalize_project_key(&s.project_key) != normalized_project_key);
         data.sync_states.push(SyncState {
             id: Uuid::new_v4().to_string(),
             project_key: normalized_project_key.clone(),
-            last_cursor: if cursor.is_empty() { now.clone() } else { cursor },
-            last_sync_at: now.clone(),
+            last_cursor: if cursor.is_empty() { now_jira.clone() } else { jira_cursor },
+            last_sync_at: now_rfc.clone(),
             last_sync_status: "success".into(),
             error_message: String::new(),
         });
 
-        source.last_synced_at = Some(now);
+        source.last_synced_at = Some(now_rfc);
         source.sync_status = crate::models::defect::DefectSyncStatus::Success;
         self.upsert_source(&mut data, source);
         self.save(&data)?;
