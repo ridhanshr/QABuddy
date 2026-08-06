@@ -6,6 +6,35 @@ import TestCaseManager from "./TestCaseManager";
 import MonitoringScreen from "./MonitoringScreen";
 import type { ExtractionDepth } from "@shared/types";
 
+function extractListItems(html: string): string[] {
+  if (!html) return [];
+  const matches = [...html.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)];
+  if (matches.length > 0) {
+    return matches.map(m => m[1].replace(/<[^>]+>/g, "").trim()).filter(Boolean);
+  }
+  // Fallback: plain text split by newline
+  return html.replace(/<[^>]+>/g, "").split("\n").map(s => s.trim()).filter(Boolean);
+}
+
+function HtmlListPreview({ html, maxItems }: { html: string; maxItems: number }) {
+  const items = extractListItems(html);
+  if (items.length === 0) return <span style={{ color: 'var(--on-surface-variant)', opacity: 0.5 }}>-</span>;
+  const visible = items.slice(0, maxItems);
+  const remaining = items.length - visible.length;
+  return (
+    <ol style={{ margin: 0, paddingLeft: 16, fontSize: 12, lineHeight: 1.5 }}>
+      {visible.map((item, i) => (
+        <li key={i} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }} title={item}>
+          {item}
+        </li>
+      ))}
+      {remaining > 0 && (
+        <li style={{ listStyle: 'none', opacity: 0.5, fontSize: 11 }}>+{remaining} more...</li>
+      )}
+    </ol>
+  );
+}
+
 export default function ManualTestCaseScreen() {
   const {
     activeView,
@@ -804,9 +833,15 @@ export default function ManualTestCaseScreen() {
                             <span style={{ color: 'var(--error)', fontSize: 12 }}>No key</span>
                           )}
                         </td>
-                        <td style={{ padding: '8px 16px', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.scenario}</td>
-                        <td style={{ padding: '8px 16px', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--on-surface-variant)' }}>{entry.steps?.split('\n').slice(0, 3).join(' | ') || '-'}</td>
-                        <td style={{ padding: '8px 16px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--on-surface-variant)' }}>{entry.expectedResult?.split('\n')[0] || '-'}</td>
+                        <td style={{ padding: '8px 16px', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry.scenarioTitle || entry.scenario}>
+                          {entry.scenarioTitle || entry.scenario}
+                        </td>
+                        <td style={{ padding: '8px 16px', maxWidth: 250, color: 'var(--on-surface-variant)', verticalAlign: 'top' }}>
+                          <HtmlListPreview html={entry.steps} maxItems={3} />
+                        </td>
+                        <td style={{ padding: '8px 16px', maxWidth: 200, color: 'var(--on-surface-variant)', verticalAlign: 'top' }}>
+                          <HtmlListPreview html={entry.expectedResult} maxItems={2} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>

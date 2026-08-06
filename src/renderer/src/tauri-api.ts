@@ -353,6 +353,7 @@ const api = {
   getMyUqaProjects: (username: string, displayName: string) => cmd<import("@shared/types").MonitoringUqaProject[]>("get_my_uqa_projects", { username, displayName }),
   getMyTestExecutions: (username: string, displayName: string) => cmd<import("@shared/types").MonitoringTestExecution[]>("get_my_test_executions", { username, displayName }),
   getMyTestCasesByExecution: (teJiraKey: string, username: string) => cmd<import("@shared/types").MonitoringTestCase[]>("get_my_test_cases_by_execution", { teJiraKey, username }),
+  getTestCaseTitles: (tcKeys: string[]) => cmd<Record<string, string>>("get_test_case_titles", { tcKeys }),
 
   // ── OCR ──────────────────────────────────────────────────────────────
   ocrExtractFromFile: (filePath: string) =>

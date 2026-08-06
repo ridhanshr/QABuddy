@@ -802,8 +802,8 @@ fn sanitize_td_inline_content(html: &str) -> String {
             break;
         };
         // Copy everything up to and including the opening tag
-        let open_abs_start = pos + open_m.start();
-        let open_abs_end   = pos + open_m.end();
+        let _open_abs_start = pos + open_m.start();
+        let open_abs_end    = pos + open_m.end();
         result.push_str(&html[pos..open_abs_end]);
 
         // Depth-track to find the matching close tag
@@ -827,12 +827,11 @@ fn sanitize_td_inline_content(html: &str) -> String {
                     if depth == 0 {
                         inner_end = cur + c;
                         cell_end  = cur + ce;
-                        cur = cell_end;
                         break;
                     }
                     cur += ce;
                 }
-                _ => { cur = len; break; }
+                _ => { break; }
             }
         }
 

@@ -549,6 +549,7 @@ export interface DesktopApi {
   getMyUqaProjects: (username: string, displayName: string) => Promise<MonitoringUqaProject[]>;
   getMyTestExecutions: (username: string, displayName: string) => Promise<MonitoringTestExecution[]>;
   getMyTestCasesByExecution: (teJiraKey: string, username: string) => Promise<MonitoringTestCase[]>;
+  getTestCaseTitles: (tcKeys: string[]) => Promise<Record<string, string>>;
   // BRD / Test Management
   generateTestCasesFromBRD: (request: BRDGenerationRequest) => Promise<BRDGenerationResult>;
   getGeneratedTestCases: (testExecutionId: string) => Promise<BRDTestCase[]>;
@@ -741,6 +742,7 @@ export interface ConfluenceTestImportEntry {
   id: string;
   issueKey: string;
   scenario: string;
+  scenarioTitle?: string;
   steps: string;
   expectedResult: string;
   functionName: string;

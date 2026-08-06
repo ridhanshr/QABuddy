@@ -221,18 +221,6 @@ pub struct SaveUqaProjectInput {
     pub start_uat: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DbUqaProject {
-    pub uqa_key: String,
-    pub project_name: String,
-    pub assignee: Option<String>,
-    pub product_tester: Option<String>,
-    pub status: Option<String>,
-    pub start_sit: Option<String>,
-    pub finish_sit: Option<String>,
-    pub start_uat: Option<String>,
-    pub last_sync: Option<String>,
-}
 
 #[tauri::command]
 pub async fn save_uqa_projects(
@@ -864,6 +852,65 @@ pub async fn get_my_test_cases_by_execution(
     .await
     .map_err(|e| format!("Gagal fetch test cases: {e}"))?;
     Ok(rows)
+}
+
+/// Batch fetch tc_key → title. First checks test_case DB table, then falls back
+/// to Jira API for any keys missing or without a title.
+#[tauri::command]
+pub async fn get_test_case_titles(
+    state: State<'_, AppState>,
+    tc_keys: Vec<String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    if tc_keys.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    // ── 1. Try DB first ──
+    if let Ok(pool) = state.db_pool.lock().await.as_ref().ok_or("no pool").map(|p| p.clone()) {
+        let placeholders = tc_keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let sql = format!(
+            "SELECT tc_key, title FROM test_case WHERE tc_key IN ({}) AND title IS NOT NULL AND title != ''",
+            placeholders
+        );
+        let mut q = sqlx::query(&sql);
+        for key in &tc_keys {
+            q = q.bind(key);
+        }
+        if let Ok(rows) = q.fetch_all(&pool).await {
+            for row in rows {
+                use sqlx::Row;
+                let key: String = row.get("tc_key");
+                let title: String = row.get("title");
+                map.insert(key, title);
+            }
+        }
+    }
+
+    // ── 2. Fetch missing keys from Jira ──
+    let missing: Vec<String> = tc_keys.iter().filter(|k| !map.contains_key(*k)).cloned().collect();
+    if !missing.is_empty() {
+        if let Ok(config) = crate::commands::load_config(state.clone()).await {
+            let jira_service = state.jira_service.lock().await;
+            if let Ok(client) = jira_service.client(&config.jira) {
+                let keys_joined = missing.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(",");
+                let jql = format!("key in ({keys_joined})");
+                if let Ok(issues) = client.search_issues(&jql, missing.len() as u32, "summary").await {
+                    for issue in &issues {
+                        if let (Some(key), Some(summary)) = (
+                            issue["key"].as_str(),
+                            issue["fields"]["summary"].as_str(),
+                        ) {
+                            map.insert(key.to_string(), summary.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(map)
 }
 
 // ── User auth & token sync ────────────────────────────────────────────────────

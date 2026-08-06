@@ -217,6 +217,7 @@ pub fn run() {
             commands::db::get_my_uqa_projects,
             commands::db::get_my_test_executions,
             commands::db::get_my_test_cases_by_execution,
+            commands::db::get_test_case_titles,
             commands::db::login_user,
             commands::db::register_user,
             commands::db::update_user_tokens,

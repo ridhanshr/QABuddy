@@ -1709,7 +1709,17 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         };
       });
 
-      setConfImportEntries(entries);
+      // Fetch titles from DB for all entries that have an issueKey
+      const keysToFetch = entries.map(e => e.issueKey).filter(k => k.length > 0);
+      const titleMap = keysToFetch.length > 0
+        ? await window.qaBuddy.getTestCaseTitles(keysToFetch).catch(() => ({} as Record<string, string>))
+        : {};
+      const entriesWithTitles = entries.map(e => ({
+        ...e,
+        scenarioTitle: titleMap[e.issueKey] || undefined,
+      }));
+
+      setConfImportEntries(entriesWithTitles);
       setBanner({
         tone: "success",
         text: `Ditemukan ${entries.length} entry dari "${result.pageTitle}". ${entries.filter(e => e.issueKey).length} entry memiliki Issue Key.`,
