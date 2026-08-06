@@ -66,6 +66,15 @@ function isScreenCaptureExpandTitle(title: string): boolean {
   return title === "Screen Capture" || title === "Click here to expand...";
 }
 
+function extractIssueKey(value: string): string | undefined {
+  return value.match(/\bdata-jira-key=["']([^"']+)["']/i)?.[1]
+    || value.match(/\b[A-Z][A-Z0-9]+-\d{1,9}\b/)?.[0];
+}
+
+function hasImportIdentity(entry: { testCaseNo?: string; scenario?: string; scenarioIssueKey?: string }): boolean {
+  return Boolean(entry.testCaseNo?.trim() || entry.scenarioIssueKey || extractIssueKey(entry.scenario || ""));
+}
+
 function extractAttachmentRefs(block: string): Array<{ name: string; index: number; end: number }> {
   const patterns = [
     /<[^>]*\bri:filename=["']([^"']+)["'][^>]*>/gi,
@@ -226,7 +235,7 @@ export class ConfluenceService {
         }
         regex.lastIndex = tableBlock.end;
         const parsed = this.parseSingleTable(tableBlock.html, false);
-        if (parsed.entry && parsed.entry.testCaseNo) {
+        if (parsed.entry && hasImportIdentity(parsed.entry)) {
           tables.push({
             qaIndex,
             html: tableBlock.html,
@@ -608,7 +617,7 @@ export class ConfluenceService {
       }));
 
       const viewContent = page.body?.view?.value || "";
-      if (viewContent && entries.length > 0) {
+      if (viewContent && entries.length > 0 && !options?.updateFromConfluence) {
         this.enrichEntriesFromView(entries, viewContent);
       }
 
@@ -758,6 +767,7 @@ export class ConfluenceService {
           break;
         case "Scenario":
           entry.scenario = this.extractTextValue(value);
+          entry.scenarioIssueKey = extractIssueKey(value) || extractIssueKey(entry.scenario);
           debugTable?.mappedFields.push("scenario");
           recordRow({ label, status: "mapped", mappedField: "scenario", rawHtml: rowHtml, valuePreview });
           break;
@@ -885,8 +895,8 @@ export class ConfluenceService {
     }
 
     if (debugTable) {
-      debugTable.parsed = Boolean(entry.testCaseNo);
-      debugTable.reason = entry.testCaseNo ? undefined : "No. Test Case tidak ditemukan";
+      debugTable.parsed = hasImportIdentity(entry);
+      debugTable.reason = debugTable.parsed ? undefined : "No. Test Case atau Jira issue key tidak ditemukan";
       debugTable.entrySummary = {
         testCaseNo: entry.testCaseNo,
         functionName: entry.functionName,
@@ -947,12 +957,12 @@ export class ConfluenceService {
         const parsed = this.parseSingleTable(tableBlock.html, true);
         const entry = parsed.entry;
         const debugTable = parsed.debug;
-        const isParsed = Boolean(entry && entry.testCaseNo);
+        const isParsed = Boolean(entry && hasImportIdentity(entry));
 
         if (debugTable) {
           debugTable.index = tableIndex;
           debugTable.parsed = isParsed;
-          debugTable.reason = isParsed ? undefined : "No. Test Case tidak ditemukan";
+          debugTable.reason = isParsed ? undefined : "No. Test Case atau Jira issue key tidak ditemukan";
           debugTables.push(debugTable);
         }
 

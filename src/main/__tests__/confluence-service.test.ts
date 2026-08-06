@@ -200,6 +200,55 @@ describe("ConfluenceService", () => {
     expect(parsed[0].expectedResult).toBe("Data lolos validasi 1 dan validasi 2\nData pengajuan auto terapprove");
   });
 
+  it("imports a Jira-linked entry when No. Test Case is empty", () => {
+    const html = `
+      <table><tbody>
+        <tr><td><strong>No. Test Case</strong></td><td><p><br /></p></td></tr>
+        <tr><td><strong>Scenario</strong></td><td><span class="jira-issue" data-jira-key="TRAW-1215"><a>TRAW-1215</a> - <span class="summary">Melakukan update block code SPACE ke F Visa Infinite Prioritas</span></span></td></tr>
+        <tr><td><strong>Steps</strong></td><td><ol><li>Login Way4 Workbench menggunakan akun DMCS_MKR (mekanisme MCS)</li><li>Pilih menu Block Code Management</li><li>Input Card Number</li><li>Klik Details di kiri bawah</li></ol></td></tr>
+        <tr><td><strong>Expected Result</strong></td><td><ol><li>Berhasil update block code kartu Visa Infinite Prioritas dari Space ke F (Fraud)</li></ol></td></tr>
+      </tbody></table>`;
+
+    const parsed = service.parseEntriesFromContent(html);
+    const traw1215 = parsed.find((entry) => entry.scenario === "TRAW-1215");
+
+    expect(parsed).toHaveLength(1);
+    expect(traw1215?.scenarioIssueKey).toBe("TRAW-1215");
+    expect(traw1215?.steps).toBe([
+      "Login Way4 Workbench menggunakan akun DMCS_MKR (mekanisme MCS)",
+      "Pilih menu Block Code Management",
+      "Input Card Number",
+      "Klik Details di kiri bawah",
+    ].join("\n"));
+    expect(traw1215?.expectedResult).toBe("Berhasil update block code kartu Visa Infinite Prioritas dari Space ke F (Fraud)");
+  });
+
+  it("uses Scenario, Steps, and Expected Result from the same storage table for updates", async () => {
+    const storageTable = `<table><tbody>
+      <tr><td><strong>No. Test Case</strong></td><td><br /></td></tr>
+      <tr><td><strong>Scenario</strong></td><td><span class="jira-issue" data-jira-key="TRAW-1215">TRAW-1215</span></td></tr>
+      <tr><td><strong>Steps</strong></td><td><ol><li>Login Way4 Workbench menggunakan akun DMCS_MKR (mekanisme MCS)</li></ol></td></tr>
+      <tr><td><strong>Expected Result</strong></td><td>Berhasil update block code kartu Visa Infinite Prioritas dari Space ke F (Fraud)</td></tr>
+    </tbody></table>`;
+    service.getPage = async () => ({
+      title: "Confluence import",
+      version: { number: 1 },
+      body: {
+        storage: { value: storageTable },
+        view: { value: `<table><tbody><tr><td><strong>Scenario</strong></td><td><span data-jira-key="TRAW-9999">TRAW-9999</span></td></tr></tbody></table>` },
+      },
+    }) as any;
+
+    const result = await service.parseEntriesFromPage("123", { updateFromConfluence: true });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]).toMatchObject({
+      scenarioIssueKey: "TRAW-1215",
+      steps: "Login Way4 Workbench menggunakan akun DMCS_MKR (mekanisme MCS)",
+      expectedResult: "Berhasil update block code kartu Visa Infinite Prioritas dari Space ke F (Fraud)",
+    });
+  });
+
   it("parses screen capture notes that appear before attachments", () => {
     const html = `<table><tbody><tr><td><strong>No. Test Case</strong></td><td>TC100</td></tr><tr><td><strong>Function</strong></td><td>Attachment Notes</td></tr><tr><td><p><strong>Screen Capture</strong></p></td><td><div class="content-wrapper"><div class="expand-content"><ul><li data-uuid="1">Before update credit limit (MC)</li></ul><p><span><img data-linked-resource-default-alias="image-1.png" /></span></p><p>VISA</p><p><span><img data-linked-resource-default-alias="image-2.png" /></span></p><p><em>*File EDW Batch SDGCRD</em></p><p><span><a data-file-src="/download/attachments/x/SDGCRD_20260507.txt">file</a></span></p></div></div></td></tr></tbody></table>`;
 

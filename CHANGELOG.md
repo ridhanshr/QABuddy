@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.5 — 6 Aug 2026
+
+### Bug Fixes
+
+- Update From Confluence now identifies test cases exclusively from the Jira key in Scenario and retains Steps and Expected Result from that same table, even when No. Test Case is empty.
+
 ## 0.8.4 — 23 Jul 2026
 
 ### Bug Fixes

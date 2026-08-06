@@ -374,6 +374,8 @@ export interface ParseConfluenceEntriesResult {
 
 export interface ParseConfluenceEntriesOptions {
   debug?: boolean;
+  /** Use only the Confluence storage table; avoids positional mapping from rendered view tables. */
+  updateFromConfluence?: boolean;
 }
 
 export interface ParseConfluenceParseDebugRow {

@@ -1408,7 +1408,7 @@ export function useAppState() {
         return;
       }
       const pageId = pageIdMatch[1];
-      const result = await window.qaBuddy.parseConfluenceEntries(pageId);
+      const result = await window.qaBuddy.parseConfluenceEntries(pageId, { updateFromConfluence: true });
       if (!result.contentLoaded || result.entries.length === 0) {
         setBanner({ tone: "info", text: "Tidak ada entry yang ditemukan di halaman Confluence tersebut." });
         setConfImportLoading(false);
