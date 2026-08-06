@@ -27,14 +27,14 @@ const primaryNavigation: NavItem[] = [
 ];
 
 const footerNavigation: NavItem[] = [
-  { key: "logs", label: "Logs", icon: "list_alt", filledIcon: "list_alt" },
+  { key: "logs", label: "Notifications", icon: "notifications", filledIcon: "notifications" },
   { key: "settings", label: "Settings", icon: "settings", filledIcon: "settings" },
   { key: "documentation", label: "Documentation", icon: "menu_book", filledIcon: "menu_book" },
 ];
 
 const allNavigation = [...primaryNavigation, ...footerNavigation];
 
-function AppContent({ onLogout, loggedInUser }: { onLogout: () => void; loggedInUser: string }) {
+function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => void; loggedInUser: string; loggedInRole: string }) {
   const {
     activeView,
     setActiveView,
@@ -52,7 +52,13 @@ function AppContent({ onLogout, loggedInUser }: { onLogout: () => void; loggedIn
     setShowDetailedProgress,
     brdGenerating,
     brdChunkProgress,
+    flushTokensOnLogout,
   } = useApp();
+
+  const visibleNavigation = primaryNavigation.filter((item) => {
+    if (item.key === "project-management" && loggedInRole === "Product Tester") return false;
+    return true;
+  });
 
   const currentNav = allNavigation.find((item) => item.key === activeView);
   const currentTitle = currentNav?.label || "Dashboard";
@@ -69,7 +75,7 @@ function AppContent({ onLogout, loggedInUser }: { onLogout: () => void; loggedIn
         </div>
 
         <nav className="nav-list">
-          {primaryNavigation.map((item) => (
+          {visibleNavigation.map((item) => (
             <NavigationButton
               active={item.key === activeView}
               item={item}
@@ -224,7 +230,7 @@ function AppContent({ onLogout, loggedInUser }: { onLogout: () => void; loggedIn
               </div>
               <button
                 type="button"
-                onClick={onLogout}
+                onClick={async () => { await flushTokensOnLogout(); onLogout(); }}
                 className="icon-button"
                 title="Logout"
                 style={{ color: "var(--on-surface-variant)" }}
@@ -271,20 +277,44 @@ function AppContent({ onLogout, loggedInUser }: { onLogout: () => void; loggedIn
 }
 
 const SESSION_KEY = "qa-buddy-session";
+const SESSION_ROLE_KEY = "qa-buddy-role";
+const SESSION_JIRA_TOKEN_KEY = "qa-buddy-jira-token";
+const SESSION_CONF_TOKEN_KEY = "qa-buddy-conf-token";
 
 export default function App() {
   const [loggedInUser, setLoggedInUser] = useState<string | null>(
     () => sessionStorage.getItem(SESSION_KEY)
   );
+  const [loggedInRole, setLoggedInRole] = useState<string>(
+    () => sessionStorage.getItem(SESSION_ROLE_KEY) ?? ""
+  );
+  const [jiraToken, setJiraToken] = useState<string>(
+    () => sessionStorage.getItem(SESSION_JIRA_TOKEN_KEY) ?? ""
+  );
+  const [confToken, setConfToken] = useState<string>(
+    () => sessionStorage.getItem(SESSION_CONF_TOKEN_KEY) ?? ""
+  );
 
-  const handleLogin = (username: string) => {
+  const handleLogin = (username: string, role: string, jiraApiToken: string, confluenceApiToken: string) => {
     sessionStorage.setItem(SESSION_KEY, username);
+    sessionStorage.setItem(SESSION_ROLE_KEY, role);
+    sessionStorage.setItem(SESSION_JIRA_TOKEN_KEY, jiraApiToken);
+    sessionStorage.setItem(SESSION_CONF_TOKEN_KEY, confluenceApiToken);
     setLoggedInUser(username);
+    setLoggedInRole(role);
+    setJiraToken(jiraApiToken);
+    setConfToken(confluenceApiToken);
   };
 
   const handleLogout = () => {
     sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_ROLE_KEY);
+    sessionStorage.removeItem(SESSION_JIRA_TOKEN_KEY);
+    sessionStorage.removeItem(SESSION_CONF_TOKEN_KEY);
     setLoggedInUser(null);
+    setLoggedInRole("");
+    setJiraToken("");
+    setConfToken("");
   };
 
   if (!loggedInUser) {
@@ -292,8 +322,8 @@ export default function App() {
   }
 
   return (
-    <AppProvider>
-      <AppContent onLogout={handleLogout} loggedInUser={loggedInUser} />
+    <AppProvider loggedInUser={loggedInUser} jiraToken={jiraToken} confToken={confToken}>
+      <AppContent onLogout={handleLogout} loggedInUser={loggedInUser} loggedInRole={loggedInRole} />
     </AppProvider>
   );
 }

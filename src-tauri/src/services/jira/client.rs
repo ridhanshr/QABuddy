@@ -107,8 +107,8 @@ impl JiraClient {
             .collect()
     }
 
-    /// Fetch test steps + results for an issue. Returns `None` if none/absent.
-    pub async fn fetch_test_steps(&self, issue_key: &str) -> Option<(Vec<String>, Vec<String>)> {
+    /// Fetch test steps + results + labels for an issue. Returns `None` if none/absent.
+    pub async fn fetch_test_steps(&self, issue_key: &str) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
         let path = format!("/test/{issue_key}/step");
         let data = self.xray.get_json_or_none(&path, &[]).await?;
         let arr = data.as_array().filter(|a| !a.is_empty())?;
@@ -129,10 +129,62 @@ impl JiraClient {
             .filter(|s| !s.is_empty())
             .collect();
         if steps.is_empty() && results.is_empty() {
-            None
-        } else {
-            Some((steps, results))
+            return None;
         }
+        let labels = self.fetch_issue_labels(issue_key).await;
+        Some((steps, results, labels))
+    }
+
+    /// Fetch labels field from a Jira issue. Returns empty vec on any error.
+    pub async fn fetch_issue_labels(&self, issue_key: &str) -> Vec<String> {
+        let path = format!("/issue/{issue_key}");
+        let Ok(data) = self.api.get_json(&path, &[("fields", "labels".to_string())]).await else {
+            return vec![];
+        };
+        data["fields"]["labels"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Fetch the deepest Xray Test Repository folder name for a test issue.
+    /// Xray stores the path in the Jira issue under the "testRepositoryPath" field
+    /// (rendered as a string like "Transaction/Airport Lounge").
+    pub async fn fetch_test_repository_folder(&self, _project_key: &str, issue_key: &str) -> Option<String> {
+        // Fetch ALL fields from the Jira issue and look for the repository path.
+        let path = format!("/issue/{issue_key}");
+        let Ok(data) = self.api.get_json(&path, &[]).await else {
+            return None;
+        };
+        eprintln!("[fetch_test_repository_folder] issue={issue_key} all_fields={}", &data["fields"].to_string()[..data["fields"].to_string().len().min(500)]);
+
+        let fields = &data["fields"];
+
+        // 1. Xray injects a named field "testRepositoryPath" (some versions)
+        if let Some(p) = fields["testRepositoryPath"].as_str() {
+            return Some(deepest_path_segment(p));
+        }
+
+        // 2. Scan all customfield_* for a string value containing "/"
+        //    that looks like a folder path (heuristic)
+        if let Some(map) = fields.as_object() {
+            for (k, v) in map {
+                if k.starts_with("customfield_") {
+                    if let Some(s) = v.as_str() {
+                        if s.contains('/') && !s.contains('@') && !s.contains("http") {
+                            eprintln!("[fetch_test_repository_folder] matched custom field {k}={s}");
+                            return Some(deepest_path_segment(s));
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Add tests to an Xray folder, trying several payload shapes for compat.
@@ -438,6 +490,16 @@ fn build_folder_tree(flat: Vec<XrayFolder>) -> Vec<XrayFolder> {
         }
     }
     out
+}
+
+fn deepest_path_segment(path: &str) -> String {
+    path.trim_matches('/')
+        .split('/')
+        .filter(|s| !s.trim().is_empty())
+        .last()
+        .unwrap_or(path)
+        .trim()
+        .to_string()
 }
 
 fn normalize_field(f: &Value) -> Value {

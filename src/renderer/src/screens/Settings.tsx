@@ -175,13 +175,14 @@ export default function Settings() {
                 <div className="bug-form-row-2col">
                   <label>
                     <span>Jira Username / Email</span>
-                    <input
-                      onChange={(event) =>
-                        setConfig({ ...config, jira: { ...config.jira, username: event.target.value } })
-                      }
-                      placeholder="yourname@company.com"
-                      value={config.jira.username}
-                    />
+                    <div style={{ position: "relative" }}>
+                      <input
+                        readOnly
+                        value={config.jira.username}
+                        style={{ paddingRight: 36, background: "var(--surface-container)", cursor: "not-allowed", color: "var(--on-surface-variant)" }}
+                      />
+                      <span className="material-symbols" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 16, color: "var(--on-surface-variant)", pointerEvents: "none" }}>lock</span>
+                    </div>
                   </label>
                   <label>
                     <span>Jira API Token</span>
@@ -262,13 +263,14 @@ export default function Settings() {
                 <div className="bug-form-row-2col">
                   <label>
                     <span>Confluence Username / Email</span>
-                    <input
-                      onChange={(event) =>
-                        setConfig({ ...config, confluence: { ...config.confluence, username: event.target.value } })
-                      }
-                      placeholder="yourname@company.com"
-                      value={config.confluence.username}
-                    />
+                    <div style={{ position: "relative" }}>
+                      <input
+                        readOnly
+                        value={config.confluence.username}
+                        style={{ paddingRight: 36, background: "var(--surface-container)", cursor: "not-allowed", color: "var(--on-surface-variant)" }}
+                      />
+                      <span className="material-symbols" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 16, color: "var(--on-surface-variant)", pointerEvents: "none" }}>lock</span>
+                    </div>
                   </label>
                   <label>
                     <span>Confluence PAT / Token</span>

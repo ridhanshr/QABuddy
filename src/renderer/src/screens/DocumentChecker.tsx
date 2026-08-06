@@ -4,7 +4,7 @@ import { useApp } from "../context/AppContext";
 export default function DocumentChecker() {
   const { loading, activeView } = useApp();
 
-  if (loading || activeView !== "document-checker") {
+  if (loading || (activeView as string) !== "document-checker") {
     return null;
   }
 

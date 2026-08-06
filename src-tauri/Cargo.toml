@@ -45,3 +45,4 @@ rust_xlsxwriter = "0.80"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "chrono", "macros"] }
 dotenvy = "0.15"
 urlencoding = "2"
+bcrypt = "0.15"

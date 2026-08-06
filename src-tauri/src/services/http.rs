@@ -217,13 +217,23 @@ impl AtlassianClient {
         self.put_void(path, body).await
     }
 
+    /// POST that ignores the response body (used for Xray step updates).
+    pub async fn post_json_void(&self, path: &str, body: &serde_json::Value) -> Result<()> {
+        let url = self.url(path, &[]);
+        let body_str = serde_json::to_string(body)?;
+        let resp = send_with_retry_body(&self.http, Method::POST, &url, &body_str).await?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let text = resp.text().await.unwrap_or_default();
+        Err(ServiceError::Api(format!("HTTP {status} Method Not Allowed: {text}")))
+    }
+
     /// Perform a GET but swallow errors, returning `None` on failure. Mirrors
     /// the Electron client's try/catch fallback pattern.
     pub async fn get_json_or_none(&self, path: &str, query: &[(&str, String)]) -> Option<serde_json::Value> {
-        match self.get_json(path, query).await {
-            Ok(v) => Some(v),
-            Err(_) => None,
-        }
+        self.get_json(path, query).await.ok()
     }
 }
 

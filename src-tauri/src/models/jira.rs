@@ -121,6 +121,8 @@ pub struct FetchTestStepsResult {
     pub issue_key: String,
     pub steps: String,
     pub expected_result: String,
+    pub labels: Vec<String>,
+    pub function_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

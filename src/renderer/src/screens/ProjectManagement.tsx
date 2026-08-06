@@ -41,8 +41,8 @@ interface TestExecutionItem {
   detailLoaded?: boolean;
 }
 
-type SubView = "repository" | "uqa" | "plans" | "executions";
-type PlanSyncMode = "manual" | "auto";
+type SubView = "sync-manual" | "repository" | "uqa" | "plans" | "executions";
+type PlanSyncMode = "auto";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -133,8 +133,9 @@ function ExecProgressBar({ exec }: { exec: TestExecutionItem }) {
             {seg.label}: <strong style={{ color: "var(--on-surface)" }}>{seg.value}</strong>
           </span>
         ))}
-        <span style={{ fontSize: 10, color: "var(--on-surface-variant)", marginLeft: "auto" }}>
-          {exec.passRate !== undefined ? `${Math.round(exec.passRate)}% pass` : ""}
+        <span style={{ fontSize: 10, color: "var(--on-surface-variant)", marginLeft: "auto", display: "flex", gap: 6 }}>
+          <strong style={{ color: "var(--on-surface)" }}>{total}</strong> total
+          {exec.passRate !== undefined && <span>· {Math.round(exec.passRate)}% pass</span>}
         </span>
       </div>
     </div>
@@ -146,7 +147,7 @@ function ExecProgressBar({ exec }: { exec: TestExecutionItem }) {
 export default function ProjectManagement() {
   const { config, jiraProjects } = useApp();
 
-  const [subView, setSubView] = useState<SubView>("repository");
+  const [subView, setSubView] = useState<SubView>("sync-manual");
   const [breadcrumb, setBreadcrumb] = useState<{ projectKey?: string; planKey?: string; planSummary?: string }>({});
 
   // Test Repository
@@ -173,12 +174,11 @@ export default function ProjectManagement() {
   const [plansLoading, setPlansLoading] = useState(false);
   const [plansError, setPlansError] = useState<string | null>(null);
   const [planSearch, setPlanSearch] = useState("");
-  const [planSyncMode, setPlanSyncMode] = useState<PlanSyncMode>("auto");
 
-  // Sync Manually modal
-  const [manualModalOpen, setManualModalOpen] = useState(false);
+  // Sync Manually — standalone sub-menu
   const [manualUqaKey, setManualUqaKey] = useState("");
   const [manualTpKey, setManualTpKey] = useState("");
+  const [manualTeKey, setManualTeKey] = useState("");
   const [manualSaving, setManualSaving] = useState(false);
   const [manualSaveResult, setManualSaveResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
@@ -200,27 +200,44 @@ export default function ProjectManagement() {
   const [selectedExecsForSync, setSelectedExecsForSync] = useState<Set<string>>(new Set());
   const [syncingExecs, setSyncingExecs] = useState(false);
   const [execSyncResult, setExecSyncResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  // Per-TE TC sync state
+  const [syncingTcForExec, setSyncingTcForExec] = useState<Set<string>>(new Set());
+  const [tcSyncResultForExec, setTcSyncResultForExec] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
   // ── Fetch UQA ──
+  const UQA_CACHE_KEY = `qabuddy_uqa_cache_${config.jira.username}`;
+  const UQA_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
   const loadUqa = useCallback(async (force = false) => {
-    // Return cached data immediately if available and not a forced refresh
-    if (!force && uqaCacheRef.current !== null) {
-      setUqaItems(uqaCacheRef.current);
-      return;
+    // Try sessionStorage cache first for instant display
+    if (!force) {
+      try {
+        const raw = sessionStorage.getItem(UQA_CACHE_KEY);
+        if (raw) {
+          const { data, ts } = JSON.parse(raw) as { data: UqaTicket[]; ts: number };
+          if (Date.now() - ts < UQA_CACHE_TTL) {
+            setUqaItems(data);
+            uqaCacheRef.current = data;
+            // Refresh DB status quietly in background
+            window.qaBuddy.checkUqaProjectsInDb(data.map((m) => m.key))
+              .then((inDb) => setUqaInDb(new Set(inDb)))
+              .catch(() => {});
+            return;
+          }
+        }
+      } catch { /* sessionStorage unavailable */ }
     }
+
     setUqaLoading(true);
     setUqaError(null);
     try {
       const username = config.jira.username;
-      // Run two queries in parallel instead of one slow OR query —
-      // Jira OR across custom fields is significantly slower than two separate requests
       const jqlAssignee = `project = "UAT QA Activity 2026" AND assignee = "${username}" ORDER BY updated DESC`;
       const jqlTester = `project = "UAT QA Activity 2026" AND "Product Tester" = "${username}" ORDER BY updated DESC`;
       const [assigneeResults, testerResults] = await Promise.all([
         window.qaBuddy.findIssuesByJql(jqlAssignee, 50),
         window.qaBuddy.findIssuesByJql(jqlTester, 50),
       ]);
-      // Merge and deduplicate by key
       const seen = new Set<string>();
       const merged: UqaTicket[] = [];
       for (const r of [...assigneeResults, ...testerResults]) {
@@ -235,11 +252,10 @@ export default function ProjectManagement() {
           projectKey: extractProjectKey(r.summary),
         });
       }
-      // Sort by key descending (most recent UQA number first)
       merged.sort((a, b) => b.key.localeCompare(a.key, undefined, { numeric: true }));
       uqaCacheRef.current = merged;
       setUqaItems(merged);
-      // Check which ones are already in DB
+      try { sessionStorage.setItem(UQA_CACHE_KEY, JSON.stringify({ data: merged, ts: Date.now() })); } catch { }
       window.qaBuddy.checkUqaProjectsInDb(merged.map((m) => m.key))
         .then((inDb) => setUqaInDb(new Set(inDb)))
         .catch(() => {});
@@ -305,25 +321,57 @@ export default function ProjectManagement() {
     }
   }, []);
 
+  // ── Validate manual input combination ──
+  const manualValidation = (() => {
+    const hasUqa = manualUqaKey.trim().length > 0;
+    const hasTp = manualTpKey.trim().length > 0;
+    const hasTe = manualTeKey.trim().length > 0;
+    const count = [hasUqa, hasTp, hasTe].filter(Boolean).length;
+    if (count < 2) return { valid: false, error: "Minimal 2 field harus diisi." };
+    if (hasUqa && !hasTp && hasTe) return { valid: false, error: "UQA Project dan Test Execution tidak memiliki relasi langsung. Harus melalui Test Plan." };
+    return { valid: true, error: null };
+  })();
+
   // ── Save manual relation to DB ──
   const handleManualSave = useCallback(async () => {
     const uqaKey = manualUqaKey.trim().toUpperCase();
     const tpKey = manualTpKey.trim().toUpperCase();
-    if (!uqaKey || !tpKey) return;
+    const teKey = manualTeKey.trim().toUpperCase();
+    if (!manualValidation.valid) return;
     setManualSaving(true);
     setManualSaveResult(null);
     try {
-      const input: SaveTestPlanInput = { uqa_key: uqaKey, tp_jira_key: tpKey };
-      await window.qaBuddy.saveUqaTestPlan(input);
-      setManualSaveResult({ ok: true, msg: `Relasi ${uqaKey} ↔ ${tpKey} berhasil disimpan ke database.` });
+      const parts: string[] = [];
+
+      // Always save test_plan if tp is provided (covers UQA+TP and TP+TE and all 3)
+      if (tpKey) {
+        const input: SaveTestPlanInput = { uqa_key: uqaKey, tp_jira_key: tpKey };
+        await window.qaBuddy.saveUqaTestPlan(input);
+        if (uqaKey) parts.push(`UQA ${uqaKey} ↔ Test Plan ${tpKey}`);
+        else parts.push(`Test Plan ${tpKey}`);
+      }
+
+      // Save test execution if te is provided (requires tpKey as FK)
+      if (teKey && tpKey) {
+        const execInput: SaveTestExecutionInput = {
+          te_jira_key: teKey,
+          title: "",
+          tp_jira_key: tpKey,
+        };
+        await window.qaBuddy.saveTestExecutions([execInput]);
+        parts.push(`Test Execution ${teKey} ↔ Test Plan ${tpKey}`);
+      }
+
+      setManualSaveResult({ ok: true, msg: `Berhasil disimpan: ${parts.join(" · ")}` });
       setManualUqaKey("");
       setManualTpKey("");
+      setManualTeKey("");
     } catch (e: any) {
       setManualSaveResult({ ok: false, msg: e?.message ?? String(e) });
     } finally {
       setManualSaving(false);
     }
-  }, [manualUqaKey, manualTpKey]);
+  }, [manualUqaKey, manualTpKey, manualTeKey, manualValidation.valid]);
 
   // ── Sync selected plans (auto mode) to DB ──
   const handleSyncSelected = useCallback(async () => {
@@ -409,6 +457,20 @@ export default function ProjectManagement() {
     setSelectedExecsForSync(new Set());
     setSyncingExecs(false);
   }, [selectedExecsForSync, executions, breadcrumb.planKey]);
+
+  // ── Sync TC for a single TE to DB ──
+  const handleSyncTcForExec = useCallback(async (execKey: string) => {
+    setSyncingTcForExec((prev) => new Set(prev).add(execKey));
+    setTcSyncResultForExec((prev) => ({ ...prev, [execKey]: undefined as any }));
+    try {
+      const count = await window.qaBuddy.syncExecutionTestsToDb(execKey);
+      setTcSyncResultForExec((prev) => ({ ...prev, [execKey]: { ok: true, msg: `${count} TC tersimpan` } }));
+    } catch (e: any) {
+      setTcSyncResultForExec((prev) => ({ ...prev, [execKey]: { ok: false, msg: e?.message || String(e) } }));
+    } finally {
+      setSyncingTcForExec((prev) => { const s = new Set(prev); s.delete(execKey); return s; });
+    }
+  }, []);
 
   // ── Sync UQA to DB ──
   const handleSyncUqaToDb = useCallback(async () => {
@@ -563,6 +625,7 @@ export default function ProjectManagement() {
 
   // ── Tab bar ──
   const tabs: { key: SubView; label: string; icon: string }[] = [
+    { key: "sync-manual", label: "Sync Manually", icon: "edit_note" },
     { key: "repository", label: "Test Repository", icon: "storage" },
     { key: "uqa", label: "UQA Project", icon: "folder_open" },
     { key: "plans", label: "Test Plans", icon: "fact_check" },
@@ -664,6 +727,149 @@ export default function ProjectManagement() {
 
       {/* ── Content ── */}
       <div style={{ flex: 1, overflow: "auto" }}>
+
+        {/* ── Sync Manually ── */}
+        {subView === "sync-manual" && (
+          <div style={{ maxWidth: 560 }}>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--on-surface)" }}>Sync Manually</div>
+              <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginTop: 4, lineHeight: 1.6 }}>
+                Input relasi antar entitas secara manual ke database. Minimal 2 field harus diisi.
+              </div>
+            </div>
+
+            <div className="card" style={{ padding: 28 }}>
+              {/* ── UQA Project field ── */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-variant)", display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <span className="material-symbols" style={{ fontSize: 15, color: "var(--on-surface-variant)" }}>folder_open</span>
+                  UQA Project Key
+                </label>
+                <input
+                  type="text"
+                  placeholder="Contoh: UQAQA2026-42"
+                  value={manualUqaKey}
+                  onChange={(e) => { setManualUqaKey(e.target.value); setManualSaveResult(null); }}
+                  style={{ width: "100%", fontSize: 13, padding: "9px 12px", borderRadius: 6, border: `1px solid ${manualUqaKey.trim() ? "var(--primary)" : "var(--outline-variant)"}`, background: "var(--surface-container)", color: "var(--on-surface)", boxSizing: "border-box", fontFamily: "monospace" }}
+                />
+              </div>
+
+              {/* Connector visual */}
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+                <span className="material-symbols" style={{ fontSize: 16, color: "var(--outline-variant)" }}>arrow_downward</span>
+              </div>
+
+              {/* ── Test Plan field ── */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-variant)", display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <span className="material-symbols" style={{ fontSize: 15, color: "var(--on-surface-variant)" }}>fact_check</span>
+                  Test Plan Key
+                </label>
+                <input
+                  type="text"
+                  placeholder="Contoh: ENGBRICC-41"
+                  value={manualTpKey}
+                  onChange={(e) => { setManualTpKey(e.target.value); setManualSaveResult(null); }}
+                  style={{ width: "100%", fontSize: 13, padding: "9px 12px", borderRadius: 6, border: `1px solid ${manualTpKey.trim() ? "var(--primary)" : "var(--outline-variant)"}`, background: "var(--surface-container)", color: "var(--on-surface)", boxSizing: "border-box", fontFamily: "monospace" }}
+                />
+              </div>
+
+              {/* Connector visual */}
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+                <span className="material-symbols" style={{ fontSize: 16, color: "var(--outline-variant)" }}>arrow_downward</span>
+              </div>
+
+              {/* ── Test Execution field ── */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-variant)", display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <span className="material-symbols" style={{ fontSize: 15, color: "var(--on-surface-variant)" }}>assignment_turned_in</span>
+                  Test Execution Key
+                </label>
+                <input
+                  type="text"
+                  placeholder="Contoh: ENGBRICC-99"
+                  value={manualTeKey}
+                  onChange={(e) => { setManualTeKey(e.target.value); setManualSaveResult(null); }}
+                  style={{ width: "100%", fontSize: 13, padding: "9px 12px", borderRadius: 6, border: `1px solid ${manualTeKey.trim() ? "var(--primary)" : "var(--outline-variant)"}`, background: "var(--surface-container)", color: "var(--on-surface)", boxSizing: "border-box", fontFamily: "monospace" }}
+                />
+              </div>
+
+              {/* Validation info */}
+              {(() => {
+                const hasUqa = manualUqaKey.trim().length > 0;
+                const hasTp = manualTpKey.trim().length > 0;
+                const hasTe = manualTeKey.trim().length > 0;
+                const filledCount = [hasUqa, hasTp, hasTe].filter(Boolean).length;
+
+                if (filledCount === 0) return null;
+
+                const isInvalidCombo = hasUqa && !hasTp && hasTe;
+                const isOnlyOne = filledCount === 1;
+
+                if (isInvalidCombo || isOnlyOne) {
+                  return (
+                    <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 6, background: "var(--error-container)", color: "var(--on-error-container)", fontSize: 12, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                      <span className="material-symbols" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>warning</span>
+                      <span>
+                        {isInvalidCombo
+                          ? "UQA Project dan Test Execution tidak memiliki relasi langsung. Test Plan harus diisi sebagai penghubung."
+                          : "Minimal 2 field harus diisi. Satu field saja tidak dapat disimpan."}
+                      </span>
+                    </div>
+                  );
+                }
+
+                // Preview relasi yang akan disimpan
+                const lines: string[] = [];
+                if (hasUqa && hasTp) lines.push(`uqa_project [${manualUqaKey.trim().toUpperCase()}] ↔ test_plan [${manualTpKey.trim().toUpperCase()}]`);
+                else if (hasTp) lines.push(`test_plan [${manualTpKey.trim().toUpperCase()}] (tanpa UQA)`);
+                if (hasTp && hasTe) lines.push(`test_plan [${manualTpKey.trim().toUpperCase()}] ↔ test_execution [${manualTeKey.trim().toUpperCase()}]`);
+                return (
+                  <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 6, background: "color-mix(in srgb, var(--primary) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)", fontSize: 12 }}>
+                    <div style={{ fontWeight: 600, color: "var(--primary)", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span className="material-symbols" style={{ fontSize: 14 }}>check_circle</span>
+                      Relasi yang akan disimpan:
+                    </div>
+                    {lines.map((l, i) => (
+                      <div key={i} style={{ color: "var(--on-surface)", fontFamily: "monospace", fontSize: 11, lineHeight: 1.8 }}>• {l}</div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {manualSaveResult && (
+                <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 6, background: manualSaveResult.ok ? "#16a34a18" : "var(--error-container)", color: manualSaveResult.ok ? "#16a34a" : "var(--on-error-container)", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="material-symbols" style={{ fontSize: 16 }}>{manualSaveResult.ok ? "check_circle" : "error"}</span>
+                  {manualSaveResult.msg}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={() => { setManualUqaKey(""); setManualTpKey(""); setManualTeKey(""); setManualSaveResult(null); }}
+                  disabled={manualSaving}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 6, border: "1px solid var(--outline-variant)", background: "transparent", cursor: "pointer", fontSize: 13 }}
+                >
+                  <span className="material-symbols" style={{ fontSize: 15 }}>refresh</span>
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={handleManualSave}
+                  disabled={manualSaving || !manualValidation.valid}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 20px", borderRadius: 6, border: "none", background: manualValidation.valid ? "var(--primary)" : "var(--surface-container-high)", color: manualValidation.valid ? "var(--on-primary)" : "var(--on-surface-variant)", cursor: manualValidation.valid ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 600 }}
+                >
+                  <span className={`material-symbols${manualSaving ? " rotating" : ""}`} style={{ fontSize: 15 }}>
+                    {manualSaving ? "sync" : "save"}
+                  </span>
+                  {manualSaving ? "Menyimpan..." : "Simpan ke Database"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Test Repository ── */}
         {subView === "repository" && (
           <div>
@@ -1070,106 +1276,8 @@ export default function ProjectManagement() {
               </button>
             )}
 
-            {/* Sync mode toggle */}
-            <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 20, background: "var(--surface-container-high)", borderRadius: 8, padding: 4, width: "fit-content" }}>
-              {(["auto", "manual"] as PlanSyncMode[]).map((mode) => {
-                const label = mode === "auto" ? "Sync Automatically" : "Sync Manually";
-                const icon = mode === "auto" ? "cloud_sync" : "edit_note";
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => { setPlanSyncMode(mode); setSyncResult(null); setManualSaveResult(null); }}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      padding: "8px 16px", borderRadius: 6, border: "none",
-                      background: planSyncMode === mode ? "var(--surface)" : "transparent",
-                      color: planSyncMode === mode ? "var(--primary)" : "var(--on-surface-variant)",
-                      fontWeight: planSyncMode === mode ? 600 : 400,
-                      fontSize: 13, cursor: "pointer",
-                      boxShadow: planSyncMode === mode ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    <span className="material-symbols" style={{ fontSize: 16 }}>{icon}</span>
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* ── Sync Manually ── */}
-            {planSyncMode === "manual" && (
-              <div style={{ maxWidth: 520 }}>
-                <div className="card" style={{ padding: 24 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Input Relasi Manual</div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginBottom: 20 }}>
-                    Masukkan Jira UQA Key dan Test Plan Key secara manual untuk disimpan ke database.
-                  </div>
-
-                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                    <div>
-                      <label style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-variant)", display: "block", marginBottom: 6 }}>
-                        Jira UQA Key <span style={{ color: "var(--error)" }}>*</span>
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Contoh: UQAQA2026-42"
-                        value={manualUqaKey}
-                        onChange={(e) => setManualUqaKey(e.target.value)}
-                        style={{ width: "100%", fontSize: 13, padding: "9px 12px", borderRadius: 6, border: "1px solid var(--outline-variant)", background: "var(--surface-container)", color: "var(--on-surface)", boxSizing: "border-box" }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-variant)", display: "block", marginBottom: 6 }}>
-                        Jira Test Plan Key <span style={{ color: "var(--error)" }}>*</span>
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Contoh: ENGBRICC-41"
-                        value={manualTpKey}
-                        onChange={(e) => setManualTpKey(e.target.value)}
-                        style={{ width: "100%", fontSize: 13, padding: "9px 12px", borderRadius: 6, border: "1px solid var(--outline-variant)", background: "var(--surface-container)", color: "var(--on-surface)", boxSizing: "border-box" }}
-                      />
-                    </div>
-                  </div>
-
-                  {manualSaveResult && (
-                    <div style={{ marginTop: 16, padding: "10px 14px", borderRadius: 6, background: manualSaveResult.ok ? "#16a34a18" : "var(--error-container)", color: manualSaveResult.ok ? "#16a34a" : "var(--on-error-container)", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span className="material-symbols" style={{ fontSize: 16 }}>{manualSaveResult.ok ? "check_circle" : "error"}</span>
-                      {manualSaveResult.msg}
-                    </div>
-                  )}
-
-                  <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
-                    <button
-                      type="button"
-                      className="button-secondary"
-                      onClick={() => { setManualUqaKey(""); setManualTpKey(""); setManualSaveResult(null); }}
-                      disabled={manualSaving}
-                    >
-                      Reset
-                    </button>
-                    <button
-                      type="button"
-                      className="button-primary"
-                      onClick={handleManualSave}
-                      disabled={manualSaving || !manualUqaKey.trim() || !manualTpKey.trim()}
-                      style={{ display: "flex", alignItems: "center", gap: 6 }}
-                    >
-                      <span className={`material-symbols${manualSaving ? " rotating" : ""}`} style={{ fontSize: 15 }}>
-                        {manualSaving ? "sync" : "save"}
-                      </span>
-                      {manualSaving ? "Menyimpan..." : "Simpan ke Database"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* ── Sync Automatically ── */}
-            {planSyncMode === "auto" && (
-              <div>
+            <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: "var(--on-surface)" }}>
@@ -1367,7 +1475,6 @@ export default function ProjectManagement() {
                   );
                 })()}
               </div>
-            )}
           </div>
         )}
 
@@ -1471,7 +1578,7 @@ export default function ProjectManagement() {
                           <thead>
                             <tr style={{ borderBottom: "1px solid var(--outline-variant)", background: "var(--surface-container)" }}>
                               <th style={{ padding: "10px 14px", width: 40 }} />
-                              {["Test Execution Key", "Judul Test Execution", "Status", "Assignee", "Progress Eksekusi", "Status DB"].map((h) => (
+                              {["Test Execution Key", "Judul Test Execution", "Status", "Assignee", "Progress Eksekusi", "Status DB", "TC di DB"].map((h) => (
                                 <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                                   {h}
                                 </th>
@@ -1527,6 +1634,35 @@ export default function ProjectManagement() {
                                         Belum di DB
                                       </span>
                                     )}
+                                  </td>
+                                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                                    {(() => {
+                                      const syncing = syncingTcForExec.has(exec.key);
+                                      const res = tcSyncResultForExec[exec.key];
+                                      const teInDb = execsInDb.has(exec.key);
+                                      return (
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                                          <button
+                                            type="button"
+                                            className="ghost-button"
+                                            onClick={() => handleSyncTcForExec(exec.key)}
+                                            disabled={syncing || !teInDb}
+                                            title={!teInDb ? "Simpan TE ke DB terlebih dahulu" : undefined}
+                                            style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, padding: "4px 10px", opacity: !teInDb ? 0.4 : 1, cursor: !teInDb ? "not-allowed" : "pointer" }}
+                                          >
+                                            <span className={`material-symbols${syncing ? " rotating" : ""}`} style={{ fontSize: 13 }}>
+                                              {syncing ? "sync" : "save"}
+                                            </span>
+                                            {syncing ? "Menyimpan..." : "Sync TC"}
+                                          </button>
+                                          {res && (
+                                            <span style={{ fontSize: 10, color: res.ok ? "#16a34a" : "var(--error)" }}>
+                                              {res.ok ? "✓" : "✗"} {res.msg}
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
                                   </td>
                                 </tr>
                               );

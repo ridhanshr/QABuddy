@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import ReactDOM from "react-dom";
 import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
 import type { BRDTestCase, BRDGenerationResult, SemanticSearchResult, XrayFolder } from "@shared/types";
@@ -240,6 +241,62 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [searchError, setSearchError] = useState("");
   const searchCache = useRef<Map<string, { data: any[]; ts: number }>>(new Map());
 
+  // ── Reuse Test Case ──
+  const [selectedResultKeys, setSelectedResultKeys] = useState<Set<string>>(new Set());
+  const [showReuseModal, setShowReuseModal] = useState(false);
+  const [reuseProject, setReuseProject] = useState("");
+  const [reuseFolders, setReuseFolders] = useState<{ label: string; value: string }[]>([]);
+  const [reuseFoldersLoading, setReuseFoldersLoading] = useState(false);
+  const [reuseFolder, setReuseFolder] = useState("");
+  const [reuseLoading, setReuseLoading] = useState(false);
+  const [reuseResult, setReuseResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const fetchReuseFolders = useCallback(async (projectKey: string) => {
+    if (!projectKey) { setReuseFolders([]); setReuseFolder(""); return; }
+    setReuseFoldersLoading(true);
+    setReuseFolders([]);
+    setReuseFolder("");
+    try {
+      const tree = await window.qaBuddy.getXrayFolders(projectKey);
+      setReuseFolders(flattenFolders(tree));
+    } catch {
+      setReuseFolders([]);
+    } finally {
+      setReuseFoldersLoading(false);
+    }
+  }, []);
+
+  const handleReuseProjectChange = useCallback((key: string) => {
+    setReuseProject(key);
+    void fetchReuseFolders(key);
+  }, [fetchReuseFolders]);
+
+  const handleReuseSubmit = useCallback(async () => {
+    if (!reuseProject || !reuseFolder || selectedResultKeys.size === 0) return;
+    setReuseLoading(true);
+    setReuseResult(null);
+    try {
+      const keys = Array.from(selectedResultKeys);
+      await window.qaBuddy.bulkMoveToXrayFolder(keys, reuseFolder);
+      setReuseResult({ ok: true, msg: `${keys.length} test case berhasil dipindahkan ke folder "${reuseFolder}"` });
+    } catch (e: any) {
+      setReuseResult({ ok: false, msg: e?.message || String(e) });
+    } finally {
+      setReuseLoading(false);
+    }
+  }, [reuseProject, reuseFolder, selectedResultKeys]);
+
+  const toggleResultKey = useCallback((key: string) => {
+    setSelectedResultKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // clear selection when results change
+  useEffect(() => { setSelectedResultKeys(new Set()); }, [searchResults]);
+
   // ── Creation Tab ── (generation state lives in global AppContext to survive navigation)
   const {
     brdGenerating: generating,
@@ -264,20 +321,20 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [selectedFolder, setSelectedFolder] = useState("");
 
   const doJiraSearch = useCallback(async (project: string, keyword: string, forceRefresh = false) => {
-    const cacheKey = `${project}::all`;
+    const cacheKey = `${project}::${keyword}`;
     const now = Date.now();
     const cached = searchCache.current.get(cacheKey);
-    let all: any[] = [];
     if (cached && now - cached.ts < CACHE_TTL && !forceRefresh) {
-      all = cached.data;
-    } else {
-      const jql = `project = "${project}" AND issuetype = "Test" ORDER BY updated DESC`;
-      all = await window.qaBuddy.findIssuesByJql(jql, 100);
-      searchCache.current.set(cacheKey, { data: all, ts: now });
+      return cached.data;
     }
-    if (!keyword) return all;
-    const q = keyword.toLowerCase();
-    return all.filter((i: any) => i.summary?.toLowerCase().includes(q));
+    // Search directly on Jira — keyword goes into JQL so results are not capped by a local limit
+    const keywordClause = keyword
+      ? ` AND summary ~ "${keyword.replace(/"/g, '\\"')}"`
+      : "";
+    const jql = `project = "${project}" AND issuetype = "Test"${keywordClause} ORDER BY updated DESC`;
+    const results = await window.qaBuddy.findIssuesByJql(jql, 200);
+    searchCache.current.set(cacheKey, { data: results, ts: now });
+    return results;
   }, []);
 
   const handleSearch = useCallback(async (forceRefresh = false) => {
@@ -479,7 +536,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   placeholder='e.g. "Find test cases about user login with invalid password"'
                   style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)" }}
                 />
-                <button className="button primary" onClick={handleSearch} disabled={searchLoading || !semanticQuery.trim()} type="button">
+                <button className="button primary" onClick={() => handleSearch()} disabled={searchLoading || !semanticQuery.trim()} type="button">
                   {searchLoading ? "Searching..." : "AI Search"}
                 </button>
               </div>
@@ -494,11 +551,44 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
 
           {searchResults.length > 0 && (
             <div>
-              <h4 style={{ margin: "12px 0 8px" }}>Results ({searchResults.length})</h4>
+              {/* Toolbar: count + reuse action */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "12px 0 8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <h4 style={{ margin: 0 }}>Results ({searchResults.length})</h4>
+                  {selectedResultKeys.size > 0 && (
+                    <span style={{ fontSize: 13, color: "var(--on-surface-variant)" }}>
+                      {selectedResultKeys.size} dipilih
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {selectedResultKeys.size > 0 && (
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick={() => { setReuseResult(null); setReuseProject(""); setReuseFolder(""); setReuseFolders([]); setShowReuseModal(true); }}
+                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", fontSize: 13 }}
+                    >
+                      <span className="material-symbols" style={{ fontSize: 16 }}>recycling</span>
+                      Reuse Test Case ({selectedResultKeys.size})
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setSelectedResultKeys(prev => prev.size === searchResults.length ? new Set() : new Set(searchResults.map((r: any) => r.key || r.issueKey)))}
+                    style={{ fontSize: 12, padding: "5px 10px" }}
+                  >
+                    {selectedResultKeys.size === searchResults.length ? "Deselect All" : "Select All"}
+                  </button>
+                </div>
+              </div>
+
               <div className="table-wrapper" style={{ overflowX: "auto" }}>
                 <table className="data-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ borderBottom: "2px solid var(--surface-container-high)" }}>
+                      <th style={{ padding: "8px 12px", width: 36 }} />
                       <th style={{ textAlign: "left", padding: "8px 12px" }}>Key</th>
                       <th style={{ textAlign: "left", padding: "8px 12px" }}>Summary</th>
                       {searchMode === "keyword" ? (
@@ -515,67 +605,87 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {searchResults.map((r: any, i: number) => (
-                      <tr key={r.key || r.issueKey || i} style={{ borderBottom: "1px solid var(--surface-container-high)" }}>
-                        <td style={{ padding: "8px 12px" }}>
-                          <a
-                            href="#"
-                            onClick={(e) => { e.preventDefault(); window.qaBuddy.openExternal(r.url).catch(() => {}); }}
-                            style={{ fontWeight: 600, color: "var(--primary)", textDecoration: "none", cursor: "pointer" }}
-                            title={`Open ${r.key || r.issueKey} in Jira`}
-                          >
-                            {r.key || r.issueKey}
-                            <span className="material-symbols" style={{ fontSize: 12, marginLeft: 4, verticalAlign: "middle" }}>open_in_new</span>
-                          </a>
-                        </td>
-                        <td style={{ padding: "8px 12px" }}>{r.summary || r.title}</td>
-                        {searchMode === "keyword" ? (
-                          <>
-                            <td style={{ padding: "8px 12px" }}>
-                              <span style={{
-                                padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600,
-                                background: r.status === "Done" || r.status === "Selesai" || r.status === "Closed" ? "var(--tertiary-container)" : r.status === "In Progress" || r.status === "Open" ? "var(--secondary-container)" : "var(--surface-container-high)",
-                                color: r.status === "Done" || r.status === "Selesai" || r.status === "Closed" ? "var(--on-tertiary-container)" : r.status === "In Progress" || r.status === "Open" ? "var(--on-secondary-container)" : "var(--on-surface-variant)",
-                              }}>
-                                {r.status || "-"}
-                              </span>
-                            </td>
-                            <td style={{ padding: "8px 12px" }}>
-                              <span style={{
-                                padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600,
-                                background: r.priority === "Highest" || r.priority === "High" ? "var(--error-container)" : r.priority === "Medium" ? "var(--secondary-container)" : "var(--surface-container-high)",
-                                color: r.priority === "Highest" || r.priority === "High" ? "var(--on-error-container)" : r.priority === "Medium" ? "var(--on-secondary-container)" : "var(--on-surface-variant)",
-                              }}>
-                                {r.priority || "Medium"}
-                              </span>
-                            </td>
-                          </>
-                        ) : (
-                          <>
-                            <td style={{ padding: "8px 12px" }}>
-                              <span style={{
-                                padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600,
-                                background: (() => {
-                                  const s = Math.min(1, Math.max(0.5, r.score || 0.5));
-                                  const hue = (1 - s) * 120;
-                                  return `hsl(${hue}, 100%, 85%)`;
-                                })(),
-                                color: (() => {
-                                  const s = Math.min(1, Math.max(0.5, r.score || 0.5));
-                                  const hue = (1 - s) * 120;
-                                  return `hsl(${hue}, 80%, 25%)`;
-                                })(),
-                              }}>
-                                {((r.score || 0) * 100).toFixed(0)}%
-                              </span>
-                            </td>
-                            <td style={{ padding: "8px 12px", fontSize: 13, color: "var(--on-surface-variant)" }}>
-                              {r.matchReason || ""}
-                            </td>
-                          </>
-                        )}
-                      </tr>
-                    ))}
+                    {searchResults.map((r: any, i: number) => {
+                      const rowKey = r.key || r.issueKey || String(i);
+                      const isSelected = selectedResultKeys.has(rowKey);
+                      return (
+                        <tr
+                          key={rowKey}
+                          style={{
+                            borderBottom: "1px solid var(--surface-container-high)",
+                            background: isSelected ? "color-mix(in srgb, var(--primary) 6%, transparent)" : "transparent",
+                            cursor: "pointer",
+                          }}
+                          onClick={() => toggleResultKey(rowKey)}
+                        >
+                          <td style={{ padding: "8px 12px" }} onClick={e => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleResultKey(rowKey)}
+                              style={{ cursor: "pointer" }}
+                            />
+                          </td>
+                          <td style={{ padding: "8px 12px" }} onClick={e => e.stopPropagation()}>
+                            <a
+                              href="#"
+                              onClick={(e) => { e.preventDefault(); window.qaBuddy.openExternal(r.url).catch(() => {}); }}
+                              style={{ fontWeight: 600, color: "var(--primary)", textDecoration: "none", cursor: "pointer" }}
+                              title={`Open ${rowKey} in Jira`}
+                            >
+                              {rowKey}
+                              <span className="material-symbols" style={{ fontSize: 12, marginLeft: 4, verticalAlign: "middle" }}>open_in_new</span>
+                            </a>
+                          </td>
+                          <td style={{ padding: "8px 12px" }}>{r.summary || r.title}</td>
+                          {searchMode === "keyword" ? (
+                            <>
+                              <td style={{ padding: "8px 12px" }}>
+                                <span style={{
+                                  padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600,
+                                  background: r.status === "Done" || r.status === "Selesai" || r.status === "Closed" ? "var(--tertiary-container)" : r.status === "In Progress" || r.status === "Open" ? "var(--secondary-container)" : "var(--surface-container-high)",
+                                  color: r.status === "Done" || r.status === "Selesai" || r.status === "Closed" ? "var(--on-tertiary-container)" : r.status === "In Progress" || r.status === "Open" ? "var(--on-secondary-container)" : "var(--on-surface-variant)",
+                                }}>
+                                  {r.status || "-"}
+                                </span>
+                              </td>
+                              <td style={{ padding: "8px 12px" }}>
+                                <span style={{
+                                  padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600,
+                                  background: r.priority === "Highest" || r.priority === "High" ? "var(--error-container)" : r.priority === "Medium" ? "var(--secondary-container)" : "var(--surface-container-high)",
+                                  color: r.priority === "Highest" || r.priority === "High" ? "var(--on-error-container)" : r.priority === "Medium" ? "var(--on-secondary-container)" : "var(--on-surface-variant)",
+                                }}>
+                                  {r.priority || "Medium"}
+                                </span>
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td style={{ padding: "8px 12px" }}>
+                                <span style={{
+                                  padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600,
+                                  background: (() => {
+                                    const s = Math.min(1, Math.max(0.5, r.score || 0.5));
+                                    const hue = (1 - s) * 120;
+                                    return `hsl(${hue}, 100%, 85%)`;
+                                  })(),
+                                  color: (() => {
+                                    const s = Math.min(1, Math.max(0.5, r.score || 0.5));
+                                    const hue = (1 - s) * 120;
+                                    return `hsl(${hue}, 80%, 25%)`;
+                                  })(),
+                                }}>
+                                  {((r.score || 0) * 100).toFixed(0)}%
+                                </span>
+                              </td>
+                              <td style={{ padding: "8px 12px", fontSize: 13, color: "var(--on-surface-variant)" }}>
+                                {r.matchReason || ""}
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -770,6 +880,26 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                     </span>
                     {syncing ? "Syncing..." : "Sync to Jira"}
                   </button>
+                  <button
+                    className="button"
+                    onClick={() => {
+                      setTestCases([]);
+                      setGenerationResult(null);
+                      setGeneratedTestExecId("");
+                      setConfluencePageId("");
+                      setGenerationProject("");
+                      setSyncResult(null);
+                      setSelectedFolder("");
+                      setXrayFolders([]);
+                    }}
+                    disabled={syncing}
+                    type="button"
+                    title="Hapus semua test case — import ulang dari file lokal"
+                    style={{ color: "var(--error)", borderColor: "var(--error)" }}
+                  >
+                    <span className="material-symbols" style={{ fontSize: 15, verticalAlign: "middle", marginRight: 4 }}>delete_sweep</span>
+                    Clear All
+                  </button>
                 </div>
               </div>
 
@@ -864,6 +994,125 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Reuse Test Case Modal ── */}
+      {showReuseModal && ReactDOM.createPortal(
+        <div
+          style={{
+            position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+            background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center",
+            justifyContent: "center", zIndex: 1000,
+          }}
+          onClick={() => { if (!reuseLoading) setShowReuseModal(false); }}
+        >
+          <div
+            className="card"
+            style={{ maxWidth: 480, width: "90%", padding: 32 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                <span className="material-symbols" style={{ fontSize: 20, color: "var(--primary)" }}>recycling</span>
+                Reuse Test Case
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowReuseModal(false)}
+                disabled={reuseLoading}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", padding: 4 }}
+              >
+                <span className="material-symbols" style={{ fontSize: 20 }}>close</span>
+              </button>
+            </div>
+
+            <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--on-surface-variant)", lineHeight: 1.6 }}>
+              <strong>{selectedResultKeys.size}</strong> test case akan dipindahkan ke Test Repository folder yang Anda pilih.
+            </p>
+
+            {/* Selected keys preview */}
+            <div style={{
+              fontSize: 12, fontFamily: "monospace", color: "var(--primary)",
+              background: "color-mix(in srgb, var(--primary) 6%, transparent)",
+              borderRadius: 6, padding: "8px 12px", marginBottom: 20,
+              maxHeight: 80, overflowY: "auto", lineHeight: 1.8,
+            }}>
+              {Array.from(selectedResultKeys).join(", ")}
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div className="field-group">
+                <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
+                  Target Project <span style={{ color: "var(--error)" }}>*</span>
+                </label>
+                <SearchableSelect
+                  options={testRepositoryProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
+                  value={reuseProject}
+                  onChange={handleReuseProjectChange}
+                  placeholder="-- Pilih Jira Project --"
+                  disabled={reuseLoading}
+                />
+              </div>
+
+              <div className="field-group">
+                <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
+                  Test Repository Folder <span style={{ color: "var(--error)" }}>*</span>
+                  {reuseFoldersLoading && (
+                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "var(--on-surface-variant)" }}>Loading...</span>
+                  )}
+                </label>
+                <SearchableSelect
+                  options={reuseFolders}
+                  value={reuseFolder}
+                  onChange={setReuseFolder}
+                  placeholder={!reuseProject ? "-- Pilih project dulu --" : reuseFoldersLoading ? "Memuat folder..." : reuseFolders.length === 0 ? "Tidak ada folder" : "-- Pilih Folder --"}
+                  disabled={reuseLoading || !reuseProject || reuseFoldersLoading || reuseFolders.length === 0}
+                />
+              </div>
+            </div>
+
+            {reuseResult && (
+              <div style={{
+                marginTop: 16, padding: "10px 14px", borderRadius: 8, fontSize: 13,
+                background: reuseResult.ok ? "var(--tertiary-container)" : "var(--error-container)",
+                color: reuseResult.ok ? "var(--on-tertiary-container)" : "var(--on-error-container)",
+                display: "flex", alignItems: "flex-start", gap: 8,
+              }}>
+                <span className="material-symbols" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>
+                  {reuseResult.ok ? "check_circle" : "error"}
+                </span>
+                {reuseResult.msg}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 24, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setShowReuseModal(false)}
+                disabled={reuseLoading}
+                style={{ padding: "8px 18px", fontSize: 14 }}
+              >
+                {reuseResult?.ok ? "Tutup" : "Batal"}
+              </button>
+              {!reuseResult?.ok && (
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={handleReuseSubmit}
+                  disabled={reuseLoading || !reuseProject || !reuseFolder}
+                  style={{ padding: "8px 20px", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  {reuseLoading
+                    ? <><span className="material-symbols" style={{ fontSize: 16, animation: "spin 1s linear infinite" }}>sync</span>Memproses...</>
+                    : <><span className="material-symbols" style={{ fontSize: 16 }}>move_item</span>Submit</>
+                  }
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

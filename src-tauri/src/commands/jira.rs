@@ -8,7 +8,18 @@ use crate::models::jira::{
 use crate::models::test_case::{ExtractedTestCase, ManualTestCase};
 use crate::models::uqa::{AutoUqaGeneratedPayload, UqaIssue, UqaTransition};
 use crate::AppState;
+use serde::Deserialize;
 use tauri::State;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushEntryToJiraInput {
+    pub issue_key: String,
+    pub steps: String,
+    pub expected_result: String,
+    pub input_data: String,
+    pub category: String,
+}
 
 #[tauri::command]
 pub async fn get_jira_projects(state: State<'_, AppState>) -> Result<Vec<crate::models::jira::JiraProject>, String> {
@@ -181,6 +192,19 @@ pub async fn fetch_test_steps(
     let config = load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
     jira_service.fetch_test_steps(&config.jira, &issue_key).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn push_entry_to_jira(
+    state: State<'_, AppState>,
+    input: PushEntryToJiraInput,
+) -> Result<(), String> {
+    let config = load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    jira_service
+        .push_entry_to_jira(&config.jira, &input.issue_key, &input.steps, &input.expected_result, &input.input_data, &input.category)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

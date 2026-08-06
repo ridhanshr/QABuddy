@@ -324,6 +324,7 @@ export interface ManualTestCase {
   xrayFolder: string;
   labels: string;
   projectKey?: string;
+  testExecutionKey?: string;
 }
 
 export interface AppBootstrap {
@@ -464,6 +465,7 @@ export interface DesktopApi {
   getXrayFolders: (projectKey: string) => Promise<XrayFolder[]>;
   checkTestSteps: (entries: ConfluenceTestImportEntry[]) => Promise<StepConflictCheck>;
   fetchTestSteps: (issueKey: string) => Promise<FetchTestStepsResult | null>;
+  pushEntryToJira: (input: { issueKey: string; steps: string; expectedResult: string; inputData: string; category: string }) => Promise<void>;
   updateTestCasesFromConfluence: (entries: ConfluenceTestImportEntry[], mode?: StepConflictMode) => Promise<UpdateTestCasesFromConfluenceResult>;
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => () => void;
   findTestCasesByJql: (jql: string, maxResults: number) => Promise<JiraIssueSummary[]>;
@@ -539,6 +541,14 @@ export interface DesktopApi {
   removeDuplicateDefectLink: (id: string) => Promise<void>;
   getDefectStats: () => Promise<DefectRepositoryStats>;
   reindexAllDefects: () => Promise<void>;
+  syncDefectToDb: (defectKey: string, judulDefect: string) => Promise<void>;
+  getCurrentUser: () => Promise<Record<string, unknown>>;
+  loginUser: (pn: string, password: string) => Promise<{ success: boolean; role: string | null; jira_api_token: string | null; confluence_api_token: string | null; message: string }>;
+  registerUser: (pn: string, password: string, role: string) => Promise<{ success: boolean; role: string | null; message: string }>;
+  updateUserTokens: (pn: string, jiraApiToken: string, confluenceApiToken: string) => Promise<void>;
+  getMyUqaProjects: (username: string, displayName: string) => Promise<MonitoringUqaProject[]>;
+  getMyTestExecutions: (username: string, displayName: string) => Promise<MonitoringTestExecution[]>;
+  getMyTestCasesByExecution: (teJiraKey: string, username: string) => Promise<MonitoringTestCase[]>;
   // BRD / Test Management
   generateTestCasesFromBRD: (request: BRDGenerationRequest) => Promise<BRDGenerationResult>;
   getGeneratedTestCases: (testExecutionId: string) => Promise<BRDTestCase[]>;
@@ -576,6 +586,8 @@ export interface DesktopApi {
   fetchUqaWithDates: () => Promise<UqaWithDates[]>;
   saveUqaProjects: (projects: SaveUqaProjectInput[]) => Promise<void>;
   checkUqaProjectsInDb: (uqaKeys: string[]) => Promise<string[]>;
+  saveTestCases: (cases: SaveTestCaseInput[]) => Promise<void>;
+  syncExecutionTestsToDb: (execKey: string) => Promise<number>;
 }
 
 export interface UqaWithDates {
@@ -646,6 +658,18 @@ export interface SaveTestPlanInput {
   assignee?: string;
 }
 
+export interface SaveTestCaseInput {
+  tc_key: string;
+  te_jira_key: string;
+  scenario?: string;
+  category?: string;
+  steps?: string;
+  expected_result?: string;
+  input_data?: string;
+  function_name?: string;
+  test_case_no?: string;
+}
+
 export interface JiraProject {
   key: string;
   name: string;
@@ -701,6 +725,8 @@ export interface FetchTestStepsResult {
   issueKey: string;
   steps: string;
   expectedResult: string;
+  labels?: string[];
+  functionName?: string;
 }
 
 export interface ConfluenceEntryImage {
@@ -1041,6 +1067,38 @@ export interface SemanticSearchResult {
   summary: string;
   score: number;
   matchReason: string;
+}
+
+// ── Monitoring screen types ──────────────────────────────────────────────
+
+export interface MonitoringUqaProject {
+  uqa_key: string;
+  project_name: string | null;
+  assignee: string | null;
+  product_tester: string | null;
+  status: string | null;
+  start_qa: string | null;
+  finish_qa: string | null;
+  finish_uat: string | null;
+  last_sync: string | null;
+}
+
+export interface MonitoringTestExecution {
+  te_jira_key: string;
+  title: string | null;
+  tp_jira_key: string | null;
+  assignee: string | null;
+  execution_status: string | null;
+  last_sync: string | null;
+}
+
+export interface MonitoringTestCase {
+  tc_key: string;
+  te_jira_key: string;
+  title: string | null;
+  test_run_status: string | null;
+  executed_by: string | null;
+  executed_at: string | null;
 }
 
 // ── Zod validation schemas ───────────────────────────────────────────

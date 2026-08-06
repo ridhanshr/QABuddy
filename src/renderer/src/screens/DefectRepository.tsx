@@ -105,6 +105,8 @@ export default function DefectRepository() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [isSearchActive, setIsSearchActive] = useState(false);
+  const [syncingDefectToDb, setSyncingDefectToDb] = useState<Set<string>>(new Set());
+  const [defectDbSyncResult, setDefectDbSyncResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
   useEffect(() => {
     app.loadDefectSources();
@@ -240,6 +242,20 @@ export default function DefectRepository() {
     setCreateInfo(null);
     setPolishPreview(null);
     setCreateDraft(createEmptyDraft(defectProjectOptions[0]?.projectKey || ""));
+  };
+
+  const handleSyncDefectToDb = async (defectKey: string, judulDefect: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSyncingDefectToDb(prev => new Set(prev).add(defectKey));
+    setDefectDbSyncResult(prev => ({ ...prev, [defectKey]: undefined as any }));
+    try {
+      await window.qaBuddy.syncDefectToDb(defectKey, judulDefect);
+      setDefectDbSyncResult(prev => ({ ...prev, [defectKey]: { ok: true, msg: "Tersimpan" } }));
+    } catch (err: any) {
+      setDefectDbSyncResult(prev => ({ ...prev, [defectKey]: { ok: false, msg: err?.message || String(err) } }));
+    } finally {
+      setSyncingDefectToDb(prev => { const s = new Set(prev); s.delete(defectKey); return s; });
+    }
   };
 
   const openSourceEditor = (source?: JiraProjectSource | null) => {
@@ -1181,13 +1197,14 @@ export default function DefectRepository() {
                 <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>Status</th>
                 <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>Severity</th>
                 <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>Component</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>DB</th>
                 <th style={{ padding: "12px 16px", fontSize: 13, fontWeight: 500, color: "var(--on-surface-variant)", whiteSpace: "nowrap", textAlign: "right" }}>Action</th>
               </tr>
             </thead>
             <tbody style={{ background: "var(--surface-container-lowest)" }}>
               {paginatedDefects.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: "40px 16px", textAlign: "center", color: "var(--on-surface-variant)" }}>
+                  <td colSpan={9} style={{ padding: "40px 16px", textAlign: "center", color: "var(--on-surface-variant)" }}>
                     {app.defectSearching ? "Searching..." : "No defect records. Sync a Jira project source first."}
                   </td>
                 </tr>
@@ -1234,6 +1251,33 @@ export default function DefectRepository() {
                       </span>
                     </td>
                     <td style={{ padding: "12px 16px", color: "var(--on-surface-variant)", fontFamily: "monospace", fontSize: 13 }}>{d.component || "-"}</td>
+                    <td style={{ padding: "12px 16px", whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
+                      {(() => {
+                        const syncing = syncingDefectToDb.has(d.sourceIssueKey);
+                        const res = defectDbSyncResult[d.sourceIssueKey];
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={e => handleSyncDefectToDb(d.sourceIssueKey, d.normalizedTitle, e)}
+                              disabled={syncing}
+                              style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "3px 8px" }}
+                            >
+                              <span className={`material-symbols${syncing ? " rotating" : ""}`} style={{ fontSize: 13 }}>
+                                {syncing ? "sync" : "save"}
+                              </span>
+                              {syncing ? "..." : "Sync DB"}
+                            </button>
+                            {res && (
+                              <span style={{ fontSize: 10, color: res.ok ? "#16a34a" : "var(--error)" }}>
+                                {res.ok ? "✓" : "✗"} {res.msg}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td style={{ padding: "12px 16px", textAlign: "right" }}>
                       <button
                         style={{ background: "none", border: "none", padding: 4, borderRadius: 4, cursor: "pointer", color: "var(--outline)" }}

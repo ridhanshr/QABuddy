@@ -79,6 +79,7 @@ import type {
   DbTestRepository,
   UqaWithDates,
   SaveUqaProjectInput,
+  SaveTestCaseInput,
 } from "@shared/types";
 
 /** Subscribe to a Tauri event, returning an unsubscribe function. */
@@ -149,6 +150,8 @@ const api = {
     cmd<StepConflictCheck>("check_test_steps", { entries }),
   fetchTestSteps: (issueKey: string) =>
     cmd<FetchTestStepsResult | null>("fetch_test_steps", { issueKey }),
+  pushEntryToJira: (input: { issueKey: string; steps: string; expectedResult: string; inputData: string; category: string }) =>
+    cmd<void>("push_entry_to_jira", { input }),
   updateTestCasesFromConfluence: (entries: ConfluenceTestImportEntry[], mode?: StepConflictMode) =>
     cmd<UpdateTestCasesFromConfluenceResult>("update_test_cases_from_confluence", {
       entries,
@@ -342,6 +345,14 @@ const api = {
   removeDuplicateDefectLink: (id: string) => cmd<void>("remove_duplicate_defect_link", { id }),
   getDefectStats: () => cmd<DefectRepositoryStats>("get_defect_stats"),
   reindexAllDefects: () => cmd<void>("reindex_all_defects"),
+  syncDefectToDb: (defectKey: string, judulDefect: string) => cmd<void>("sync_defect_to_db", { defectKey, judulDefect }),
+  getCurrentUser: () => cmd<Record<string, unknown>>("get_current_user", {}),
+  loginUser: (pn: string, password: string) => cmd<{ success: boolean; role: string | null; jira_api_token: string | null; confluence_api_token: string | null; message: string }>("login_user", { pn, password }),
+  registerUser: (pn: string, password: string, role: string) => cmd<{ success: boolean; role: string | null; message: string }>("register_user", { pn, password, role }),
+  updateUserTokens: (pn: string, jiraApiToken: string, confluenceApiToken: string) => cmd<void>("update_user_tokens", { pn, jiraApiToken, confluenceApiToken }),
+  getMyUqaProjects: (username: string, displayName: string) => cmd<import("@shared/types").MonitoringUqaProject[]>("get_my_uqa_projects", { username, displayName }),
+  getMyTestExecutions: (username: string, displayName: string) => cmd<import("@shared/types").MonitoringTestExecution[]>("get_my_test_executions", { username, displayName }),
+  getMyTestCasesByExecution: (teJiraKey: string, username: string) => cmd<import("@shared/types").MonitoringTestCase[]>("get_my_test_cases_by_execution", { teJiraKey, username }),
 
   // ── OCR ──────────────────────────────────────────────────────────────
   ocrExtractFromFile: (filePath: string) =>
@@ -368,6 +379,10 @@ const api = {
     cmd<void>("save_uqa_projects", { projects }),
   checkUqaProjectsInDb: (uqaKeys: string[]) =>
     cmd<string[]>("check_uqa_projects_in_db", { uqaKeys }),
+  saveTestCases: (cases: SaveTestCaseInput[]) =>
+    cmd<void>("save_test_cases", { cases }),
+  syncExecutionTestsToDb: (execKey: string) =>
+    cmd<number>("sync_execution_tests_to_db", { execKey }),
 };
 
 export type TauriApi = typeof api;

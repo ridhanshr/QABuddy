@@ -245,7 +245,7 @@ pub async fn save_uqa_projects(
         sqlx::query(
             r#"
             INSERT INTO uqa_project
-                (uqa_key, project_name, assignee, product_tester, status, start_qa, finish_qa, start_uat, last_sync)
+                (uqa_key, project_name, assignee, product_tester, status, start_qa, finish_qa, finish_uat, last_sync)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ON DUPLICATE KEY UPDATE
                 project_name   = VALUES(project_name),
@@ -254,7 +254,7 @@ pub async fn save_uqa_projects(
                 status         = VALUES(status),
                 start_qa       = VALUES(start_qa),
                 finish_qa      = VALUES(finish_qa),
-                start_uat      = VALUES(start_uat),
+                finish_uat     = VALUES(finish_uat),
                 last_sync      = NOW()
             "#,
         )
@@ -263,9 +263,9 @@ pub async fn save_uqa_projects(
         .bind(p.assignee.as_deref().unwrap_or(""))
         .bind(p.product_tester.as_deref().unwrap_or(""))
         .bind(p.status.as_deref().unwrap_or(""))
-        .bind(p.start_sit.as_deref())
-        .bind(p.finish_sit.as_deref())
-        .bind(p.start_uat.as_deref())
+        .bind(p.start_sit.as_deref())   // → start_qa
+        .bind(p.finish_sit.as_deref())  // → finish_qa
+        .bind(p.start_uat.as_deref())   // → finish_uat
         .execute(&pool)
         .await
         .map_err(|e| format!("Gagal upsert uqa_project {}: {e}", p.uqa_key))?;
@@ -378,6 +378,241 @@ pub async fn get_test_repositories_in_db(
         .collect())
 }
 
+// ── Test Case ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SaveTestCaseInput {
+    pub tc_key: String,
+    pub te_jira_key: String,
+    pub scenario: Option<String>,
+    pub category: Option<String>,
+    pub steps: Option<String>,
+    pub expected_result: Option<String>,
+    pub input_data: Option<String>,
+    pub function_name: Option<String>,
+    pub test_case_no: Option<String>,
+}
+
+#[tauri::command]
+pub async fn save_test_cases(
+    state: State<'_, AppState>,
+    cases: Vec<SaveTestCaseInput>,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+
+    for tc in &cases {
+        sqlx::query(
+            r#"
+            INSERT INTO test_case
+                (tc_key, te_jira_key, scenario, category, steps, expected_result, input_data, function_name, test_case_no, last_sync)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ON DUPLICATE KEY UPDATE
+                scenario      = COALESCE(VALUES(scenario), scenario),
+                category      = COALESCE(VALUES(category), category),
+                steps         = COALESCE(VALUES(steps), steps),
+                expected_result = COALESCE(VALUES(expected_result), expected_result),
+                input_data    = COALESCE(VALUES(input_data), input_data),
+                function_name = COALESCE(VALUES(function_name), function_name),
+                test_case_no  = COALESCE(VALUES(test_case_no), test_case_no),
+                last_sync     = NOW()
+            "#,
+        )
+        .bind(&tc.tc_key)
+        .bind(&tc.te_jira_key)
+        .bind(tc.scenario.as_deref())
+        .bind(tc.category.as_deref())
+        .bind(tc.steps.as_deref())
+        .bind(tc.expected_result.as_deref())
+        .bind(tc.input_data.as_deref())
+        .bind(tc.function_name.as_deref())
+        .bind(tc.test_case_no.as_deref())
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Gagal upsert test_case {}/{}: {e}", tc.tc_key, tc.te_jira_key))?;
+    }
+
+    Ok(())
+}
+
+/// Fetch all test cases in a Test Execution from Xray with full detail, then
+/// upsert each into `test_case`. Fields populated:
+///   title          ← Jira issue summary
+///   id_jira_repo   ← project prefix of tc_key (e.g. "TRALOS" from "TRALOS-1")
+///   test_run_status← Xray run status
+///   executed_by    ← assignee/executor display name from run
+///   executed_at    ← finishedOn from run
+/// Existing non-NULL values are preserved via COALESCE.
+#[tauri::command]
+pub async fn sync_execution_tests_to_db(
+    state: State<'_, AppState>,
+    exec_key: String,
+) -> Result<u32, String> {
+    let pool = get_pool!(state);
+    let config = crate::commands::load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    let client = jira_service
+        .client(&config.jira)
+        .map_err(|e| format!("Gagal membuat Jira client: {e}"))?;
+
+    // ── 1. Fetch TC list from TE ──
+    let list_path = format!("/testexec/{exec_key}/test");
+    let raw = client.xray.get_json_or_none(&list_path, &[]).await
+        .unwrap_or(serde_json::Value::Null);
+    let arr = raw.as_array().cloned().unwrap_or_default();
+    if arr.is_empty() {
+        return Ok(0);
+    }
+
+    // Collect tc_keys for batch Jira fetch
+    let tc_keys: Vec<String> = arr.iter()
+        .filter_map(|t| t["key"].as_str())
+        .filter(|k| !k.is_empty())
+        .map(|k| k.to_string())
+        .collect();
+
+    // ── 2. Batch fetch Jira summaries via JQL ──
+    let mut summaries: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if !tc_keys.is_empty() {
+        let keys_joined = tc_keys.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(",");
+        let jql = format!("key in ({keys_joined})");
+        if let Ok(issues) = client.search_issues(&jql, tc_keys.len() as u32, "summary").await {
+            for issue in &issues {
+                if let (Some(key), Some(summary)) = (
+                    issue["key"].as_str(),
+                    issue["fields"]["summary"].as_str(),
+                ) {
+                    summaries.insert(key.to_string(), summary.to_string());
+                }
+            }
+        }
+    }
+
+    // ── 3. Per-TC: fetch Test Run detail to get executedBy + status + finishedOn ──
+    // Endpoint: GET /rest/raven/1.0/api/test/{tc_key}/testrun?testExecIssueKey={exec_key}
+    // Returns array of runs; we take the first one matching exec_key
+    struct RunDetail {
+        status: Option<String>,
+        executed_by: Option<String>,
+        executed_at: Option<String>,
+    }
+
+    fn parse_datetime(s: &str) -> String {
+        // "2026-07-20T13:19:00+07:00" → "2026-07-20 13:19:00"
+        let s = s.replace('T', " ");
+        // strip timezone (+07:00 or Z)
+        let s = if let Some(pos) = s.find('+') { s[..pos].to_string() } else { s };
+        let s = s.trim().to_string();
+        if s.len() >= 19 { s[..19].to_string() } else { s }
+    }
+
+    fn extract_run_detail(run_data: &serde_json::Value, exec_key: &str) -> RunDetail {
+        // run_data may be an array or a single object
+        let run = if let Some(arr) = run_data.as_array() {
+            // find run for this exec key
+            arr.iter()
+                .find(|r| r["testExecIssueKey"].as_str() == Some(exec_key)
+                    || r["testExecKey"].as_str() == Some(exec_key)
+                    || r["testExecution"]["key"].as_str() == Some(exec_key))
+                .or_else(|| arr.first())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
+        } else {
+            run_data.clone()
+        };
+
+        let status = run["status"].as_str()
+            .or_else(|| run["statusName"].as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        let executed_by = run["executedBy"]["displayName"].as_str()
+            .or_else(|| run["executedBy"].as_str())
+            .or_else(|| run["assignee"]["displayName"].as_str())
+            .or_else(|| run["executor"]["displayName"].as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        let executed_at = run["finishedOn"].as_str()
+            .or_else(|| run["endedOn"].as_str())
+            .or_else(|| run["finished"].as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| parse_datetime(s));
+
+        RunDetail { status, executed_by, executed_at }
+    }
+
+    // ── 4. Upsert each TC ──
+    let mut count = 0u32;
+    for t in &arr {
+        let tc_key = match t["key"].as_str().filter(|k| !k.is_empty()) {
+            Some(k) => k.to_string(),
+            None => continue,
+        };
+
+        let title = summaries.get(&tc_key).cloned();
+
+        // id_jira_repo: everything before the last "-NNN"
+        let id_jira_repo: Option<String> = tc_key
+            .rfind('-')
+            .map(|i| tc_key[..i].to_string());
+
+        // Try endpoint variants for Test Run detail
+        let run_data_v1 = client.xray.get_json_or_none("/testrun", &[
+            ("testExecIssueKey", exec_key.clone()),
+            ("testIssueKey", tc_key.clone()),
+        ]).await;
+
+        let run_data = if run_data_v1.is_some() {
+            run_data_v1.unwrap_or(serde_json::Value::Null)
+        } else {
+            let run_path_v2 = format!("/test/{tc_key}/testrun");
+            client.xray.get_json_or_none(&run_path_v2, &[
+                ("testExecIssueKey", exec_key.clone()),
+            ]).await.unwrap_or(serde_json::Value::Null)
+        };
+
+        let detail = if run_data.is_null() {
+            let status_from_list = t["status"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
+            RunDetail { status: status_from_list, executed_by: None, executed_at: None }
+        } else {
+            extract_run_detail(&run_data, &exec_key)
+        };
+
+        let test_run_status = detail.status.clone();
+        let executed_by = detail.executed_by.clone();
+        let executed_at = detail.executed_at.clone();
+
+        sqlx::query(
+            r#"
+            INSERT INTO test_case
+                (tc_key, te_jira_key, title, id_jira_repo, test_run_status, executed_by, executed_at, last_sync)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+            ON DUPLICATE KEY UPDATE
+                title           = COALESCE(VALUES(title), title),
+                id_jira_repo    = COALESCE(VALUES(id_jira_repo), id_jira_repo),
+                test_run_status = COALESCE(VALUES(test_run_status), test_run_status),
+                executed_by     = COALESCE(VALUES(executed_by), executed_by),
+                executed_at     = COALESCE(VALUES(executed_at), executed_at),
+                last_sync       = NOW()
+            "#,
+        )
+        .bind(&tc_key)
+        .bind(&exec_key)
+        .bind(title.as_deref())
+        .bind(id_jira_repo.as_deref())
+        .bind(test_run_status.as_deref())
+        .bind(executed_by.as_deref())
+        .bind(executed_at.as_deref())
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Gagal upsert {tc_key}/{exec_key}: {e}"))?;
+
+        count += 1;
+    }
+
+    Ok(count)
+}
+
 // ── Given a list of TP Jira keys, return which ones already exist in DB ───────
 
 #[tauri::command]
@@ -413,4 +648,351 @@ pub async fn check_test_plans_in_db(
         .collect();
 
     Ok(found)
+}
+
+/// Fetch defect detail from Jira and upsert into `defect` table.
+/// summary is passed directly from frontend (already in DefectRecord).
+/// Only fetches resolution, assignee, issuelinks from Jira (single request, no retry).
+#[tauri::command]
+pub async fn sync_defect_to_db(
+    state: State<'_, AppState>,
+    defect_key: String,
+    judul_defect: String,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    let config = crate::commands::load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    let client = jira_service
+        .client(&config.jira)
+        .map_err(|e| format!("Gagal membuat Jira client: {e}"))?;
+
+    // Single Jira fetch — only fields not available in DefectRecord
+    let path = format!("/issue/{defect_key}");
+    let issue = client.api.get_json(&path, &[
+        ("fields", "resolution,assignee,issuelinks".to_string()),
+    ]).await.map_err(|e| format!("Gagal fetch issue {defect_key}: {e}"))?;
+
+    let fields = &issue["fields"];
+
+    let resolution = fields["resolution"]["name"].as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let assignee = fields["assignee"]["displayName"].as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    // Extract tp_jira_key from issuelinks where type is "is contained on" / "Test"
+    let tp_jira_key: Option<String> = fields["issuelinks"]
+        .as_array()
+        .and_then(|links| {
+            links.iter().find_map(|link| {
+                // "is contained on" → outwardIssue or inwardIssue depending on link direction
+                let link_type = link["type"]["name"].as_str().unwrap_or("").to_lowercase();
+                let inward = link["type"]["inward"].as_str().unwrap_or("").to_lowercase();
+                let outward = link["type"]["outward"].as_str().unwrap_or("").to_lowercase();
+
+                let is_contained = link_type.contains("test")
+                    || inward.contains("contained")
+                    || outward.contains("contained")
+                    || inward.contains("test plan")
+                    || outward.contains("test plan");
+
+                if !is_contained {
+                    return None;
+                }
+
+                // Try outwardIssue first, then inwardIssue
+                link["outwardIssue"]["key"].as_str()
+                    .or_else(|| link["inwardIssue"]["key"].as_str())
+                    .map(|k| k.to_string())
+            })
+        });
+
+    sqlx::query(
+        r#"
+        INSERT INTO defect (id_jira_defect, judul_defect, tp_jira_key, resolution, assignee)
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            judul_defect = VALUES(judul_defect),
+            tp_jira_key  = COALESCE(VALUES(tp_jira_key), tp_jira_key),
+            resolution   = COALESCE(VALUES(resolution), resolution),
+            assignee     = COALESCE(VALUES(assignee), assignee)
+        "#,
+    )
+    .bind(&defect_key)
+    .bind(&judul_defect)
+    .bind(tp_jira_key.as_deref())
+    .bind(resolution.as_deref())
+    .bind(assignee.as_deref())
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal upsert defect {defect_key}: {e}"))?;
+
+    Ok(())
+}
+
+// ── Monitoring screen queries ──────────────────────────────────────────────
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct MonitoringUqaProject {
+    pub uqa_key: String,
+    pub project_name: Option<String>,
+    pub assignee: Option<String>,
+    pub product_tester: Option<String>,
+    pub status: Option<String>,
+    pub start_qa: Option<String>,
+    pub finish_qa: Option<String>,
+    pub finish_uat: Option<String>,
+    pub last_sync: Option<String>,
+}
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct MonitoringTestExecution {
+    pub te_jira_key: String,
+    pub title: Option<String>,
+    pub tp_jira_key: Option<String>,
+    pub assignee: Option<String>,
+    pub execution_status: Option<String>,
+    pub last_sync: Option<String>,
+}
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct MonitoringTestCase {
+    pub tc_key: String,
+    pub te_jira_key: String,
+    pub title: Option<String>,
+    pub test_run_status: Option<String>,
+    pub executed_by: Option<String>,
+    pub executed_at: Option<String>,
+}
+
+/// Fetch UQA projects from DB where assignee OR product_tester matches username or display name.
+#[tauri::command]
+pub async fn get_my_uqa_projects(
+    state: State<'_, AppState>,
+    username: String,
+    display_name: String,
+) -> Result<Vec<MonitoringUqaProject>, String> {
+    let pool = get_pool!(state);
+    // Use display_name if available, otherwise fall back to username for both slots
+    let name_a = if display_name.is_empty() { &username } else { &display_name };
+    let rows = sqlx::query_as::<_, MonitoringUqaProject>(
+        r#"
+        SELECT
+            uqa_key,
+            project_name,
+            assignee,
+            product_tester,
+            status,
+            DATE_FORMAT(start_qa, '%Y-%m-%d') AS start_qa,
+            DATE_FORMAT(finish_qa, '%Y-%m-%d') AS finish_qa,
+            DATE_FORMAT(finish_uat, '%Y-%m-%d') AS finish_uat,
+            DATE_FORMAT(last_sync, '%Y-%m-%d %H:%i:%s') AS last_sync
+        FROM uqa_project
+        WHERE assignee IN (?, ?) OR product_tester IN (?, ?)
+        ORDER BY last_sync DESC
+        "#,
+    )
+    .bind(&username)
+    .bind(name_a)
+    .bind(&username)
+    .bind(name_a)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal fetch UQA projects: {e}"))?;
+    Ok(rows)
+}
+
+/// Fetch test executions from DB where assignee matches username or display name.
+#[tauri::command]
+pub async fn get_my_test_executions(
+    state: State<'_, AppState>,
+    username: String,
+    display_name: String,
+) -> Result<Vec<MonitoringTestExecution>, String> {
+    let pool = get_pool!(state);
+    // Use display_name if available, otherwise fall back to username
+    let name_a = if display_name.is_empty() { &username } else { &display_name };
+    let rows = sqlx::query_as::<_, MonitoringTestExecution>(
+        r#"
+        SELECT
+            te_jira_key,
+            title,
+            tp_jira_key,
+            assignee,
+            execution_status,
+            DATE_FORMAT(last_sync, '%Y-%m-%d %H:%i:%s') AS last_sync
+        FROM test_execution
+        WHERE assignee IN (?, ?)
+        ORDER BY last_sync DESC
+        "#,
+    )
+    .bind(&username)
+    .bind(name_a)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal fetch test executions: {e}"))?;
+    Ok(rows)
+}
+
+/// Fetch test cases from DB for a given TE key, filtered by executed_by = username.
+#[tauri::command]
+pub async fn get_my_test_cases_by_execution(
+    state: State<'_, AppState>,
+    te_jira_key: String,
+    username: String,
+) -> Result<Vec<MonitoringTestCase>, String> {
+    let pool = get_pool!(state);
+    let rows = sqlx::query_as::<_, MonitoringTestCase>(
+        r#"
+        SELECT
+            tc_key,
+            te_jira_key,
+            title,
+            test_run_status,
+            executed_by,
+            DATE_FORMAT(executed_at, '%Y-%m-%d %H:%i:%s') AS executed_at
+        FROM test_case
+        WHERE te_jira_key = ? AND executed_by = ?
+        ORDER BY tc_key ASC
+        "#,
+    )
+    .bind(&te_jira_key)
+    .bind(&username)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal fetch test cases: {e}"))?;
+    Ok(rows)
+}
+
+// ── User auth & token sync ────────────────────────────────────────────────────
+
+/// Update jira_api_token and confluence_api_token for a user after saving settings.
+#[tauri::command]
+pub async fn update_user_tokens(
+    state: State<'_, AppState>,
+    pn: String,
+    jira_api_token: String,
+    confluence_api_token: String,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    sqlx::query(
+        "UPDATE users SET jira_api_token = ?, confluence_api_token = ? WHERE pn = ?",
+    )
+    .bind(&jira_api_token)
+    .bind(&confluence_api_token)
+    .bind(&pn)
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal update token user: {e}"))?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoginResult {
+    pub success: bool,
+    pub role: Option<String>,
+    pub jira_api_token: Option<String>,
+    pub confluence_api_token: Option<String>,
+    pub message: String,
+}
+
+#[tauri::command]
+pub async fn login_user(
+    state: State<'_, AppState>,
+    pn: String,
+    password: String,
+) -> Result<LoginResult, String> {
+    let pool = get_pool!(state);
+
+    let row = sqlx::query(
+        "SELECT password, role, jira_api_token, confluence_api_token FROM users WHERE pn = ?",
+    )
+    .bind(&pn)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| format!("Gagal query users: {e}"))?;
+
+    match row {
+        None => Ok(LoginResult {
+            success: false,
+            role: None,
+            jira_api_token: None,
+            confluence_api_token: None,
+            message: "PN tidak ditemukan. Silakan daftar terlebih dahulu.".into(),
+        }),
+        Some(r) => {
+            let stored_hash: String = r.try_get("password").unwrap_or_default();
+            let valid = bcrypt::verify(&password, &stored_hash).unwrap_or(false);
+            if valid {
+                let role: String = r.try_get("role").unwrap_or_default();
+                let jira_token: Option<String> = r.try_get("jira_api_token").ok().filter(|s: &String| !s.is_empty());
+                let conf_token: Option<String> = r.try_get("confluence_api_token").ok().filter(|s: &String| !s.is_empty());
+                Ok(LoginResult {
+                    success: true,
+                    role: Some(role),
+                    jira_api_token: jira_token,
+                    confluence_api_token: conf_token,
+                    message: "Login berhasil.".into(),
+                })
+            } else {
+                Ok(LoginResult {
+                    success: false,
+                    role: None,
+                    jira_api_token: None,
+                    confluence_api_token: None,
+                    message: "Password salah.".into(),
+                })
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn register_user(
+    state: State<'_, AppState>,
+    pn: String,
+    password: String,
+    role: String,
+) -> Result<LoginResult, String> {
+    let pool = get_pool!(state);
+
+    // Cek apakah PN sudah terdaftar
+    let exists: bool = sqlx::query("SELECT COUNT(*) as cnt FROM users WHERE pn = ?")
+        .bind(&pn)
+        .fetch_one(&pool)
+        .await
+        .map(|r| r.try_get::<i64, _>("cnt").unwrap_or(0) > 0)
+        .map_err(|e| format!("Gagal cek users: {e}"))?;
+
+    if exists {
+        return Ok(LoginResult {
+            success: false,
+            role: None,
+            jira_api_token: None,
+            confluence_api_token: None,
+            message: "PN sudah terdaftar.".into(),
+        });
+    }
+
+    // Hash password dengan bcrypt cost 12
+    let hashed = bcrypt::hash(&password, 12)
+        .map_err(|e| format!("Gagal hash password: {e}"))?;
+
+    sqlx::query("INSERT INTO users (pn, password, role) VALUES (?, ?, ?)")
+        .bind(&pn)
+        .bind(&hashed)
+        .bind(&role)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Gagal registrasi: {e}"))?;
+
+    Ok(LoginResult {
+        success: true,
+        role: Some(role),
+        jira_api_token: None,
+        confluence_api_token: None,
+        message: "Registrasi berhasil.".into(),
+    })
 }

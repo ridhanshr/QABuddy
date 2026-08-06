@@ -176,6 +176,7 @@ pub fn run() {
             commands::jira::add_tests_to_execution,
             commands::jira::check_test_steps,
             commands::jira::fetch_test_steps,
+            commands::jira::push_entry_to_jira,
             commands::jira::update_test_cases_from_confluence,
             commands::jira::bulk_transition,
             commands::jira::bulk_assign,
@@ -210,6 +211,15 @@ pub fn run() {
             commands::db::get_test_repositories_in_db,
             commands::db::save_uqa_projects,
             commands::db::check_uqa_projects_in_db,
+            commands::db::save_test_cases,
+            commands::db::sync_execution_tests_to_db,
+            commands::db::sync_defect_to_db,
+            commands::db::get_my_uqa_projects,
+            commands::db::get_my_test_executions,
+            commands::db::get_my_test_cases_by_execution,
+            commands::db::login_user,
+            commands::db::register_user,
+            commands::db::update_user_tokens,
             commands::jira::fetch_uqa_with_dates,
         ])
         .run(tauri::generate_context!())

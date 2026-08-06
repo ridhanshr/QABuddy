@@ -374,6 +374,12 @@ impl DefectRepositoryService {
             data.sources[idx] = JiraProjectSource {
                 id: existing.id,
                 project_key: existing.project_key,
+                // Preserve sync state fields — never overwrite with stale draft values
+                sync_mode: existing.sync_mode,
+                sync_status: existing.sync_status,
+                last_synced_at: existing.last_synced_at,
+                last_auto_sync_at: existing.last_auto_sync_at,
+                error_message: existing.error_message,
                 ..normalized
             };
             if let Some(id_idx) = id_idx {
@@ -775,22 +781,42 @@ struct ExtractedSteps {
 }
 
 fn extract_steps_from_description(description: &str) -> ExtractedSteps {
-    let steps_regex = regex::Regex::new(r"(?is)steps?\s*(?:to\s+)?reproduce:?([\s\S]*?)(?=\n\s*(expected\s+result|actual\s+result|environment|additional|$))").unwrap();
-    let expected_regex = regex::Regex::new(r"(?is)expected\s+result:?([\s\S]*?)(?=\n\s*(actual\s+result|environment|additional|steps?\s*(?:to\s+)?reproduce|$))").unwrap();
-    let actual_regex = regex::Regex::new(r"(?is)actual\s+result:?([\s\S]*?)(?=\n\s*(expected\s+result|environment|additional|steps?\s*(?:to\s+)?reproduce|$))").unwrap();
+    // Split description into labeled sections without lookahead.
+    // Pattern: find lines that are section headers, collect content until next header.
+    let header_re = regex::Regex::new(
+        r"(?im)^[ \t]*(steps?\s*(?:to\s+)?reproduce|expected\s+result|actual\s+result|environment|additional)[:\s]*$"
+    ).unwrap();
 
-    let steps = steps_regex
-        .captures(description)
-        .and_then(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
-        .unwrap_or_default();
-    let expected = expected_regex
-        .captures(description)
-        .and_then(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
-        .unwrap_or_default();
-    let actual = actual_regex
-        .captures(description)
-        .and_then(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
-        .unwrap_or_default();
+    // Collect (header_name, start_of_content) pairs
+    let mut sections: Vec<(&str, usize)> = Vec::new();
+    for cap in header_re.captures_iter(description) {
+        let m = cap.get(0).unwrap();
+        let name = cap.get(1).unwrap().as_str();
+        sections.push((name, m.end()));
+    }
+
+    let mut steps = String::new();
+    let mut expected = String::new();
+    let mut actual = String::new();
+
+    for (i, (name, start)) in sections.iter().enumerate() {
+        let end = sections.get(i + 1).map(|(_, s)| *s).unwrap_or(description.len());
+        // back up end to before the next header line
+        let content = description[*start..end].trim().to_string();
+        let key = name.to_lowercase();
+        if key.contains("steps") || key.contains("reproduce") {
+            steps = content;
+        } else if key.contains("expected") {
+            expected = content;
+        } else if key.contains("actual") {
+            actual = content;
+        }
+    }
+
+    // Fallback: if no headers found, treat whole description as steps
+    if sections.is_empty() {
+        steps = description.trim().to_string();
+    }
 
     ExtractedSteps {
         steps_to_reproduce: steps,

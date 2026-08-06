@@ -1037,13 +1037,102 @@ impl JiraService {
         let client = self.client(config)?;
         let raw = client.fetch_test_steps(issue_key).await;
         match raw {
-            Some((steps, results)) => Ok(Some(FetchTestStepsResult {
-                issue_key: issue_key.to_string(),
-                steps: steps.join("\n"),
-                expected_result: results.join("\n"),
-            })),
+            Some((steps, results, labels)) => {
+                let project_key = issue_key.split('-').next().unwrap_or("").to_string();
+                let function_name = if project_key.is_empty() {
+                    None
+                } else {
+                    client.fetch_test_repository_folder(&project_key, issue_key).await
+                };
+                Ok(Some(FetchTestStepsResult {
+                    issue_key: issue_key.to_string(),
+                    steps: steps.join("\n"),
+                    expected_result: results.join("\n"),
+                    labels,
+                    function_name,
+                }))
+            }
             None => Ok(None),
         }
+    }
+
+    pub async fn push_entry_to_jira(
+        &self,
+        config: &JiraConfig,
+        issue_key: &str,
+        steps: &str,
+        expected_result: &str,
+        input_data: &str,
+        category: &str,
+    ) -> Result<()> {
+        self.assert_configured(config)?;
+        let client = self.client(config)?;
+
+        let step_body = serde_json::json!({
+            "step": format_bullets(steps),
+            "data": input_data,
+            "result": format_bullets(expected_result),
+        });
+
+        // Fetch existing steps to get their IDs so we update in-place instead of appending.
+        let step_path = format!("/test/{issue_key}/step");
+        let existing = client.xray.get_json_or_none(&step_path, &[]).await;
+        eprintln!("[push_entry_to_jira] existing steps for {issue_key}: {:?}", existing);
+
+        // ID can be integer or string depending on Xray version
+        let first_id: Option<String> = existing
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|s| {
+                s["id"].as_u64().map(|n| n.to_string())
+                    .or_else(|| s["id"].as_str().map(|s| s.to_string()))
+            });
+
+        eprintln!("[push_entry_to_jira] first_id={:?}", first_id);
+
+        if let Some(id) = first_id {
+            // Xray uses POST /{id} to update an existing step (PUT returns 405).
+            let update_path = format!("{step_path}/{id}");
+            eprintln!("[push_entry_to_jira] updating step at {update_path}");
+            client
+                .xray
+                .post_json_void(&update_path, &step_body)
+                .await
+                .map_err(|e| { eprintln!("[push_entry_to_jira] step update failed: {e}"); e })?;
+        } else {
+            eprintln!("[push_entry_to_jira] no existing steps, creating new");
+            client.xray.put_json_void(&step_path, &step_body)
+                .await
+                .map_err(|e| { eprintln!("[push_entry_to_jira] step create failed: {e}"); e })?;
+        }
+
+        // Update label (category) on the Jira issue — replace existing TC_* labels
+        let path = format!("/issue/{issue_key}");
+        let existing_data = client
+            .api
+            .get_json(&path, &[("fields", "labels".to_string())])
+            .await
+            .unwrap_or(serde_json::Value::Null);
+        let mut labels: Vec<String> = existing_data["fields"]["labels"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .filter(|l| !matches!(l.as_str(), "TC_HAPPY" | "TC_UNHAPPY" | "TC_REGRESSION"))
+            .collect();
+        if !category.is_empty() {
+            labels.push(category.to_string());
+        }
+        let label_body = serde_json::json!({ "fields": { "labels": labels } });
+        eprintln!("[push_entry_to_jira] updating labels for {issue_key}: {:?}", labels);
+        client.api.put_json_void(&path, &label_body)
+            .await
+            .map_err(|e| { eprintln!("[push_entry_to_jira] label update failed: {e}"); e })?;
+
+        eprintln!("[push_entry_to_jira] done for {issue_key}");
+        Ok(())
     }
 
     pub async fn check_test_steps(

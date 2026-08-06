@@ -113,7 +113,7 @@ function createEmptyConfEntry(isDirty = true, section = "") {
     testCaseNo: "",
     functionName: "",
     scenario: "",
-    category: "Positive",
+    category: "TC_HAPPY",
     inputData: "",
     steps: "",
     expectedResult: "",
@@ -190,7 +190,7 @@ function findBestMatch(scenario: string, issues: JiraIssueSummary[]): JiraIssueS
   return bestMatch;
 }
 
-export function useAppState() {
+export function useAppState(loggedInUser: string = "", jiraToken: string = "", confToken: string = "") {
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
   const [settingsTab, setSettingsTab] = useState<"general" | "knowledge-base" | "updates">("general");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -247,9 +247,10 @@ export function useAppState() {
   const [manualLoading, setManualLoading] = useState(false);
   const [progressHidden, setProgressHidden] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [manualTab, setManualTab] = useState<"creator" | "generate-with-ai" | "organizer" | "update-from-conf" | "extractor" | "search" | "test-executions">("creator");
+  const [manualTab, setManualTab] = useState<"creator" | "generate-with-ai" | "organizer" | "update-from-conf" | "extractor" | "search" | "monitoring">("creator");
+  const [jiraDisplayName, setJiraDisplayName] = useState<string>("");
   const [manualCases, setManualCases] = useState<ManualTestCase[]>([
-    { id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "" }
+    { id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "", testExecutionKey: "" }
   ]);
   const [organizeSource, setOrganizeSource] = useState("");
   const [organizeFolder, setOrganizeFolder] = useState("");
@@ -324,16 +325,16 @@ export function useAppState() {
   })();
   const jiraMetadataCache = useRef(_jiraMetaInit);
 
-  // sessionStorage cache for Xray folders (per project key), TTL 5 min
-  const XRAY_FOLDER_CACHE_TTL = 5 * 60 * 1000;
+  // localStorage cache for Xray folders (per project key), TTL 30 min — persists across restarts
+  const XRAY_FOLDER_CACHE_TTL = 30 * 60 * 1000;
   const xrayFolderCacheKey = (projectKey: string) => `qa-buddy-xray-folders-${projectKey}`;
   const readXrayFolderCache = (projectKey: string): XrayFolder[] | null => {
     try {
-      const raw = sessionStorage.getItem(xrayFolderCacheKey(projectKey));
+      const raw = localStorage.getItem(xrayFolderCacheKey(projectKey));
       if (!raw) return null;
       const { data, timestamp } = JSON.parse(raw);
       if (Date.now() - timestamp > XRAY_FOLDER_CACHE_TTL) {
-        sessionStorage.removeItem(xrayFolderCacheKey(projectKey));
+        localStorage.removeItem(xrayFolderCacheKey(projectKey));
         return null;
       }
       return data;
@@ -341,11 +342,11 @@ export function useAppState() {
   };
   const writeXrayFolderCache = (projectKey: string, folders: XrayFolder[]) => {
     try {
-      sessionStorage.setItem(xrayFolderCacheKey(projectKey), JSON.stringify({ data: folders, timestamp: Date.now() }));
+      localStorage.setItem(xrayFolderCacheKey(projectKey), JSON.stringify({ data: folders, timestamp: Date.now() }));
     } catch { /* quota — silently ignore */ }
   };
   const clearXrayFolderCache = (projectKey: string) => {
-    try { sessionStorage.removeItem(xrayFolderCacheKey(projectKey)); } catch { /* ignore */ }
+    try { localStorage.removeItem(xrayFolderCacheKey(projectKey)); } catch { /* ignore */ }
   };
 
   const [jqlProject, setJqlProject] = useState<string[]>([]);
@@ -390,7 +391,7 @@ export function useAppState() {
   const [ragSyncSpace, setRagSyncSpace] = useState("");
   const [ragSyncProject, setRagSyncProject] = useState("");
 
-  const [confTab, setConfTab] = useState<"form" | "settings" | "update-from-conf">("form");
+  const [confTab, setConfTab] = useState<"form" | "settings">("form");
   const [confLoading, setConfLoading] = useState(false);
   const [confProgressHidden, setConfProgressHidden] = useState(false);
   const [confPagePreview, setConfPagePreview] = useState<{ title: string; content: string; version: number } | null>(null);
@@ -401,6 +402,7 @@ export function useAppState() {
   const [confParseStatus, setConfParseStatus] = useState<ParseConfluenceEntriesResult | null>(null);
   const [confEntries, setConfEntries] = useState<any[]>([createEmptyConfEntry()]);
   const [confFetchingSteps, setConfFetchingSteps] = useState<Set<string>>(new Set());
+  const [confPushingSteps, setConfPushingSteps] = useState<Set<string>>(new Set());
   const [deletedConfTableIndices, setDeletedConfTableIndices] = useState<number[]>([]);
   const [draggedAttachment, setDraggedAttachment] = useState<{ entryId: string; attachmentId: string } | null>(null);
 
@@ -474,20 +476,34 @@ export function useAppState() {
     [searchResults.length]
   );
 
-  const applyBootstrap = useCallback((bootstrap: AppBootstrap) => {
-    setConfig(bootstrap.config);
+  const applyBootstrap = useCallback((bootstrap: AppBootstrap, dbJiraToken: string, dbConfToken: string) => {
+    const cfg: typeof bootstrap.config = {
+      ...bootstrap.config,
+      jira: {
+        ...bootstrap.config.jira,
+        username: loggedInUser || bootstrap.config.jira.username,
+        // DB token takes priority over file config token
+        token: dbJiraToken || bootstrap.config.jira.token,
+      },
+      confluence: {
+        ...bootstrap.config.confluence,
+        username: loggedInUser || bootstrap.config.confluence.username,
+        token: dbConfToken || bootstrap.config.confluence.token,
+      },
+    };
+    setConfig(cfg);
     setStatus(bootstrap.status);
     setDashboard(bootstrap.dashboard);
-    setDashboardProjects(bootstrap.config.dashboard?.projects || []);
-    setRagSyncSpace(bootstrap.config.confluence.spaceKey || "");
-    setRagSyncProject(bootstrap.config.jira.projectKey || "");
-  }, []);
+    setDashboardProjects(cfg.dashboard?.projects || []);
+    setRagSyncSpace(cfg.confluence.spaceKey || "");
+    setRagSyncProject(cfg.jira.projectKey || "");
+  }, [loggedInUser]);
 
   const loadBootstrap = useCallback(async () => {
     setLoading(true);
     try {
       const bootstrap = await window.qaBuddy.bootstrap();
-      applyBootstrap(bootstrap);
+      applyBootstrap(bootstrap, jiraToken, confToken);
       const loadedLogs = await window.qaBuddy.getLogs();
       setLogs(loadedLogs || []);
       const info = await window.qaBuddy.getUpdateStatus().catch(() => null);
@@ -499,6 +515,10 @@ export function useAppState() {
       ]).catch(() => {
         // Keep bootstrap resilient even if defect repository data fails to load.
       });
+      // Fetch Jira display name in background — used by Monitoring screen
+      void window.qaBuddy.getCurrentUser()
+        .then((user) => setJiraDisplayName((user.displayName as string) || ""))
+        .catch(() => {});
       // Preload Jira projects in background after bootstrap — if cache is still
       // valid this is a no-op; otherwise projects will be ready before the user
       // navigates to any menu that needs them.
@@ -517,7 +537,7 @@ export function useAppState() {
     } finally {
       setLoading(false);
     }
-  }, [applyBootstrap]);
+  }, [applyBootstrap, jiraToken, confToken]);
 
   useEffect(() => {
     void loadBootstrap();
@@ -904,14 +924,10 @@ export function useAppState() {
   }, [defectViewDefect, handleDefectViewDetail, setBanner]);
 
   const handleDefectSaveSource = useCallback(async (source: import("@shared/types").JiraProjectSource) => {
-    try {
-      await window.qaBuddy.saveDefectSource(source);
-      setDefectShowNewSource(false);
-      await loadDefectSources();
-      setBanner({ tone: "success", text: `Source ${source.projectKey} berhasil disimpan.` });
-    } catch (error: any) {
-      setBanner({ tone: "error", text: `Gagal menyimpan source: ${error.message}` });
-    }
+    await window.qaBuddy.saveDefectSource(source);
+    setDefectShowNewSource(false);
+    await loadDefectSources();
+    setBanner({ tone: "success", text: `Source ${source.projectKey} berhasil disimpan.` });
   }, [loadDefectSources, setBanner]);
 
   const handleDefectDeleteSource = useCallback(async (id: string) => {
@@ -1002,26 +1018,54 @@ export function useAppState() {
 
   const loadUqaIssuesFromStore = useCallback(async () => {
     try {
-      const issues = await window.qaBuddy.getUqaIssuesFromStore();
-      setUqaIssues(issues);
+      const dbUqaRows = await window.qaBuddy.getMyUqaProjects(loggedInUser, jiraDisplayName).catch(() => []);
+      const dbIssues: UqaIssue[] = dbUqaRows.map((row) => ({
+        projectKey: row.uqa_key.split("-")[0] ?? "",
+        projectName: row.project_name ?? "",
+        issueKey: row.uqa_key,
+        summary: row.project_name ?? "",
+        entries: [],
+        lastUpdated: row.last_sync ?? null,
+        needsUpdate: false,
+        status: row.status ?? "Unknown",
+        statusCategory: row.status ?? "Unknown",
+        availableTransitions: [],
+        lastUpdateAuthor: row.assignee ?? "",
+        lastUpdateDate: row.last_sync ?? "",
+      }));
+      setUqaIssues(dbIssues);
     } catch {
       // silent
     }
-  }, []);
+  }, [loggedInUser, jiraDisplayName]);
 
   const syncUqaIssues = useCallback(async () => {
     setUqaSyncing(true);
     setUqaSyncProgress({ status: "fetching", message: "Memulai...", current: 0, total: 0 });
     try {
-      const issues = await window.qaBuddy.syncUqaIssues();
-      setUqaIssues(issues);
+      const dbUqaRows = await window.qaBuddy.getMyUqaProjects(loggedInUser, jiraDisplayName).catch(() => []);
+      const dbIssues: UqaIssue[] = dbUqaRows.map((row) => ({
+        projectKey: row.uqa_key.split("-")[0] ?? "",
+        projectName: row.project_name ?? "",
+        issueKey: row.uqa_key,
+        summary: row.project_name ?? "",
+        entries: [],
+        lastUpdated: row.last_sync ?? null,
+        needsUpdate: false,
+        status: row.status ?? "Unknown",
+        statusCategory: row.status ?? "Unknown",
+        availableTransitions: [],
+        lastUpdateAuthor: row.assignee ?? "",
+        lastUpdateDate: row.last_sync ?? "",
+      }));
+      setUqaIssues(dbIssues);
     } catch {
       // silent
     } finally {
       setUqaSyncing(false);
       setUqaSyncProgress(null);
     }
-  }, []);
+  }, [loggedInUser, jiraDisplayName]);
 
   // Listen for UQA sync progress events
   useEffect(() => {
@@ -1302,12 +1346,58 @@ export function useAppState() {
         projectKey: manualProjectKey || config.jira.projectKey,
       }));
       const result = await window.qaBuddy.createManualTestCases(casesToSubmit);
-      setBanner({
-        tone: "success",
-        text: `Berhasil membuat ${result.created.length} test case di Jira.`
+
+      // Group newly created test case keys by their target Test Execution key
+      const execMap: Record<string, string[]> = {};
+      result.created.forEach((created, idx) => {
+        const teKey = (manualCases[idx]?.testExecutionKey || "").trim();
+        if (teKey) {
+          if (!execMap[teKey]) execMap[teKey] = [];
+          execMap[teKey].push(created.key);
+        }
       });
-      addLog("Submit to Jira", "success", `Berhasil membuat ${result.created.length} test case di Jira`, result.created.map(c => c.key).join(", "));
-      setManualCases([{ id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "" }]);
+
+      // Attach test cases to their respective Test Executions
+      const execEntries = Object.entries(execMap);
+      const attachResults = await Promise.allSettled(
+        execEntries.map(([execKey, testKeys]) =>
+          window.qaBuddy.addTestsToExecution(execKey, testKeys)
+        )
+      );
+
+      const attachedCount = attachResults.filter(r => r.status === "fulfilled").length;
+      const failedExecs = execEntries
+        .filter((_, i) => attachResults[i].status === "rejected")
+        .map(([k]) => k);
+
+      // Save to DB — fire and forget, don't block UX on DB availability
+      try {
+        const dbPayload = result.created.map((created, idx) => ({
+          tc_key: created.key,
+          te_jira_key: (manualCases[idx]?.testExecutionKey || "").trim(),
+          scenario: created.key,
+          category: manualCases[idx]?.labels || undefined,
+          steps: manualCases[idx]?.steps || undefined,
+          expected_result: manualCases[idx]?.expectedResult || undefined,
+          function_name: manualCases[idx]?.xrayFolder || undefined,
+        }));
+        await window.qaBuddy.saveTestCases(dbPayload);
+      } catch {
+        // DB save failure is non-critical — Jira create already succeeded
+      }
+
+      let bannerText = `Berhasil membuat ${result.created.length} test case di Jira.`;
+      if (execEntries.length > 0) {
+        bannerText += ` ${attachedCount}/${execEntries.length} Test Execution berhasil dilampirkan.`;
+        if (failedExecs.length > 0) bannerText += ` Gagal: ${failedExecs.join(", ")}.`;
+      }
+
+      setBanner({ tone: failedExecs.length > 0 ? "error" : "success", text: bannerText });
+      addLog("Submit to Jira", failedExecs.length > 0 ? "error" : "success",
+        `Berhasil membuat ${result.created.length} test case di Jira`,
+        result.created.map(c => c.key).join(", ")
+      );
+      setManualCases([{ id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "", testExecutionKey: "" }]);
       setManualDuplicateResults({});
     } catch (error: any) {
       setBanner({ tone: "error", text: `Gagal membuat test case: ${error.message}` });
@@ -1371,7 +1461,7 @@ export function useAppState() {
   const addManualCase = () => {
     setManualCases([
       ...manualCases,
-      { id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "" }
+      { id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "", testExecutionKey: "" }
     ]);
   };
 
@@ -1460,7 +1550,8 @@ export function useAppState() {
           steps: row.Steps || row.steps || row.StepsToReproduce || "",
           expectedResult: row.ExpectedResult || row.expectedResult || row.Expected || "",
           xrayFolder: row.XrayFolder || row.xrayFolder || row.Folder || "",
-          labels: row.Labels || row.labels || row.Tags || row.tags || ""
+          labels: row.Labels || row.labels || row.Tags || row.tags || "",
+          testExecutionKey: row.TestExecutionKey || row.testExecutionKey || row["Test Execution Key"] || "",
         })).filter(c => c.title);
 
         if (importedCases.length > 0) {
@@ -1486,7 +1577,8 @@ export function useAppState() {
         Steps: "1. Step one\n2. Step two\n3. Step three",
         ExpectedResult: "What should happen after the steps",
         Folder: "/Project/Folder/Path",
-        Labels: "login, auth, p1"
+        Labels: "login, auth, p1",
+        TestExecutionKey: "PROJ-123"
       }
     ];
 
@@ -2023,6 +2115,33 @@ export function useAppState() {
           ? `${result.imageCount} gambar, ${result.attachmentCount} lampiran diupload`
           : effectiveRefreshed.error || "Content not loaded"
       );
+
+      // Auto-push ke Jira untuk setiap dirty entry yang punya issueKey
+      const entriesToPush = dirtyEntries.filter(e => e.issueKey?.trim());
+      if (entriesToPush.length > 0) {
+        let jiraPushOk = 0, jiraPushFail = 0;
+        await Promise.allSettled(
+          entriesToPush.map(async (entry) => {
+            try {
+              await window.qaBuddy.pushEntryToJira({
+                issueKey: entry.issueKey!,
+                steps: entry.steps || "",
+                expectedResult: entry.expectedResult || "",
+                inputData: entry.inputData || "",
+                category: entry.category || "",
+              });
+              jiraPushOk++;
+            } catch {
+              jiraPushFail++;
+            }
+          })
+        );
+        const jiraMsg = jiraPushFail === 0
+          ? `${jiraPushOk} TC berhasil di-update ke Jira.`
+          : `${jiraPushOk} TC berhasil, ${jiraPushFail} gagal di-update ke Jira.`;
+        addLog("Sync to Confluence", jiraPushFail === 0 ? "info" : "error", jiraMsg);
+        setBanner({ tone: jiraPushFail === 0 ? "success" : "error", text: jiraMsg });
+      }
     } catch (error: any) {
       setBanner({
         tone: "error",
@@ -2177,9 +2296,21 @@ export function useAppState() {
     try {
       const result = await window.qaBuddy.fetchTestSteps(issueKey);
       if (result) {
+        const VALID_CATEGORIES = ["TC_HAPPY", "TC_UNHAPPY", "TC_REGRESSION"];
+        const matchedCategory = result.labels?.find((l) => VALID_CATEGORIES.includes(l));
         setConfEntries((current) =>
           current.map((e) =>
-            e.id === id ? { ...e, steps: result.steps, expectedResult: result.expectedResult, isDirty: true } : e
+            e.id === id
+              ? {
+                  ...e,
+                  steps: result.steps,
+                  expectedResult: result.expectedResult,
+                  scenario: issueKey,
+                  ...(matchedCategory ? { category: matchedCategory } : {}),
+                  ...(result.functionName ? { functionName: result.functionName } : {}),
+                  isDirty: true,
+                }
+              : e
           )
         );
         const stepsCount = result.steps.split("\n").filter(Boolean).length;
@@ -2195,6 +2326,45 @@ export function useAppState() {
       setBanner({ tone: "error", text: `${issueKey}: Gagal fetch steps dari Xray.` });
     } finally {
       setConfFetchingSteps(prev => { const n = new Set(prev); n.delete(id); return n; });
+    }
+  };
+
+  const pushConfEntryToJira = async (id: string, entry: any) => {
+    if (!entry.issueKey) return;
+    setConfPushingSteps(prev => new Set(prev).add(id));
+    try {
+      await window.qaBuddy.pushEntryToJira({
+        issueKey: entry.issueKey,
+        steps: entry.steps || "",
+        expectedResult: entry.expectedResult || "",
+        inputData: entry.inputData || "",
+        category: entry.category || "",
+      });
+
+      // Update DB — fire and forget
+      try {
+        await window.qaBuddy.saveTestCases([{
+          tc_key: entry.issueKey,
+          te_jira_key: "",
+          scenario: entry.scenario || entry.issueKey,
+          category: entry.category || undefined,
+          steps: entry.steps || undefined,
+          expected_result: entry.expectedResult || undefined,
+          input_data: entry.inputData || undefined,
+          function_name: entry.functionName || undefined,
+          test_case_no: entry.testCaseNo || undefined,
+        }]);
+      } catch {
+        // DB update failure is non-critical
+      }
+
+      addLog("Sync to Confluence", "info", `${entry.issueKey}: Steps & kategori berhasil di-push ke Jira.`);
+      setBanner({ tone: "success", text: `${entry.issueKey}: Berhasil di-update ke Jira.` });
+    } catch (err: any) {
+      addLog("Sync to Confluence", "error", `${entry.issueKey}: Gagal push ke Jira — ${err?.message ?? err}`);
+      setBanner({ tone: "error", text: `${entry.issueKey}: Gagal update ke Jira.` });
+    } finally {
+      setConfPushingSteps(prev => { const n = new Set(prev); n.delete(id); return n; });
     }
   };
 
@@ -2472,11 +2642,34 @@ export function useAppState() {
     );
   }
 
+  async function flushTokensOnLogout() {
+    try {
+      const clearedConfig = {
+        ...config,
+        jira: { ...config.jira, token: "" },
+        confluence: { ...config.confluence, token: "" },
+      };
+      await window.qaBuddy.saveConfig(clearedConfig);
+    } catch {
+      // best-effort — logout proceeds regardless
+    }
+  }
+
   async function saveSettings() {
     setSaveAllLoading(true);
     try {
       const saved = await window.qaBuddy.saveConfig(config);
       setConfig(saved);
+
+      // Sync API tokens to users table in DB
+      if (loggedInUser) {
+        void window.qaBuddy.updateUserTokens(
+          loggedInUser,
+          config.jira.token,
+          config.confluence.token,
+        ).catch(() => { /* best-effort */ });
+      }
+
       setBanner({ tone: "success", text: "Konfigurasi berhasil disimpan." });
 
       // Refresh dashboard in background — don't block the save
@@ -2640,6 +2833,7 @@ export function useAppState() {
     setAiLoading,
     manualTab,
     setManualTab,
+    jiraDisplayName,
     manualCases,
     setManualCases,
     organizeSource,
@@ -2813,6 +3007,8 @@ export function useAppState() {
     removeConfEntry,
     fetchConfSteps,
     confFetchingSteps,
+    pushConfEntryToJira,
+    confPushingSteps,
     updateConfEntryImages,
     handleImagePaste,
     handleConfFileAttachment,
@@ -2829,6 +3025,7 @@ export function useAppState() {
     handleBulkAddLabels,
     toggleSelectAllIssues,
     toggleSelectIssue,
+    flushTokensOnLogout,
     saveSettings,
     downloadProgress,
     setDownloadProgress,

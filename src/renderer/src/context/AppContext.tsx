@@ -5,8 +5,8 @@ type AppStateContextType = ReturnType<typeof useAppState>;
 
 const AppContext = createContext<AppStateContextType | undefined>(undefined);
 
-export function AppProvider({ children }: { children: React.ReactNode }) {
-  const state = useAppState();
+export function AppProvider({ children, loggedInUser, jiraToken, confToken }: { children: React.ReactNode; loggedInUser: string; jiraToken: string; confToken: string }) {
+  const state = useAppState(loggedInUser, jiraToken, confToken);
   return <AppContext.Provider value={state}>{children}</AppContext.Provider>;
 }
 

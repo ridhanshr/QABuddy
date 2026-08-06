@@ -1,7 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import type { ConfAttachment } from "../hooks/useAppState";
-import SearchableSelect from "../components/SearchableSelect";
 
 export default function DocumentationSync() {
   const {
@@ -41,36 +40,8 @@ export default function DocumentationSync() {
     saveSettings,
     fetchConfSteps,
     confFetchingSteps,
-    // Update from Confluence
-    confImportMode,
-    setConfImportMode,
-    confImportUrl,
-    setConfImportUrl,
-    confImportJql,
-    setConfImportJql,
-    confImportEntries,
-    setConfImportEntries,
-    confImportLoading,
-    confImportResult,
-    confImportJqlMatched,
-    setConfImportJqlMatched,
-    confImportJqlMatchedIds,
-    setConfImportJqlMatchedIds,
-    updateConfImportEntryKey,
-    fetchAndSetStepsForEntry,
-    confImportFetchingSteps,
-    confImportProjectKey,
-    setConfImportProjectKey,
-    confImportXrayFolders,
-    confImportFolderLoading,
-    confImportSelectedFolder,
-    setConfImportSelectedFolder,
-    fetchConfImportEntries,
-    searchJiraForImport,
-    toggleConfImportEntry,
-    toggleAllConfImportEntries,
-    submitUpdateFromConfluence,
-    testRepositoryProjects,
+    pushConfEntryToJira,
+    confPushingSteps,
   } = useApp();
 
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
@@ -111,19 +82,6 @@ export default function DocumentationSync() {
     document.addEventListener("paste", handler);
     return () => document.removeEventListener("paste", handler);
   }, [confTab]);
-
-  const confImportFlattenFolderOptions = useMemo(() => {
-    const flatten = (folders: typeof confImportXrayFolders, pfx = ""): { value: string; label: string }[] => {
-      const result: { value: string; label: string }[] = [];
-      for (const f of folders) {
-        const path = pfx ? `${pfx}/${f.name}` : `/${f.name}`;
-        result.push({ value: path, label: path });
-        if (f.children) result.push(...flatten(f.children, path));
-      }
-      return result;
-    };
-    return flatten(confImportXrayFolders);
-  }, [confImportXrayFolders]);
 
   if (loading || activeView !== "documentation-sync") {
     return null;
@@ -186,25 +144,25 @@ export default function DocumentationSync() {
             <span className="material-symbols" style={{ color: 'var(--tertiary)', fontSize: 20 }}>bookmark_flag</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--tertiary)', textTransform: 'uppercase', letterSpacing: 1 }}>Entry #{globalIndex + 1}</span>
           </div>
-          {confEntries.length > 1 && (
-            <button className="icon-button" onClick={() => removeConfEntry(item.id)} style={{ color: 'var(--error)', background: 'color-mix(in srgb, var(--error) 10%, transparent)', borderRadius: 8, padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Hapus Entry">
-              <span className="material-symbols" style={{ fontSize: 18 }}>delete</span>
-            </button>
-          )}
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <div className="field-group">
-            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Section / Module</label>
-            <input placeholder="e.g. Login Module, Transfer" list={`section-options-${item.id}`} value={draftSections[item.id] ?? item.section ?? ''} onChange={(e) => setDraftSections(prev => ({...prev, [item.id]: e.target.value}))} onBlur={(e) => { const v = e.target.value; updateConfEntry(item.id, "section", v); setDraftSections(prev => { const n = {...prev}; delete n[item.id]; return n; }); }} style={{ height: 40, boxSizing: 'border-box', fontSize: 13 }} />
-            <datalist id={`section-options-${item.id}`}>{confSections.map((s) => <option key={s} value={s} />)}</datalist>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <input type="text" placeholder="ISSUE-123" value={item.issueKey || ''} onChange={(e) => updateConfEntry(item.id, "issueKey", e.target.value)} style={{ fontFamily: 'monospace', width: 130, boxSizing: 'border-box', padding: '6px 10px', fontSize: 13, borderRadius: 8, border: '1px solid var(--outline-variant)', background: 'var(--surface-container-low)', color: 'var(--on-surface)', outline: 'none', height: 36 }} />
+              <button className="icon-button" onClick={() => fetchConfSteps(item.id, item.issueKey || '')} disabled={confFetchingSteps.has(item.id)} title="Fetch dari Jira/Xray" style={{ padding: 4, fontSize: 18, lineHeight: 1 }}>
+                <span className={`material-symbols ${confFetchingSteps.has(item.id) ? 'spin' : ''}`} style={{ fontSize: 18 }}>{confFetchingSteps.has(item.id) ? 'progress_activity' : 'download'}</span>
+              </button>
+            </div>
+            {confEntries.length > 1 && (
+              <button className="icon-button" onClick={() => removeConfEntry(item.id)} style={{ color: 'var(--error)', background: 'color-mix(in srgb, var(--error) 10%, transparent)', borderRadius: 8, padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Hapus Entry">
+                <span className="material-symbols" style={{ fontSize: 18 }}>delete</span>
+              </button>
+            )}
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '140px 2fr 1fr 180px', gap: 20, alignItems: 'end' }}>
           <div className="field-group">
             <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>No. Test Case</label>
-            <input placeholder="TC001" value={item.testCaseNo} onChange={(e) => updateConfEntry(item.id, "testCaseNo", e.target.value)} style={{ height: 45, boxSizing: 'border-box' }} />
+            <input placeholder={`TC${String(globalIndex + 1).padStart(3, '0')}`} value={item.testCaseNo || `TC${String(globalIndex + 1).padStart(3, '0')}`} onChange={(e) => updateConfEntry(item.id, "testCaseNo", e.target.value)} style={{ height: 45, boxSizing: 'border-box' }} />
           </div>
           <div className="field-group">
             <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Function</label>
@@ -213,9 +171,9 @@ export default function DocumentationSync() {
           <div className="field-group">
             <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Kategori</label>
             <select value={item.category} onChange={(e) => updateConfEntry(item.id, "category", e.target.value)} style={{ height: 45, width: '100%', borderRadius: 8, border: '1px solid var(--outline-variant)', background: 'var(--surface-container-low)', color: 'var(--on-surface)', padding: '0 12px', fontSize: 14, boxSizing: 'border-box', outline: 'none' }}>
-              <option value="Positive">Positive</option>
-              <option value="Negative">Negative</option>
-              <option value="Regression">Regression</option>
+              <option value="TC_HAPPY">TC_HAPPY</option>
+              <option value="TC_UNHAPPY">TC_UNHAPPY</option>
+              <option value="TC_REGRESSION">TC_REGRESSION</option>
             </select>
           </div>
           <div className="field-group">
@@ -235,18 +193,6 @@ export default function DocumentationSync() {
           <div className="field-group">
             <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Input Data</label>
             <textarea rows={3} placeholder="e.g. Kartu block code N..." value={item.inputData} onChange={(e) => updateConfEntry(item.id, "inputData", e.target.value)} style={{ boxSizing: 'border-box', minHeight: 80, resize: 'vertical' }} />
-          </div>
-        </div>
-
-        <div style={{ marginTop: 24 }}>
-          <div className="field-group">
-            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Issue Key</label>
-            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              <input type="text" placeholder="TRABRZ-123" value={item.issueKey || ''} onChange={(e) => updateConfEntry(item.id, "issueKey", e.target.value)} style={{ fontFamily: 'monospace', flex: 1, boxSizing: 'border-box', padding: '6px 10px', fontSize: 13 }} />
-              <button className="icon-button" onClick={() => fetchConfSteps(item.id, item.issueKey || '')} disabled={confFetchingSteps.has(item.id)} title="Fetch steps dari Xray" style={{ padding: 4, fontSize: 18, lineHeight: 1 }}>
-                <span className={`material-symbols ${confFetchingSteps.has(item.id) ? 'spin' : ''}`} style={{ fontSize: 18 }}>{confFetchingSteps.has(item.id) ? 'progress_activity' : 'download'}</span>
-              </button>
-            </div>
           </div>
         </div>
 
@@ -336,10 +282,6 @@ export default function DocumentationSync() {
           <button onClick={() => setConfTab("settings")} className={`doc-sync-tab ${confTab === "settings" ? "active" : ""}`}>
             <span className="material-symbols" style={{ fontSize: 20 }}>settings_applications</span>
             Sync Settings
-          </button>
-          <button onClick={() => setConfTab("update-from-conf")} className={`doc-sync-tab ${confTab === "update-from-conf" ? "active" : ""}`}>
-            <span className="material-symbols" style={{ fontSize: 20 }}>cloud_sync</span>
-            Update from Confluence
           </button>
         </div>
       </div>
@@ -498,181 +440,6 @@ export default function DocumentationSync() {
               <span className="material-symbols" style={{ fontSize: 18, marginRight: 6 }}>save</span>
               Save Sync Settings
             </button>
-          </div>
-        </div>
-      )}
-      {confTab === "update-from-conf" && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-          {/* Mode selector */}
-          <div className="card" style={{ padding: 24 }}>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-              <span className="material-symbols" style={{ fontSize: 24, color: 'var(--primary)' }}>settings</span>
-              <div>
-                <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Pilih Mode</h4>
-                <p style={{ fontSize: 13, color: 'var(--on-surface-variant)' }}>
-                  {confImportMode === "auto"
-                    ? "Auto: Ekstrak Issue Key otomatis dari field Scenario di Confluence"
-                    : confImportMode === "jql-match"
-                    ? "JQL Match: Cocokkan dengan hasil query JQL"
-                    : "Xray Folder: Cocokkan dengan issue di folder Xray terpilih"}
-                </p>
-              </div>
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                <button className={confImportMode === "auto" ? "primary-button" : "secondary-button"} onClick={() => setConfImportMode("auto")} style={{ padding: '6px 16px', fontSize: 13, borderRadius: 20 }}>Auto</button>
-                <button className={confImportMode === "jql-match" ? "primary-button" : "secondary-button"} onClick={() => setConfImportMode("jql-match")} style={{ padding: '6px 16px', fontSize: 13, borderRadius: 20 }}>JQL Match</button>
-                <button className={confImportMode === "xray-folder" ? "primary-button" : "secondary-button"} onClick={() => setConfImportMode("xray-folder")} style={{ padding: '6px 16px', fontSize: 13, borderRadius: 20 }}>Xray Folder</button>
-              </div>
-            </div>
-          </div>
-
-          {/* Confluence URL input */}
-          <div className="card" style={{ padding: 24 }}>
-            <div className="field-group">
-              <label>Confluence Page URL</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input placeholder="https://confluence.domain.com/pages/123456" value={confImportUrl} onChange={(e) => setConfImportUrl(e.target.value)} style={{ flex: 1 }} />
-                <button className="primary-button" onClick={fetchConfImportEntries} disabled={confImportLoading} style={{ padding: '8px 20px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}>
-                  <span className="material-symbols" style={{ fontSize: 18 }}>{confImportLoading ? 'progress_activity' : 'cloud_download'}</span>
-                  {confImportLoading ? 'Loading...' : 'Fetch Entries'}
-                </button>
-              </div>
-            </div>
-
-            {confImportMode === "jql-match" && (
-              <div className="field-group" style={{ marginTop: 16 }}>
-                <label>JQL Query</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input placeholder='e.g. project = QA AND issuetype = Test AND description IS EMPTY' value={confImportJql} onChange={(e) => setConfImportJql(e.target.value)} style={{ flex: 1, fontFamily: 'monospace', fontSize: 13 }} />
-                  <button className="secondary-button" onClick={searchJiraForImport} disabled={confImportLoading || confImportEntries.length === 0} style={{ padding: '8px 20px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}>
-                    <span className="material-symbols" style={{ fontSize: 18 }}>search</span>Match
-                  </button>
-                  <button className="secondary-button" onClick={() => { setConfImportJqlMatched(false); setConfImportJqlMatchedIds(new Set()); setConfImportEntries(prev => prev.map(e => ({ ...e, selected: !!e.issueKey }))); setConfImportJql(""); }} disabled={!confImportJqlMatched} style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}>
-                    <span className="material-symbols" style={{ fontSize: 18 }}>clear</span>Clear
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {confImportMode === "xray-folder" && (
-              <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div className="field-group">
-                  <label>Project</label>
-                  <SearchableSelect options={testRepositoryProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))} value={confImportProjectKey} onChange={setConfImportProjectKey} placeholder="-- Select Project --" />
-                </div>
-                <div className="field-group">
-                  <label>Xray Folder</label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <div style={{ flex: 1 }}>
-                      <SearchableSelect options={confImportFlattenFolderOptions} value={confImportSelectedFolder} onChange={setConfImportSelectedFolder} placeholder={confImportFolderLoading ? 'Loading folders...' : !confImportProjectKey ? '-- Select Project First --' : '-- Select Folder --'} disabled={confImportFolderLoading || !confImportProjectKey} />
-                    </div>
-                    <button className="secondary-button" onClick={searchJiraForImport} disabled={confImportLoading || confImportEntries.length === 0 || !confImportProjectKey || !confImportSelectedFolder} style={{ padding: '8px 20px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}>
-                      <span className="material-symbols" style={{ fontSize: 18 }}>folder_match</span>Match from Folder
-                    </button>
-                    <button className="secondary-button" onClick={() => { setConfImportJqlMatched(false); setConfImportJqlMatchedIds(new Set()); setConfImportEntries(prev => prev.map(e => ({ ...e, selected: !!e.issueKey }))); }} disabled={!confImportJqlMatched} style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, whiteSpace: 'nowrap' }}>
-                      <span className="material-symbols" style={{ fontSize: 18 }}>clear</span>Clear
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Entries table */}
-          {confImportEntries.length > 0 && (
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--outline-variant)' }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>
-                  {confImportJqlMatched ? `${confImportEntries.filter(e => confImportJqlMatchedIds.has(e.id)).length} matched of ${confImportEntries.length} entries` : `${confImportEntries.length} entries found`}
-                </span>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="secondary-button" onClick={() => toggleAllConfImportEntries(true)} style={{ padding: '4px 12px', fontSize: 12, borderRadius: 6 }}>Select All</button>
-                  <button className="secondary-button" onClick={() => toggleAllConfImportEntries(false)} style={{ padding: '4px 12px', fontSize: 12, borderRadius: 6 }}>Deselect All</button>
-                  <button className="primary-button" onClick={submitUpdateFromConfluence} disabled={confImportLoading || confImportEntries.every(e => !e.selected || !e.issueKey)} style={{ padding: '6px 20px', fontSize: 13, borderRadius: 8 }}>
-                    <span className="material-symbols" style={{ fontSize: 18 }}>{confImportLoading ? 'progress_activity' : 'sync'}</span>
-                    {confImportLoading ? 'Updating...' : 'Update Selected'}
-                  </button>
-                </div>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ background: 'var(--surface-container)', borderBottom: '1px solid var(--outline-variant)' }}>
-                      <th style={{ padding: '10px 16px', textAlign: 'left', width: 40 }}><span className="material-symbols" style={{ fontSize: 16, color: 'var(--on-surface-variant)' }}>check</span></th>
-                      <th style={{ padding: '10px 16px', textAlign: 'left' }}>Issue Key</th>
-                      <th style={{ padding: '10px 16px', textAlign: 'left' }}>Scenario</th>
-                      <th style={{ padding: '10px 16px', textAlign: 'left' }}>Steps</th>
-                      <th style={{ padding: '10px 16px', textAlign: 'left' }}>Expected Result</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(confImportJqlMatched ? confImportEntries.filter(e => confImportJqlMatchedIds.has(e.id)) : confImportEntries).map((entry) => (
-                      <tr key={entry.id} style={{ borderBottom: '1px solid var(--outline-variant)', background: entry.selected ? 'rgba(var(--primary-rgb), 0.03)' : 'transparent', opacity: entry.issueKey ? 1 : 0.5 }}>
-                        <td style={{ padding: '8px 16px' }}>
-                          <input type="checkbox" checked={entry.selected} disabled={!entry.issueKey} onChange={() => toggleConfImportEntry(entry.id)} />
-                        </td>
-                        <td style={{ padding: '8px 16px', fontWeight: 600 }}>
-                          {entry.issueKey ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                              {confImportJqlMatched && confImportJqlMatchedIds.has(entry.id) && <span className="material-symbols" style={{ fontSize: 14, color: 'var(--success)' }}>check_circle</span>}
-                              <input type="text" value={entry.issueKey} onChange={(e) => updateConfImportEntryKey(entry.id, e.target.value)} onBlur={() => fetchAndSetStepsForEntry(entry.id, entry.issueKey)} style={{ width: 130, padding: '2px 6px', fontSize: 13, fontWeight: 600, fontFamily: 'monospace', border: '1px solid var(--outline-variant)', borderRadius: 4, background: 'transparent', color: 'inherit' }} />
-                              <button className="icon-button" onClick={() => fetchAndSetStepsForEntry(entry.id, entry.issueKey)} disabled={confImportFetchingSteps.has(entry.id)} title="Fetch steps dari Xray" style={{ padding: 2, fontSize: 16, lineHeight: 1, opacity: confImportFetchingSteps.has(entry.id) ? 0.6 : 0.7 }}>
-                                <span className={`material-symbols ${confImportFetchingSteps.has(entry.id) ? 'spin' : ''}`} style={{ fontSize: 16 }}>{confImportFetchingSteps.has(entry.id) ? 'progress_activity' : 'download'}</span>
-                              </button>
-                              {confImportJqlMatched && !confImportJqlMatchedIds.has(entry.id) && <span className="material-symbols" style={{ fontSize: 14, color: 'var(--warning)' }}>warning</span>}
-                            </div>
-                          ) : (
-                            <span style={{ color: 'var(--error)', fontSize: 12 }}>No key</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '8px 16px', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.scenario}</td>
-                        <td style={{ padding: '8px 16px', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--on-surface-variant)' }}>{entry.steps?.split('\n').slice(0, 3).join(' | ') || '-'}</td>
-                        <td style={{ padding: '8px 16px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--on-surface-variant)' }}>{entry.expectedResult?.split('\n')[0] || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Result summary */}
-          {confImportResult && (
-            <div className="card" style={{ padding: 20, borderLeft: `4px solid ${confImportResult.failed.length === 0 ? 'var(--success)' : confImportResult.success.length > 0 ? 'var(--warning)' : 'var(--error)'}` }}>
-              <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Update Result</h4>
-              <div style={{ display: 'flex', gap: 24 }}>
-                <div>
-                  <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--success)' }}>{confImportResult.success.length}</span>
-                  <span style={{ fontSize: 13, color: 'var(--on-surface-variant)', marginLeft: 6 }}>Success</span>
-                </div>
-                {confImportResult.failed.length > 0 && (
-                  <div>
-                    <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--error)' }}>{confImportResult.failed.length}</span>
-                    <span style={{ fontSize: 13, color: 'var(--on-surface-variant)', marginLeft: 6 }}>Failed</span>
-                  </div>
-                )}
-              </div>
-              {confImportResult.success.length > 0 && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--on-surface-variant)' }}>Keys: {confImportResult.success.map(s => s.key).join(', ')}</div>}
-              {confImportResult.failed.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  {confImportResult.failed.map((f, i) => <div key={i} style={{ fontSize: 12, color: 'var(--error)', marginTop: 4 }}>{f.key}: {f.error}</div>)}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="card" style={{ padding: 24, background: 'rgba(var(--primary-rgb), 0.05)', border: '1px dashed var(--primary)' }}>
-            <div style={{ display: 'flex', gap: 16 }}>
-              <span className="material-symbols" style={{ color: 'var(--primary)' }}>info</span>
-              <div>
-                <h4 style={{ fontSize: 14, fontWeight: 600, color: 'var(--primary)', marginBottom: 8 }}>Cara Penggunaan</h4>
-                <div style={{ fontSize: 13, color: 'var(--on-surface-variant)', lineHeight: 1.6 }}>
-                  <p><strong>Mode Auto:</strong> Cukup masukkan URL Confluence. System akan auto-extract Issue Key dari field Scenario dan siapkan entries untuk diupdate.</p>
-                  <p><strong>Mode JQL Match:</strong> Masukkan URL Confluence + JQL query. System akan parse entries, lalu cocokkan <strong>scenario</strong> dengan <strong>summary</strong> hasil JQL, perbarui Issue Key, dan tampilkan hanya entry yang cocok. Kosongkan JQL untuk melihat semua entry.</p>
-                  <p><strong>Mode Xray Folder:</strong> Pilih Project + Folder Xray. System akan fetch semua issue di folder tersebut, lalu cocokkan dengan scenario Confluence (otomatis strip prefix project). Tidak perlu JQL atau edit manual.</p>
-                  <p>Pastikan tabel Confluence memiliki format: <strong>No. Test Case</strong>, <strong>Scenario</strong> (mengandung link Jira issue), <strong>Steps</strong>, <strong>Expected Result</strong>.</p>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       )}

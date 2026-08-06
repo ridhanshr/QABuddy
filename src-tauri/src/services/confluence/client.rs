@@ -157,28 +157,71 @@ impl ConfluenceClient {
     }
 
     /// Update a page's storage body, bumping the version number.
+    /// On HTTP 409 (version conflict caused by concurrent edits), automatically
+    /// re-fetches the latest version and retries up to 3 times.
     pub async fn update_page(&self, page_id: &str, title: &str, content: &str, version: u32) -> Result<Value> {
-        let client = self.build("/rest/api", 120)?;
-        let body = json!({
-            "type": "page",
-            "title": title,
-            "version": { "number": version + 1 },
-            "body": {
-                "storage": {
-                    "value": content,
-                    "representation": "storage",
+        let mut current_version = version;
+        let max_retries = 3;
+        for attempt in 0..=max_retries {
+            let client = self.build("/rest/api", 120)?;
+            let body = json!({
+                "type": "page",
+                "title": title,
+                "version": { "number": current_version + 1 },
+                "body": {
+                    "storage": {
+                        "value": content,
+                        "representation": "storage",
+                    }
                 }
+            });
+            let path = format!("/rest/api/content/{page_id}");
+            let resp = client.put(self.url(&path)).json(&body).send().await.map_err(ServiceError::from)?;
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+
+            if status.is_success() {
+                return serde_json::from_str::<Value>(&text).map_err(ServiceError::from);
             }
-        });
-        let path = format!("/rest/api/content/{page_id}");
-        let resp = client.put(self.url(&path)).json(&body).send().await.map_err(ServiceError::from)?;
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        if !status.is_success() {
+
+            // 409 = version conflict (someone else edited concurrently) — re-fetch and retry
+            if status.as_u16() == 409 && attempt < max_retries {
+                eprintln!("[update_page] 409 conflict on attempt {attempt}, re-fetching page version...");
+                if let Ok(page) = self.get_page(page_id).await {
+                    current_version = page["version"]["number"].as_u64().unwrap_or(current_version as u64) as u32;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                continue;
+            }
+
+            // 400 = bad request, usually malformed XHTML in the existing page content
+            if status.as_u16() == 400 {
+                let snippet = if text.len() > 300 { &text[..300] } else { &text };
+                eprintln!("[update_page] 400 error: {snippet}");
+                // Extract column position and print context window for debugging
+                let col: usize = text.find("[1,")
+                    .and_then(|p| text[p+3..].split(']').next())
+                    .and_then(|s| s.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                eprintln!("[update_page] content first 500: {:?}", &content[..content.len().min(500)]);
+                let context_snippet = if col > 0 && col <= content.len() {
+                    let start = col.saturating_sub(120);
+                    let end = (col + 80).min(content.len());
+                    let ctx = &content[start..end];
+                    eprintln!("[update_page] content near col {col}: {:?}", ctx);
+                    format!(" | HTML at col {col}: {:?}", ctx)
+                } else {
+                    String::new()
+                };
+                return Err(ServiceError::Api(format!(
+                    "Confluence menolak konten (HTTP 400).{context_snippet} | Detail: {snippet}"
+                )));
+            }
+
             let snippet = if text.len() > 500 { &text[..500] } else { &text };
             return Err(ServiceError::Api(format!("HTTP {status}: {snippet}")));
         }
-        serde_json::from_str::<Value>(&text).map_err(ServiceError::from)
+        Err(ServiceError::Api("Gagal update halaman Confluence setelah beberapa percobaan — halaman sedang diedit orang lain, coba beberapa saat lagi.".into()))
     }
 
     /// List attachments (up to 100) for a page.

@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useApp } from "../context/AppContext";
-import type { XrayExecutionDetails, XrayFolder } from "@shared/types";
-import SearchableSelect from "../components/SearchableSelect";
+import React, { useState, useCallback, useRef } from "react";
+import type { XrayExecutionDetails } from "@shared/types";
 
-type Tab = "monitoring" | "organizer";
+type Tab = "monitoring";
 
 function formatDate(iso: string): string {
   if (!iso) return "-";
@@ -14,19 +12,8 @@ function formatDate(iso: string): string {
   }
 }
 
-function flattenFolders(folders: XrayFolder[], pfx = ""): { value: string; label: string; id: number }[] {
-  const result: { value: string; label: string; id: number }[] = [];
-  for (const f of folders) {
-    const path = pfx ? `${pfx}/${f.name}` : `/${f.name}`;
-    result.push({ value: String(f.id), label: path, id: f.id });
-    if (f.children) result.push(...flattenFolders(f.children, path));
-  }
-  return result;
-}
-
 export default function TestExecutions() {
-  const { jiraProjects } = useApp();
-  const [activeTab, setActiveTab] = useState<Tab>("monitoring");
+  const [activeTab] = useState<Tab>("monitoring");
 
   // ── Monitoring tab state ──
   const [execKeyInput, setExecKeyInput] = useState("");
@@ -36,78 +23,9 @@ export default function TestExecutions() {
   const [targetIssueKey, setTargetIssueKey] = useState("");
   const [injecting, setInjecting] = useState(false);
   const [injectResult, setInjectResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [syncingDb, setSyncingDb] = useState(false);
+  const [syncDbResult, setSyncDbResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ── Organizer tab state ──
-  const [orgProjectKey, setOrgProjectKey] = useState("");
-  const [orgFolders, setOrgFolders] = useState<XrayFolder[]>([]);
-  const [orgFolderLoading, setOrgFolderLoading] = useState(false);
-  const [orgSelectedFolder, setOrgSelectedFolder] = useState("");
-  const [orgIssues, setOrgIssues] = useState<{ key: string; summary: string }[]>([]);
-  const [orgIssuesLoading, setOrgIssuesLoading] = useState(false);
-  const [orgSelectedKeys, setOrgSelectedKeys] = useState<Set<string>>(new Set());
-  const [orgExecKey, setOrgExecKey] = useState("");
-  const [orgAdding, setOrgAdding] = useState(false);
-  const [orgAddResult, setOrgAddResult] = useState<{ ok: boolean; msg: string } | null>(null);
-
-  // ── Load Xray folders when project changes (with sessionStorage cache, TTL 30 min) ──
-  const XRAY_FOLDER_CACHE_TTL = 30 * 60 * 1000;
-  const readXrayFolderCache = (projectKey: string): XrayFolder[] | null => {
-    try {
-      const raw = sessionStorage.getItem(`qa-buddy-xray-folders-${projectKey}`);
-      if (!raw) return null;
-      const { data, timestamp } = JSON.parse(raw);
-      if (Date.now() - timestamp > XRAY_FOLDER_CACHE_TTL) {
-        sessionStorage.removeItem(`qa-buddy-xray-folders-${projectKey}`);
-        return null;
-      }
-      return data;
-    } catch { return null; }
-  };
-  const writeXrayFolderCache = (projectKey: string, folders: XrayFolder[]) => {
-    try {
-      sessionStorage.setItem(`qa-buddy-xray-folders-${projectKey}`, JSON.stringify({ data: folders, timestamp: Date.now() }));
-    } catch { /* quota */ }
-  };
-
-  useEffect(() => {
-    if (!orgProjectKey) {
-      setOrgFolders([]);
-      setOrgSelectedFolder("");
-      setOrgIssues([]);
-      return;
-    }
-    const cached = readXrayFolderCache(orgProjectKey);
-    if (cached) {
-      setOrgFolders(cached);
-      return;
-    }
-    setOrgFolderLoading(true);
-    setOrgSelectedFolder("");
-    setOrgIssues([]);
-    window.qaBuddy.getXrayFolders(orgProjectKey)
-      .then(f => { writeXrayFolderCache(orgProjectKey, f || []); setOrgFolders(f || []); })
-      .catch(() => setOrgFolders([]))
-      .finally(() => setOrgFolderLoading(false));
-  }, [orgProjectKey]);
-
-  // ── Load issues when folder changes ──
-  useEffect(() => {
-    if (!orgProjectKey || !orgSelectedFolder) {
-      setOrgIssues([]);
-      setOrgSelectedKeys(new Set());
-      return;
-    }
-    const folderId = parseInt(orgSelectedFolder, 10);
-    if (isNaN(folderId)) return;
-    setOrgIssuesLoading(true);
-    setOrgSelectedKeys(new Set());
-    setOrgAddResult(null);
-    window.qaBuddy.getXrayFolderIssues(orgProjectKey, folderId)
-      .then(issues => setOrgIssues(issues || []))
-      .catch(() => setOrgIssues([]))
-      .finally(() => setOrgIssuesLoading(false));
-  }, [orgProjectKey, orgSelectedFolder]);
 
   // ── Fetch execution details ──
   const fetchExecDetails = useCallback(async (key: string) => {
@@ -130,9 +48,24 @@ export default function TestExecutions() {
     }
   }, []);
 
+  const handleSyncToDb = useCallback(async () => {
+    if (!execDetails) return;
+    setSyncingDb(true);
+    setSyncDbResult(null);
+    try {
+      const count = await window.qaBuddy.syncExecutionTestsToDb(execDetails.key);
+      setSyncDbResult({ ok: true, msg: `${count} test case berhasil disinkronkan ke database.` });
+    } catch (e: any) {
+      setSyncDbResult({ ok: false, msg: e?.message || String(e) });
+    } finally {
+      setSyncingDb(false);
+    }
+  }, [execDetails]);
+
   const handleExecKeyChange = useCallback((val: string) => {
     setExecKeyInput(val);
     setInjectResult(null);
+    setSyncDbResult(null);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => fetchExecDetails(val), 600);
   }, [fetchExecDetails]);
@@ -155,23 +88,6 @@ export default function TestExecutions() {
     }
   }, [execDetails, targetIssueKey]);
 
-  // ── Add tests to execution ──
-  const handleAddToExecution = useCallback(async () => {
-    if (!orgExecKey.trim() || orgSelectedKeys.size === 0) return;
-    setOrgAdding(true);
-    setOrgAddResult(null);
-    try {
-      await window.qaBuddy.addTestsToExecution(orgExecKey.trim().toUpperCase(), Array.from(orgSelectedKeys));
-      setOrgAddResult({ ok: true, msg: `${orgSelectedKeys.size} test case berhasil ditambahkan ke ${orgExecKey.trim().toUpperCase()}` });
-    } catch (e: any) {
-      setOrgAddResult({ ok: false, msg: e?.message || String(e) });
-    } finally {
-      setOrgAdding(false);
-    }
-  }, [orgExecKey, orgSelectedKeys]);
-
-  const orgFolderOptions = flattenFolders(orgFolders);
-
   const formatSnapDate = (iso: string) => {
     try {
       return new Date(iso + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
@@ -180,32 +96,10 @@ export default function TestExecutions() {
 
   return (
     <div>
-      {/* Tab bar */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "2px solid var(--surface-container-high)" }}>
-        {([
-          { key: "monitoring", label: "Test Execution Monitoring", icon: "monitoring" },
-          { key: "organizer", label: "Test Execution Organizer", icon: "playlist_add" },
-        ] as const).map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            type="button"
-            style={{
-              flex: 1, padding: "10px 16px", border: "none",
-              background: activeTab === tab.key ? "var(--secondary-container)" : "transparent",
-              color: activeTab === tab.key ? "var(--on-secondary-container)" : "var(--on-surface)",
-              fontWeight: 600, cursor: "pointer", borderRadius: "8px 8px 0 0", transition: "all 0.2s",
-            }}
-          >
-            <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>{tab.icon}</span>
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       {/* ── Test Execution Monitoring ── */}
       {activeTab === "monitoring" && (
         <div>
+
           <div className="card" style={{ padding: 20, marginBottom: 20 }}>
             <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "var(--on-surface-variant)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>
               Jira Test Execution Key
@@ -300,7 +194,7 @@ export default function TestExecutions() {
                     </div>
                   </div>
 
-                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12 }}>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, alignItems: "center" }}>
                     {[
                       { label: "To Do", count: d.unexecuted, color: "var(--on-surface-variant)" },
                       { label: "In Progress", count: d.inProgress, color: "var(--secondary)" },
@@ -313,8 +207,35 @@ export default function TestExecutions() {
                         {item.label}: <strong style={{ color: "var(--on-surface)" }}>{item.count}</strong>
                       </span>
                     ))}
-                    <span style={{ marginLeft: "auto", color: "var(--on-surface-variant)" }}>
+                    <span style={{ color: "var(--on-surface-variant)" }}>
                       Total: <strong style={{ color: "var(--on-surface)" }}>{d.total}</strong>
+                    </span>
+                    <span style={{ marginLeft: "auto", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                      <button
+                        className="ghost-button"
+                        onClick={handleSyncToDb}
+                        disabled={syncingDb}
+                        type="button"
+                        title="Sync seluruh test case ke database"
+                        style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, padding: "5px 12px" }}
+                      >
+                        {syncingDb
+                          ? <><span className="material-symbols" style={{ fontSize: 14, animation: "spin 1s linear infinite" }}>sync</span>Menyimpan...</>
+                          : <><span className="material-symbols" style={{ fontSize: 14 }}>save</span>Sync ke Database</>
+                        }
+                      </button>
+                      {syncDbResult && (
+                        <div style={{
+                          fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                          background: syncDbResult.ok ? "var(--tertiary-container)" : "var(--error-container)",
+                          color: syncDbResult.ok ? "var(--on-tertiary-container)" : "var(--on-error-container)",
+                        }}>
+                          <span className="material-symbols" style={{ fontSize: 12, verticalAlign: "middle", marginRight: 3 }}>
+                            {syncDbResult.ok ? "check_circle" : "error"}
+                          </span>
+                          {syncDbResult.msg}
+                        </div>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -439,176 +360,6 @@ export default function TestExecutions() {
         </div>
       )}
 
-      {/* ── Test Execution Organizer ── */}
-      {activeTab === "organizer" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* Step 1: Project + Folder */}
-          <div className="card" style={{ padding: 24 }}>
-            <h4 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
-              <span className="material-symbols" style={{ fontSize: 18, color: "var(--primary)" }}>folder_open</span>
-              Pilih Project &amp; Folder Xray
-            </h4>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div className="field-group">
-                <label>Jira Project</label>
-                <SearchableSelect
-                  options={jiraProjects.map((p: any) => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
-                  value={orgProjectKey}
-                  onChange={setOrgProjectKey}
-                  placeholder="-- Pilih Project --"
-                />
-              </div>
-              <div className="field-group">
-                <label>Xray Repository Folder</label>
-                <SearchableSelect
-                  options={orgFolderOptions.map(o => ({ value: o.value, label: o.label }))}
-                  value={orgSelectedFolder}
-                  onChange={setOrgSelectedFolder}
-                  placeholder={orgFolderLoading ? "Loading folders..." : !orgProjectKey ? "-- Pilih Project Dulu --" : "-- Pilih Folder --"}
-                  disabled={orgFolderLoading || !orgProjectKey}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Step 2: Test cases list */}
-          {(orgIssuesLoading || orgIssues.length > 0 || orgSelectedFolder) && (
-            <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{ padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--outline-variant)", background: "var(--surface-container)" }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>
-                  {orgIssuesLoading ? "Memuat test cases..." : `${orgIssues.length} test case ditemukan`}
-                </span>
-                {orgIssues.length > 0 && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      className="secondary-button"
-                      onClick={() => setOrgSelectedKeys(new Set(orgIssues.map(i => i.key)))}
-                      style={{ padding: "4px 12px", fontSize: 12, borderRadius: 6 }}
-                    >
-                      Select All
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={() => setOrgSelectedKeys(new Set())}
-                      style={{ padding: "4px 12px", fontSize: 12, borderRadius: 6 }}
-                    >
-                      Deselect All
-                    </button>
-                    <span style={{ fontSize: 12, color: "var(--on-surface-variant)", alignSelf: "center" }}>
-                      {orgSelectedKeys.size} dipilih
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {orgIssuesLoading && (
-                <div style={{ padding: 32, textAlign: "center", color: "var(--on-surface-variant)" }}>
-                  <span className="material-symbols" style={{ fontSize: 28, display: "block", marginBottom: 8, animation: "spin 1s linear infinite" }}>sync</span>
-                  Memuat test cases dari Xray...
-                </div>
-              )}
-
-              {!orgIssuesLoading && orgIssues.length === 0 && orgSelectedFolder && (
-                <div style={{ padding: 32, textAlign: "center", color: "var(--on-surface-variant)", fontSize: 13 }}>
-                  Tidak ada test case di folder ini.
-                </div>
-              )}
-
-              {!orgIssuesLoading && orgIssues.length > 0 && (
-                <div style={{ maxHeight: 400, overflowY: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                    <thead style={{ position: "sticky", top: 0, background: "var(--surface-container-low)", zIndex: 1 }}>
-                      <tr>
-                        <th style={{ padding: "8px 16px", textAlign: "left", width: 40, borderBottom: "1px solid var(--outline-variant)" }}>
-                          <input
-                            type="checkbox"
-                            checked={orgSelectedKeys.size === orgIssues.length && orgIssues.length > 0}
-                            onChange={e => setOrgSelectedKeys(e.target.checked ? new Set(orgIssues.map(i => i.key)) : new Set())}
-                          />
-                        </th>
-                        <th style={{ padding: "8px 16px", textAlign: "left", borderBottom: "1px solid var(--outline-variant)", fontWeight: 600 }}>Key</th>
-                        <th style={{ padding: "8px 16px", textAlign: "left", borderBottom: "1px solid var(--outline-variant)", fontWeight: 600 }}>Summary</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {orgIssues.map(issue => (
-                        <tr
-                          key={issue.key}
-                          style={{ borderBottom: "1px solid var(--outline-variant)", background: orgSelectedKeys.has(issue.key) ? "rgba(var(--primary-rgb), 0.04)" : "transparent", cursor: "pointer" }}
-                          onClick={() => setOrgSelectedKeys(prev => {
-                            const next = new Set(prev);
-                            if (next.has(issue.key)) next.delete(issue.key);
-                            else next.add(issue.key);
-                            return next;
-                          })}
-                        >
-                          <td style={{ padding: "8px 16px" }}>
-                            <input
-                              type="checkbox"
-                              checked={orgSelectedKeys.has(issue.key)}
-                              onChange={() => {}}
-                              onClick={e => e.stopPropagation()}
-                            />
-                          </td>
-                          <td style={{ padding: "8px 16px", fontWeight: 600, fontFamily: "monospace", whiteSpace: "nowrap", color: "var(--primary)" }}>{issue.key}</td>
-                          <td style={{ padding: "8px 16px", color: "var(--on-surface-variant)" }}>{issue.summary}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Step 3: Add to execution */}
-          <div className="card" style={{ padding: 24 }}>
-            <h4 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
-              <span className="material-symbols" style={{ fontSize: 18, color: "var(--primary)" }}>playlist_add</span>
-              Tambahkan ke Test Execution
-            </h4>
-            <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
-              <div className="field-group" style={{ flex: 1 }}>
-                <label>Test Execution Key</label>
-                <input
-                  value={orgExecKey}
-                  onChange={e => { setOrgExecKey(e.target.value); setOrgAddResult(null); }}
-                  placeholder="e.g. PROJ-5678"
-                  style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 14, width: "100%" }}
-                />
-              </div>
-              <button
-                className="primary-button"
-                onClick={handleAddToExecution}
-                disabled={orgAdding || orgSelectedKeys.size === 0 || !orgExecKey.trim()}
-                style={{ padding: "10px 24px", borderRadius: 8, fontSize: 14, whiteSpace: "nowrap", height: 44 }}
-              >
-                {orgAdding
-                  ? <><span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 4, animation: "spin 1s linear infinite" }}>sync</span>Menambahkan...</>
-                  : <><span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 4 }}>add_task</span>Tambahkan {orgSelectedKeys.size > 0 ? `(${orgSelectedKeys.size})` : ""} ke Execution</>
-                }
-              </button>
-            </div>
-
-            {orgAddResult && (
-              <div style={{
-                marginTop: 12, fontSize: 13, padding: "10px 14px", borderRadius: 8,
-                background: orgAddResult.ok ? "var(--tertiary-container)" : "var(--error-container)",
-                color: orgAddResult.ok ? "var(--on-tertiary-container)" : "var(--on-error-container)",
-              }}>
-                <span className="material-symbols" style={{ fontSize: 15, verticalAlign: "middle", marginRight: 6 }}>
-                  {orgAddResult.ok ? "check_circle" : "error"}
-                </span>
-                {orgAddResult.msg}
-              </div>
-            )}
-
-            <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>
-              Pilih test case dari folder Xray di atas, lalu masukkan key Test Execution yang ingin diisi.
-            </p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
