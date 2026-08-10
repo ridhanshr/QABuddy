@@ -44,7 +44,6 @@ jobs:
         run: npm run tauri build -- --target ${{ matrix.arch }}
         env:
           CI: true
-          APPLE_SIGNING_IDENTITY: ""
 
       - name: Strip quarantine attribute
         run: |
