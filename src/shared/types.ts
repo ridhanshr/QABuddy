@@ -549,6 +549,10 @@ export interface DesktopApi {
   getMyUqaProjects: (username: string, displayName: string) => Promise<MonitoringUqaProject[]>;
   getMyTestExecutions: (username: string, displayName: string) => Promise<MonitoringTestExecution[]>;
   getMyTestCasesByExecution: (teJiraKey: string, username: string) => Promise<MonitoringTestCase[]>;
+  getTestCasesByTeKey: (teJiraKey: string) => Promise<MonitoringTestCase[]>;
+  fetchTcDetailsBatch: (tcKeys: string[]) => Promise<FetchTestStepsResult[]>;
+  updateTestRunStatus: (teKey: string, tcKey: string, status: string) => Promise<void>;
+  updateTestCaseRunStatus: (tcKey: string, teJiraKey: string, testRunStatus: string, executedBy: string) => Promise<void>;
   getTestCaseTitles: (tcKeys: string[]) => Promise<Record<string, string>>;
   // BRD / Test Management
   generateTestCasesFromBRD: (request: BRDGenerationRequest) => Promise<BRDGenerationResult>;
@@ -586,6 +590,7 @@ export interface DesktopApi {
   getTestRepositoriesInDb: () => Promise<DbTestRepository[]>;
   fetchUqaWithDates: () => Promise<UqaWithDates[]>;
   saveUqaProjects: (projects: SaveUqaProjectInput[]) => Promise<void>;
+  resyncUqaProject: (project: SaveUqaProjectInput) => Promise<void>;
   checkUqaProjectsInDb: (uqaKeys: string[]) => Promise<string[]>;
   saveTestCases: (cases: SaveTestCaseInput[]) => Promise<void>;
   syncExecutionTestsToDb: (execKey: string) => Promise<number>;
@@ -724,8 +729,10 @@ export type ConfluenceImportMode = "auto" | "jql-match";
 
 export interface FetchTestStepsResult {
   issueKey: string;
+  summary: string;
   steps: string;
   expectedResult: string;
+  inputData: string;
   labels?: string[];
   functionName?: string;
 }

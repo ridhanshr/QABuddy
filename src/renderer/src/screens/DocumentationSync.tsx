@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useApp } from "../context/AppContext";
 import type { ConfAttachment } from "../hooks/useAppState";
+import type { MonitoringTestCase } from "@shared/types";
 
 export default function DocumentationSync() {
   const {
@@ -9,8 +10,6 @@ export default function DocumentationSync() {
     confParseStatus,
     confTab,
     setConfTab,
-    downloadConfTemplate,
-    handleConfFileUpload,
     syncConfluence,
     confLoading,
     confEntries,
@@ -28,6 +27,7 @@ export default function DocumentationSync() {
     handleConfFileDrop,
     addConfEntry,
     clearConfEntries,
+    setConfEntries,
     config,
     setConfig,
     parseConfPageEntries,
@@ -42,7 +42,102 @@ export default function DocumentationSync() {
     confFetchingSteps,
     pushConfEntryToJira,
     confPushingSteps,
+    loggedInUser,
   } = useApp();
+
+  // ── Import Test Execution modal state ────────────────────────────────
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importTeKey, setImportTeKey] = useState("");
+  const [importSearching, setImportSearching] = useState(false);
+  const [importTcList, setImportTcList] = useState<MonitoringTestCase[]>([]);
+  const [importSelected, setImportSelected] = useState<Set<string>>(new Set());
+  const [importingToForm, setImportingToForm] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const handleImportSearch = async () => {
+    if (!importTeKey.trim()) return;
+    setImportSearching(true);
+    setImportError(null);
+    setImportTcList([]);
+    setImportSelected(new Set());
+    try {
+      const tcs = await window.qaBuddy.getTestCasesByTeKey(importTeKey.trim().toUpperCase());
+      if (tcs.length === 0) {
+        setImportError(`Tidak ada test case ditemukan untuk TE Key: ${importTeKey.trim().toUpperCase()}`);
+      } else {
+        setImportTcList(tcs);
+      }
+    } catch (e) {
+      setImportError(String(e));
+    } finally {
+      setImportSearching(false);
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    if (importSelected.size === 0) return;
+    setImportingToForm(true);
+    setImportError(null);
+    const selectedKeys = [...importSelected];
+    try {
+      const details = await window.qaBuddy.fetchTcDetailsBatch(selectedKeys);
+      const jiraBaseUrl = config?.jira?.baseUrl?.replace(/\/$/, "") ?? "";
+      const startNo = confEntries.filter((e) => e.testCaseNo.trim()).length;
+      const newEntries = details.map((d, idx) => {
+        const category = (d.labels ?? []).find((l) =>
+          ["TC_HAPPY", "TC_UNHAPPY", "TC_REGRESSION"].includes(l)
+        ) ?? "TC_HAPPY";
+        const browseUrl = jiraBaseUrl ? `${jiraBaseUrl}/browse/${d.issueKey}` : d.issueKey;
+        return {
+          id: crypto.randomUUID(),
+          section: "",
+          testCaseNo: `TC${String(startNo + idx + 1).padStart(3, "0")}`,
+          functionName: d.functionName ?? d.summary ?? "",
+          scenario: d.summary ? `${d.summary}\n${browseUrl}` : browseUrl,
+          category,
+          inputData: d.inputData ?? "",
+          steps: d.steps ?? "",
+          expectedResult: d.expectedResult ?? "",
+          result: "PASS",
+          images: [] as ConfAttachment[],
+          issueKey: d.issueKey,
+          teJiraKey: importTeKey.trim().toUpperCase(),
+          isDirty: true,
+        };
+      });
+      setConfEntries((current) => {
+        // Remove the initial empty entry if it's the only one and untouched
+        const hasOnlyBlank =
+          current.length === 1 &&
+          !current[0].testCaseNo.trim() &&
+          !current[0].steps.trim();
+        return hasOnlyBlank ? newEntries : [...current, ...newEntries];
+      });
+      setImportModalOpen(false);
+      setImportTeKey("");
+      setImportTcList([]);
+      setImportSelected(new Set());
+    } catch (e) {
+      setImportError(String(e));
+    } finally {
+      setImportingToForm(false);
+    }
+  };
+
+  // When user sets result to PASS/FAILED on an entry that came from an import,
+  // also update Xray test run status + DB silently in the background.
+  const handleSetResult = (item: { id: string; issueKey?: string; teJiraKey?: string }, result: string) => {
+    updateConfEntry(item.id, "result", result);
+    const tcKey = item.issueKey;
+    const teKey = item.teJiraKey;
+    if (!tcKey || !teKey) return;
+    const xrayStatus = result === "PASS" ? "PASS" : "FAIL";
+    const dbStatus = result === "PASS" ? "PASS" : "FAIL";
+    void Promise.all([
+      window.qaBuddy.updateTestRunStatus(teKey, tcKey, xrayStatus),
+      window.qaBuddy.updateTestCaseRunStatus(tcKey, teKey, dbStatus, loggedInUser),
+    ]).catch((e) => console.error("[handleSetResult] update test run failed:", e));
+  };
 
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [newSectionName, setNewSectionName] = useState("");
@@ -179,8 +274,8 @@ export default function DocumentationSync() {
           <div className="field-group">
             <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Result</label>
             <div style={{ display: 'flex', gap: 8, height: 45, boxSizing: 'border-box' }}>
-              <button onClick={() => updateConfEntry(item.id, "result", "PASS")} style={{ flex: 1, height: '100%', borderRadius: 8, border: item.result === "PASS" ? 'none' : '1px solid var(--outline-variant)', background: item.result === "PASS" ? '#10b981' : 'var(--surface-container-low)', color: item.result === "PASS" ? 'white' : 'var(--on-surface)', fontWeight: item.result === "PASS" ? 600 : 400, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} type="button">PASS</button>
-              <button onClick={() => updateConfEntry(item.id, "result", "FAILED")} style={{ flex: 1, height: '100%', borderRadius: 8, border: item.result === "FAILED" ? 'none' : '1px solid var(--outline-variant)', background: item.result === "FAILED" ? '#ef4444' : 'var(--surface-container-low)', color: item.result === "FAILED" ? 'white' : 'var(--on-surface)', fontWeight: item.result === "FAILED" ? 600 : 400, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} type="button">FAILED</button>
+              <button onClick={() => handleSetResult(item, "PASS")} style={{ flex: 1, height: '100%', borderRadius: 8, border: item.result === "PASS" ? 'none' : '1px solid var(--outline-variant)', background: item.result === "PASS" ? '#10b981' : 'var(--surface-container-low)', color: item.result === "PASS" ? 'white' : 'var(--on-surface)', fontWeight: item.result === "PASS" ? 600 : 400, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} type="button">PASS</button>
+              <button onClick={() => handleSetResult(item, "FAILED")} style={{ flex: 1, height: '100%', borderRadius: 8, border: item.result === "FAILED" ? 'none' : '1px solid var(--outline-variant)', background: item.result === "FAILED" ? '#ef4444' : 'var(--surface-container-low)', color: item.result === "FAILED" ? 'white' : 'var(--on-surface)', fontWeight: item.result === "FAILED" ? 600 : 400, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} type="button">FAILED</button>
             </div>
           </div>
         </div>
@@ -264,6 +359,7 @@ export default function DocumentationSync() {
   };
 
   return (
+    <>
     <section style={{ maxWidth: 1000, margin: "0 auto", paddingBottom: 100 }}>
       <div style={{ marginBottom: 32 }}>
         <h2 className="text-display">Test Evidence Management</h2>
@@ -293,14 +389,21 @@ export default function DocumentationSync() {
               <h4 style={{ margin: 0, color: 'var(--on-surface-variant)' }}>Enter Test Documentation</h4>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="secondary-button" onClick={downloadConfTemplate} style={{ padding: '4px 12px', height: '32px', borderRadius: 6, fontSize: 13 }}>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  setImportModalOpen(true);
+                  setImportTeKey("");
+                  setImportTcList([]);
+                  setImportSelected(new Set());
+                  setImportError(null);
+                }}
+                disabled={confLoading}
+                style={{ padding: '4px 12px', height: '32px', borderRadius: 6, fontSize: 13 }}
+                title="Import test cases dari Test Execution"
+              >
                 <span className="material-symbols" style={{ fontSize: 18 }}>download</span>
-                Template
-              </button>
-              <input type="file" id="conf-upload" accept=".csv,.xlsx,.xls" onChange={handleConfFileUpload} style={{ display: 'none' }} />
-              <button className="secondary-button" onClick={() => document.getElementById('conf-upload')?.click()} style={{ padding: '4px 12px', height: '32px', borderRadius: 6, fontSize: 13 }}>
-                <span className="material-symbols" style={{ fontSize: 18 }}>upload_file</span>
-                Import
+                Import Test Execution
               </button>
               <button
                 className="secondary-button"
@@ -444,5 +547,147 @@ export default function DocumentationSync() {
         </div>
       )}
     </section>
+
+      {/* ── Import Test Execution Modal ─────────────────────────────── */}
+      {importModalOpen && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setImportModalOpen(false); }}
+        >
+          <div style={{
+            background: 'var(--surface)',
+            borderRadius: 16,
+            padding: 28,
+            width: '90%',
+            maxWidth: 620,
+            maxHeight: '80vh',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 17, color: 'var(--on-surface)' }}>Import Test Execution</h3>
+              <button onClick={() => setImportModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--on-surface-variant)' }}>
+                <span className="material-symbols" style={{ fontSize: 22 }}>close</span>
+              </button>
+            </div>
+
+            {/* TE Key search */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="text"
+                value={importTeKey}
+                onChange={(e) => setImportTeKey(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void handleImportSearch(); }}
+                placeholder="Masukkan TE Key"
+                style={{
+                  flex: 1, padding: '8px 12px', borderRadius: 8,
+                  border: '1px solid var(--outline)', background: 'var(--surface-container)',
+                  color: 'var(--on-surface)', fontSize: 14,
+                }}
+              />
+              <button
+                className="primary-button"
+                onClick={() => void handleImportSearch()}
+                disabled={importSearching || !importTeKey.trim()}
+                style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <span className="material-symbols" style={{ fontSize: 18 }}>
+                  {importSearching ? 'progress_activity' : 'search'}
+                </span>
+                {importSearching ? 'Mencari...' : 'Search'}
+              </button>
+            </div>
+
+            {importError && (
+              <div style={{ color: 'var(--error)', fontSize: 13, padding: '8px 12px', background: 'var(--error-container)', borderRadius: 8 }}>
+                {importError}
+              </div>
+            )}
+
+            {/* TC list */}
+            {importTcList.length > 0 && (
+              <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--outline-variant)', borderRadius: 10 }}>
+                {/* Select all header */}
+                <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--outline-variant)', background: 'var(--surface-container-low)' }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>
+                    Pilih Semua ({importTcList.length} test case)
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={importSelected.size === importTcList.length}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setImportSelected(new Set(importTcList.map(t => t.tc_key)));
+                      } else {
+                        setImportSelected(new Set());
+                      }
+                    }}
+                    style={{ accentColor: 'var(--primary)', flexShrink: 0 }}
+                  />
+                </div>
+                {importTcList.map((tc) => (
+                  <label
+                    key={tc.tc_key}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 10,
+                      padding: '10px 14px', cursor: 'pointer',
+                      borderBottom: '1px solid var(--outline-variant)',
+                      background: importSelected.has(tc.tc_key) ? 'var(--primary-container)' : 'transparent',
+                      transition: 'background 0.15s',
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface)' }}>{tc.tc_key}</div>
+                      {tc.title && <div style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 2 }}>{tc.title}</div>}
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={importSelected.has(tc.tc_key)}
+                      onChange={(e) => {
+                        setImportSelected((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(tc.tc_key);
+                          else next.delete(tc.tc_key);
+                          return next;
+                        });
+                      }}
+                      style={{ accentColor: 'var(--primary)', marginTop: 2, flexShrink: 0 }}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                className="secondary-button"
+                onClick={() => setImportModalOpen(false)}
+                style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14 }}
+              >
+                Batal
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => void handleImportConfirm()}
+                disabled={importSelected.size === 0 || importingToForm}
+                style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <span className="material-symbols" style={{ fontSize: 18 }}>
+                  {importingToForm ? 'progress_activity' : 'download'}
+                </span>
+                {importingToForm ? 'Mengambil data dari Jira...' : `Import (${importSelected.size} TC)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

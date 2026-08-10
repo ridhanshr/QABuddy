@@ -502,55 +502,55 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   const loadBootstrap = useCallback(async () => {
     setLoading(true);
     try {
-      const bootstrap = await window.qaBuddy.bootstrap();
+      // bootstrap() now returns immediately (no network calls) — UI shows instantly
+      const [bootstrap, loadedLogs] = await Promise.all([
+        window.qaBuddy.bootstrap(),
+        window.qaBuddy.getLogs().catch(() => [] as typeof logs),
+      ]);
       applyBootstrap(bootstrap, jiraToken, confToken);
-      const loadedLogs = await window.qaBuddy.getLogs();
       setLogs(loadedLogs || []);
-      const info = await window.qaBuddy.getUpdateStatus().catch(() => null);
-      if (info) setUpdateInfo(info);
-      void Promise.all([
-        loadDefectSources(),
-        loadDefectStats(),
-        loadAllDefects(),
-      ]).catch(() => {
-        // Keep bootstrap resilient even if defect repository data fails to load.
+
+      // All heavy/network work runs in background after UI is already visible
+      void window.qaBuddy.getUpdateStatus().catch(() => null).then((info) => {
+        if (info) setUpdateInfo(info);
       });
-      // Fetch Jira display name in background — used by Monitoring screen
+      // Defect data loaded lazily when user opens defect-repository view
+
+      // Build effective config with DB tokens
+      const effectiveJiraToken = jiraToken || bootstrap.config.jira.token;
+      const effectiveConfToken = confToken || bootstrap.config.confluence.token;
+      const cfgWithTokens = {
+        ...bootstrap.config,
+        jira: {
+          ...bootstrap.config.jira,
+          username: loggedInUser || bootstrap.config.jira.username,
+          token: effectiveJiraToken,
+        },
+        confluence: {
+          ...bootstrap.config.confluence,
+          username: loggedInUser || bootstrap.config.confluence.username,
+          token: effectiveConfToken,
+        },
+      };
+
+      // Save config with DB tokens then test connections — all in background
+      void window.qaBuddy.saveConfig(cfgWithTokens)
+        .then(() => window.qaBuddy.testConnections())
+        .then((nextStatus) => setStatus(nextStatus))
+        .catch(() => {});
+
+      // Fetch Jira display name in background
       void window.qaBuddy.getCurrentUser()
         .then((user) => setJiraDisplayName((user.displayName as string) || ""))
         .catch(() => {});
-      // Preload Jira projects in background after bootstrap — if cache is still
-      // valid this is a no-op; otherwise projects will be ready before the user
-      // navigates to any menu that needs them.
+
+      // Preload Jira metadata from cache (instant) or network (background)
       const cachedMeta = readJiraCache();
       if (cachedMeta) {
         jiraMetadataCache.current = { data: cachedMeta, timestamp: Date.now() };
         applyJiraMetadata(cachedMeta);
-      } else if (bootstrap.config.jira.baseUrl && bootstrap.config.jira.token) {
+      } else if (effectiveJiraToken) {
         fetchAndCacheJiraMetadata();
-      }
-      // Auto-test connections if both tokens available (from DB).
-      // Must save config first so Rust backend uses the DB token, not the stale file token.
-      const effectiveJiraToken = jiraToken || bootstrap.config.jira.token;
-      const effectiveConfToken = confToken || bootstrap.config.confluence.token;
-      if (effectiveJiraToken && effectiveConfToken) {
-        const cfgWithTokens = {
-          ...bootstrap.config,
-          jira: {
-            ...bootstrap.config.jira,
-            username: loggedInUser || bootstrap.config.jira.username,
-            token: effectiveJiraToken,
-          },
-          confluence: {
-            ...bootstrap.config.confluence,
-            username: loggedInUser || bootstrap.config.confluence.username,
-            token: effectiveConfToken,
-          },
-        };
-        void window.qaBuddy.saveConfig(cfgWithTokens)
-          .then(() => window.qaBuddy.testConnections())
-          .then((nextStatus) => setStatus(nextStatus))
-          .catch(() => {});
       }
     } catch (error) {
       setBanner({
@@ -637,6 +637,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       void loadRagStats();
     }
   }, [activeView, settingsTab, loadRagStats]);
+
 
   const loadExecutionTracking = useCallback(async () => {
     setExecutionLoading(true);
@@ -868,6 +869,15 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       setDefectSearching(false);
     }
   }, []);
+
+  // Lazy-load defect data only when user opens defect-repository view
+  const defectDataLoadedRef = useRef(false);
+  useEffect(() => {
+    if (activeView !== "defect-repository") return;
+    if (defectDataLoadedRef.current) return;
+    defectDataLoadedRef.current = true;
+    void Promise.all([loadDefectSources(), loadDefectStats(), loadAllDefects()]).catch(() => {});
+  }, [activeView, loadDefectSources, loadDefectStats, loadAllDefects]);
 
   const handleDefectSync = useCallback(async (projectKey: string) => {
     setDefectSyncing(projectKey);
@@ -2110,13 +2120,47 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         entries: resizedEntries,
         deletedTableIndices: deletedConfTableIndices,
       });
+
+      // Update Xray test run status + DB for entries that have a teJiraKey (imported entries).
+      // Fire-and-forget in background — don't block the UI on Xray API latency.
+      const importedDirty = dirtyEntries.filter(
+        (e) => e.teJiraKey && e.issueKey && (e.result === "PASS" || e.result === "FAILED")
+      );
+      if (importedDirty.length > 0) {
+        void Promise.all(
+          importedDirty.map((e) => {
+            const xrayStatus = e.result === "PASS" ? "PASS" : "FAIL";
+            return Promise.all([
+              window.qaBuddy.updateTestRunStatus(e.teJiraKey as string, e.issueKey as string, xrayStatus),
+              window.qaBuddy.updateTestCaseRunStatus(e.issueKey as string, e.teJiraKey as string, xrayStatus, loggedInUser),
+            ]);
+          })
+        ).catch((e) => console.error("[syncConfluence] update test run status failed:", e));
+      }
+
       const refreshed = await window.qaBuddy.parseConfluenceEntries(pageId);
       const effectiveRefreshed = { ...refreshed, pageId: refreshed.pageId || pageId };
       setConfParseStatus(effectiveRefreshed);
       if (effectiveRefreshed.contentLoaded) {
+        // Build a lookup from testCaseNo → import metadata so teJiraKey/issueKey
+        // survive the round-trip parse from Confluence (which drops custom fields).
+        const importMeta: Record<string, { teJiraKey?: string; issueKey?: string }> = {};
+        for (const e of dirtyEntries) {
+          if (e.teJiraKey && e.issueKey && e.testCaseNo) {
+            importMeta[String(e.testCaseNo).trim()] = {
+              teJiraKey: e.teJiraKey as string,
+              issueKey: e.issueKey as string,
+            };
+          }
+        }
         effectiveRefreshed.entries.forEach((entry: any) => {
           entry.id = crypto.randomUUID();
           entry.isDirty = false;
+          const meta = importMeta[String(entry.testCaseNo ?? "").trim()];
+          if (meta) {
+            entry.teJiraKey = meta.teJiraKey;
+            entry.issueKey = meta.issueKey;
+          }
         });
         setConfEntries(effectiveRefreshed.entries);
         setDeletedConfTableIndices([]);
@@ -2867,6 +2911,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     manualTab,
     setManualTab,
     jiraDisplayName,
+    loggedInUser,
     manualCases,
     setManualCases,
     organizeSource,

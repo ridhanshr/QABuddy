@@ -263,6 +263,42 @@ pub async fn save_uqa_projects(
 }
 
 #[tauri::command]
+pub async fn resync_uqa_project(
+    state: State<'_, AppState>,
+    project: SaveUqaProjectInput,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    sqlx::query(
+        r#"
+        INSERT INTO uqa_project
+            (uqa_key, project_name, assignee, product_tester, status, start_qa, finish_qa, finish_uat, last_sync)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+            project_name   = VALUES(project_name),
+            assignee       = VALUES(assignee),
+            product_tester = VALUES(product_tester),
+            status         = VALUES(status),
+            start_qa       = VALUES(start_qa),
+            finish_qa      = VALUES(finish_qa),
+            finish_uat     = VALUES(finish_uat),
+            last_sync      = NOW()
+        "#,
+    )
+    .bind(&project.uqa_key)
+    .bind(&project.project_name)
+    .bind(project.assignee.as_deref().unwrap_or(""))
+    .bind(project.product_tester.as_deref().unwrap_or(""))
+    .bind(project.status.as_deref().unwrap_or(""))
+    .bind(project.start_sit.as_deref())
+    .bind(project.finish_sit.as_deref())
+    .bind(project.start_uat.as_deref())
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal resync uqa_project {}: {e}", project.uqa_key))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn check_uqa_projects_in_db(
     state: State<'_, AppState>,
     uqa_keys: Vec<String>,
@@ -854,6 +890,34 @@ pub async fn get_my_test_cases_by_execution(
     Ok(rows)
 }
 
+/// Fetch test cases from DB for a given TE key (no username filter).
+#[tauri::command]
+pub async fn get_test_cases_by_te_key(
+    state: State<'_, AppState>,
+    te_jira_key: String,
+) -> Result<Vec<MonitoringTestCase>, String> {
+    let pool = get_pool!(state);
+    let rows = sqlx::query_as::<_, MonitoringTestCase>(
+        r#"
+        SELECT
+            tc_key,
+            te_jira_key,
+            title,
+            test_run_status,
+            executed_by,
+            DATE_FORMAT(executed_at, '%Y-%m-%d %H:%i:%s') AS executed_at
+        FROM test_case
+        WHERE te_jira_key = ?
+        ORDER BY tc_key ASC
+        "#,
+    )
+    .bind(&te_jira_key)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal fetch test cases: {e}"))?;
+    Ok(rows)
+}
+
 /// Batch fetch tc_key → title. First checks test_case DB table, then falls back
 /// to Jira API for any keys missing or without a title.
 #[tauri::command]
@@ -911,6 +975,31 @@ pub async fn get_test_case_titles(
     }
 
     Ok(map)
+}
+
+/// Update test_run_status, executed_by, executed_at, and last_sync for a specific TC in the DB.
+#[tauri::command]
+pub async fn update_test_case_run_status(
+    state: State<'_, AppState>,
+    tc_key: String,
+    te_jira_key: String,
+    test_run_status: String,
+    executed_by: String,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    sqlx::query(
+        r#"UPDATE test_case
+           SET test_run_status = ?, executed_by = ?, executed_at = NOW(), last_sync = NOW()
+           WHERE tc_key = ? AND te_jira_key = ?"#,
+    )
+    .bind(&test_run_status)
+    .bind(&executed_by)
+    .bind(&tc_key)
+    .bind(&te_jira_key)
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal update test_run_status: {e}"))?;
+    Ok(())
 }
 
 // ── User auth & token sync ────────────────────────────────────────────────────

@@ -30,51 +30,49 @@ impl QaService {
     /// Return a fresh bootstrap bundle: config, live connection status and an
     /// (initially empty) dashboard digest.
     pub async fn bootstrap(&self, config: &AppConfig) -> AppBootstrap {
-        let status = self.test_connections(config).await;
+        // Return immediately with idle status — frontend runs test_connections in background
         AppBootstrap {
             config: config.clone(),
-            status,
+            status: ConnectionStatus {
+                jira: ConnectionStatusItem { ok: false, message: "Checking...".to_string() },
+                confluence: ConnectionStatusItem { ok: false, message: "Checking...".to_string() },
+                ollama: ConnectionStatusItem { ok: false, message: "Checking...".to_string() },
+            },
             dashboard: DashboardDigest::default(),
         }
     }
 
-    /// Probe Jira / Confluence / Ollama connectivity. Never panics — any
-    /// failure is reported as an `ok: false` status item.
+    /// Probe Jira / Confluence / Ollama connectivity concurrently. Never panics.
     pub async fn test_connections(&self, config: &AppConfig) -> ConnectionStatus {
-        let jira = if config.jira.base_url.is_empty() {
-            ConnectionStatusItem {
-                ok: false,
-                message: "Not configured".to_string(),
+        let jira_fut = async {
+            if config.jira.base_url.is_empty() {
+                ConnectionStatusItem { ok: false, message: "Not configured".to_string() }
+            } else {
+                match self.jira.test_connection(&config.jira).await {
+                    Ok(msg) => ConnectionStatusItem { ok: true, message: msg },
+                    Err(e) => ConnectionStatusItem { ok: false, message: e.to_string() },
+                }
             }
-        } else {
-            match self.jira.test_connection(&config.jira).await {
+        };
+        let confluence_fut = async {
+            if config.confluence.base_url.is_empty() {
+                ConnectionStatusItem { ok: false, message: "Not configured".to_string() }
+            } else {
+                match self.confluence.test_connection(&config.confluence).await {
+                    Ok(msg) => ConnectionStatusItem { ok: true, message: msg },
+                    Err(e) => ConnectionStatusItem { ok: false, message: e.to_string() },
+                }
+            }
+        };
+        let ollama_fut = async {
+            match self.ollama.test_connection(&config.ollama.endpoint).await {
                 Ok(msg) => ConnectionStatusItem { ok: true, message: msg },
                 Err(e) => ConnectionStatusItem { ok: false, message: e.to_string() },
             }
         };
 
-        let confluence = if config.confluence.base_url.is_empty() {
-            ConnectionStatusItem {
-                ok: false,
-                message: "Not configured".to_string(),
-            }
-        } else {
-            match self.confluence.test_connection(&config.confluence).await {
-                Ok(msg) => ConnectionStatusItem { ok: true, message: msg },
-                Err(e) => ConnectionStatusItem { ok: false, message: e.to_string() },
-            }
-        };
-
-        let ollama = match self.ollama.test_connection(&config.ollama.endpoint).await {
-            Ok(msg) => ConnectionStatusItem { ok: true, message: msg },
-            Err(e) => ConnectionStatusItem { ok: false, message: e.to_string() },
-        };
-
-        ConnectionStatus {
-            jira,
-            confluence,
-            ollama,
-        }
+        let (jira, confluence, ollama) = tokio::join!(jira_fut, confluence_fut, ollama_fut);
+        ConnectionStatus { jira, confluence, ollama }
     }
 
     /// Extended healthcheck including RAG store readiness.

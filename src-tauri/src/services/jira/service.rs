@@ -1037,17 +1037,13 @@ impl JiraService {
         let client = self.client(config)?;
         let raw = client.fetch_test_steps(issue_key).await;
         match raw {
-            Some((steps, results, labels)) => {
-                let project_key = issue_key.split('-').next().unwrap_or("").to_string();
-                let function_name = if project_key.is_empty() {
-                    None
-                } else {
-                    client.fetch_test_repository_folder(&project_key, issue_key).await
-                };
+            Some((steps, results, input_data, summary_vec, labels, function_name)) => {
                 Ok(Some(FetchTestStepsResult {
                     issue_key: issue_key.to_string(),
+                    summary: summary_vec.into_iter().next().unwrap_or_default(),
                     steps: steps.join("\n"),
                     expected_result: results.join("\n"),
+                    input_data: input_data.join("\n"),
                     labels,
                     function_name,
                 }))
@@ -1159,6 +1155,26 @@ impl JiraService {
             }
         }
         Ok(StepConflictCheck { has_steps, no_steps })
+    }
+
+    /// Find the test run ID for `tc_key` inside `te_key`, then update its status.
+    pub async fn update_test_run_status_for_tc(
+        &self,
+        config: &JiraConfig,
+        te_key: &str,
+        tc_key: &str,
+        status: &str,
+    ) -> Result<()> {
+        self.assert_configured(config)?;
+        let client = self.client(config)?;
+        let runs = client.get_xray_test_execution_tests(te_key).await?;
+        let run = runs
+            .iter()
+            .find(|r| r.key.eq_ignore_ascii_case(tc_key))
+            .ok_or_else(|| crate::services::error::ServiceError::NotFound(
+                format!("TC {tc_key} not found in TE {te_key}"),
+            ))?;
+        client.update_test_run_status(run.id, status).await
     }
 
     pub async fn update_test_cases_from_confluence(
@@ -1750,10 +1766,10 @@ fn map_qa_priority_to_jira(priority: &str) -> &str {
 }
 
 fn format_bullets(text: &str) -> String {
-    text.lines()
-        .map(|line| format!("- {}", line.trim()))
-        .collect::<Vec<_>>()
-        .join("\n")
+    // Pass through as-is — the text already contains the user's own formatting
+    // (numbered list, plain text, etc.). Adding "- " prefixes causes them to
+    // accumulate on every save.
+    text.trim().to_string()
 }
 
 async fn fetch_issue_summaries(client: &JiraClient, keys: &[String]) -> Vec<Value> {

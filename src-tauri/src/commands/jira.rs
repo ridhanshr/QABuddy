@@ -194,6 +194,58 @@ pub async fn fetch_test_steps(
     jira_service.fetch_test_steps(&config.jira, &issue_key).await.map_err(|e| e.to_string())
 }
 
+/// Batch-fetch TC details from Jira for a list of TC keys.
+/// Returns one FetchTestStepsResult per key (None entries are skipped).
+#[tauri::command]
+pub async fn fetch_tc_details_batch(
+    state: State<'_, AppState>,
+    tc_keys: Vec<String>,
+) -> Result<Vec<FetchTestStepsResult>, String> {
+    let config = load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    let mut results = Vec::new();
+    for key in &tc_keys {
+        match jira_service.fetch_test_steps(&config.jira, key).await {
+            Ok(Some(detail)) => results.push(detail),
+            Ok(None) => {
+                // No steps — still return a stub so frontend knows the key was processed
+                results.push(FetchTestStepsResult {
+                    issue_key: key.clone(),
+                    summary: String::new(),
+                    steps: String::new(),
+                    expected_result: String::new(),
+                    input_data: String::new(),
+                    labels: vec![],
+                    function_name: None,
+                });
+            }
+            Err(e) => return Err(format!("Gagal fetch {key}: {e}")),
+        }
+    }
+    Ok(results)
+}
+
+/// Update the Xray test run status for a TC inside a TE.
+#[tauri::command]
+pub async fn update_test_run_status(
+    state: State<'_, AppState>,
+    te_key: String,
+    tc_key: String,
+    status: String,
+) -> Result<(), String> {
+    let config = load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    let result = jira_service
+        .update_test_run_status_for_tc(&config.jira, &te_key, &tc_key, &status)
+        .await;
+    if let Err(ref e) = result {
+        eprintln!("[update_test_run_status] FAILED te={te_key} tc={tc_key} status={status}: {e}");
+    } else {
+        eprintln!("[update_test_run_status] OK te={te_key} tc={tc_key} status={status}");
+    }
+    result.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn push_entry_to_jira(
     state: State<'_, AppState>,

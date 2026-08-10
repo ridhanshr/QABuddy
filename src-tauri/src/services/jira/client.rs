@@ -108,9 +108,51 @@ impl JiraClient {
     }
 
     /// Fetch test steps + results + labels for an issue. Returns `None` if none/absent.
-    pub async fn fetch_test_steps(&self, issue_key: &str) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
+    /// Fetch all relevant metadata for a TC issue in one API call:
+    /// returns (summary, labels, folder_name).
+    async fn fetch_issue_meta(&self, issue_key: &str) -> (String, Vec<String>, Option<String>) {
+        let path = format!("/issue/{issue_key}");
+        let Ok(data) = self.api.get_json(&path, &[]).await else {
+            return (String::new(), vec![], None);
+        };
+
+        let fields = &data["fields"];
+
+        let summary = fields["summary"].as_str().unwrap_or("").to_string();
+
+        let labels: Vec<String> = fields["labels"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        // Resolve folder: try named field first, then scan customfields
+        let folder = if let Some(p) = fields["testRepositoryPath"].as_str() {
+            Some(deepest_path_segment(p))
+        } else {
+            fields.as_object().and_then(|map| {
+                map.iter().find_map(|(k, v)| {
+                    if k.starts_with("customfield_") {
+                        if let Some(s) = v.as_str() {
+                            if s.contains('/') && !s.contains('@') && !s.contains("http") {
+                                return Some(deepest_path_segment(s));
+                            }
+                        }
+                    }
+                    None
+                })
+            })
+        };
+
+        (summary, labels, folder)
+    }
+
+    pub async fn fetch_test_steps(&self, issue_key: &str) -> Option<(Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Option<String>)> {
         let path = format!("/test/{issue_key}/step");
-        let data = self.xray.get_json_or_none(&path, &[]).await?;
+        let (step_data, (summary, labels, folder)) = tokio::join!(
+            self.xray.get_json_or_none(&path, &[]),
+            self.fetch_issue_meta(issue_key),
+        );
+        let data = step_data?;
         let arr = data.as_array().filter(|a| !a.is_empty())?;
         let extract_raw = |v: &Value| -> String {
             if let Some(s) = v.as_str() {
@@ -128,11 +170,15 @@ impl JiraClient {
             .map(|s| extract_raw(&s["result"]).trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        let input_data: Vec<String> = arr
+            .iter()
+            .map(|s| extract_raw(&s["data"]).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         if steps.is_empty() && results.is_empty() {
             return None;
         }
-        let labels = self.fetch_issue_labels(issue_key).await;
-        Some((steps, results, labels))
+        Some((steps, results, input_data, vec![summary], labels, folder))
     }
 
     /// Fetch labels field from a Jira issue. Returns empty vec on any error.
@@ -152,39 +198,9 @@ impl JiraClient {
     }
 
     /// Fetch the deepest Xray Test Repository folder name for a test issue.
-    /// Xray stores the path in the Jira issue under the "testRepositoryPath" field
-    /// (rendered as a string like "Transaction/Airport Lounge").
     pub async fn fetch_test_repository_folder(&self, _project_key: &str, issue_key: &str) -> Option<String> {
-        // Fetch ALL fields from the Jira issue and look for the repository path.
-        let path = format!("/issue/{issue_key}");
-        let Ok(data) = self.api.get_json(&path, &[]).await else {
-            return None;
-        };
-        eprintln!("[fetch_test_repository_folder] issue={issue_key} all_fields={}", &data["fields"].to_string()[..data["fields"].to_string().len().min(500)]);
-
-        let fields = &data["fields"];
-
-        // 1. Xray injects a named field "testRepositoryPath" (some versions)
-        if let Some(p) = fields["testRepositoryPath"].as_str() {
-            return Some(deepest_path_segment(p));
-        }
-
-        // 2. Scan all customfield_* for a string value containing "/"
-        //    that looks like a folder path (heuristic)
-        if let Some(map) = fields.as_object() {
-            for (k, v) in map {
-                if k.starts_with("customfield_") {
-                    if let Some(s) = v.as_str() {
-                        if s.contains('/') && !s.contains('@') && !s.contains("http") {
-                            eprintln!("[fetch_test_repository_folder] matched custom field {k}={s}");
-                            return Some(deepest_path_segment(s));
-                        }
-                    }
-                }
-            }
-        }
-
-        None
+        let (_, _, folder) = self.fetch_issue_meta(issue_key).await;
+        folder
     }
 
     /// Add tests to an Xray folder, trying several payload shapes for compat.
@@ -401,6 +417,22 @@ impl JiraClient {
             })
             .collect();
         Ok(runs)
+    }
+
+    /// Update a single test run's status via Xray PUT /testrun/{id}/status.
+    /// Xray Raven v1 reads status as a query param, not a JSON body.
+    pub async fn update_test_run_status(&self, run_id: u32, status: &str) -> Result<()> {
+        // Try query-param form first (Xray Raven v1).
+        let path_with_query = format!("/testrun/{run_id}/status?status={status}");
+        let empty = serde_json::json!({});
+        match self.xray.put_json_void(&path_with_query, &empty).await {
+            Ok(()) => return Ok(()),
+            Err(_) => {}
+        }
+        // Fallback: JSON body form (Xray Cloud / newer Raven).
+        let path = format!("/testrun/{run_id}/status");
+        let body = serde_json::json!({ "status": status });
+        self.xray.put_json_void(&path, &body).await
     }
 }
 

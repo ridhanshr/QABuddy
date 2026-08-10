@@ -38,6 +38,9 @@ export default defineConfig({
     hmr: host
       ? { protocol: "ws", host, port: 1421 }
       : undefined,
+    watch: {
+      ignored: ["**/src-tauri/target/**", "**/node_modules/**", "**/.git/**"],
+    },
   },
   envPrefix: ["VITE_", "TAURI_"],
 });

@@ -52,3 +52,10 @@ requirement/
 
 # Test output
 test-results/
+
+# Vite HMR timestamp cache (auto-generated, machine-specific)
+vite.config.mts.timestamp-*
+
+# RAG vector DB snapshots (machine-specific, regenerated on startup)
+src-tauri/.qa-buddy-rag/snap.*
+.gitignore

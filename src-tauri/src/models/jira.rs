@@ -119,8 +119,10 @@ pub struct XrayFolder {
 #[serde(rename_all = "camelCase")]
 pub struct FetchTestStepsResult {
     pub issue_key: String,
+    pub summary: String,
     pub steps: String,
     pub expected_result: String,
+    pub input_data: String,
     pub labels: Vec<String>,
     pub function_name: Option<String>,
 }

@@ -3,6 +3,32 @@ import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
 import type { JiraIssueSummary, DbTestPlan, SaveTestPlanInput, SaveTestExecutionInput, DbTestRepository, SaveTestRepositoryInput, UqaWithDates, SaveUqaProjectInput } from "@shared/types";
 
+function SyncedBadge({ onClick, syncing }: { onClick?: () => void; syncing?: boolean } = {}) {
+  const [hovered, setHovered] = React.useState(false);
+  const interactive = !!onClick;
+  return (
+    <span
+      onClick={onClick}
+      onMouseEnter={() => interactive && setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600,
+        color: (hovered || syncing) ? "#0d7a3e" : "#16a34a",
+        background: (hovered || syncing) ? "#16a34a28" : "#16a34a18",
+        border: `1px solid ${(hovered || syncing) ? "#16a34a80" : "#16a34a40"}`,
+        borderRadius: 4, padding: "2px 8px",
+        cursor: interactive ? "pointer" : "default",
+        transition: "all 0.15s", userSelect: "none",
+      }}
+    >
+      <span className={`material-symbols${syncing ? " rotating" : ""}`} style={{ fontSize: 13 }}>
+        {syncing ? "sync" : hovered ? "sync" : "check_circle"}
+      </span>
+      {syncing ? "Syncing..." : hovered ? "Re-sync" : "Synced to DB"}
+    </span>
+  );
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface UqaTicket {
@@ -168,6 +194,7 @@ export default function ProjectManagement() {
   const [uqaSyncing, setUqaSyncing] = useState(false);
   const [uqaSyncResult, setUqaSyncResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [uqaInDb, setUqaInDb] = useState<Set<string>>(new Set());
+  const [uqaSyncingRows, setUqaSyncingRows] = useState<Set<string>>(new Set());
 
   // Test Plans
   const [plans, setPlans] = useState<TestPlanItem[]>([]);
@@ -186,6 +213,7 @@ export default function ProjectManagement() {
   const [plansInDb, setPlansInDb] = useState<Set<string>>(new Set());
   const [selectedForSync, setSelectedForSync] = useState<Set<string>>(new Set());
   const [syncingToDb, setSyncingToDb] = useState(false);
+  const [planSyncingRows, setPlanSyncingRows] = useState<Set<string>>(new Set());
   const [syncResult, setSyncResult] = useState<{ ok: boolean; msg: string } | null>(null);
   // UQA key to associate when syncing — pre-filled from breadcrumb if navigated from UQA tab
   const [syncUqaKey, setSyncUqaKey] = useState("");
@@ -415,6 +443,23 @@ export default function ProjectManagement() {
     setSyncingToDb(false);
   }, [selectedForSync, plans, breadcrumb.projectKey, uqaItems]);
 
+  // ── Resync single Test Plan row to DB ──
+  const handleResyncPlanRow = useCallback(async (plan: { key: string; summary: string }) => {
+    setPlanSyncingRows((prev) => new Set(prev).add(plan.key));
+    try {
+      const resolvedUqaKey = syncUqaKey ||
+        (breadcrumb.projectKey ? uqaItems.find((u) => u.projectKey === breadcrumb.projectKey)?.key ?? "" : "");
+      await window.qaBuddy.saveUqaTestPlan({
+        uqa_key: resolvedUqaKey,
+        tp_jira_key: plan.key,
+        title: plan.summary,
+      });
+      setPlansInDb((prev) => new Set(prev).add(plan.key));
+    } catch { /* silent */ } finally {
+      setPlanSyncingRows((prev) => { const s = new Set(prev); s.delete(plan.key); return s; });
+    }
+  }, [syncUqaKey, breadcrumb.projectKey, uqaItems]);
+
   // ── Sync selected Test Executions to DB ──
   const handleSyncExecs = useCallback(async () => {
     if (selectedExecsForSync.size === 0 || !breadcrumb.planKey) return;
@@ -499,10 +544,25 @@ export default function ProjectManagement() {
     setUqaSyncing(false);
   }, []);
 
+  // ── Sync single UQA row to DB (update last_sync + current data) ──
+  const handleSyncUqaRow = useCallback(async (item: UqaTicket) => {
+    setUqaSyncingRows((prev) => new Set(prev).add(item.key));
+    try {
+      await window.qaBuddy.resyncUqaProject({
+        uqa_key: item.key,
+        project_name: item.summary,
+        assignee: item.assignee || undefined,
+        status: item.status || undefined,
+      });
+      setUqaInDb((prev) => new Set(prev).add(item.key));
+    } catch { /* silent */ } finally {
+      setUqaSyncingRows((prev) => { const s = new Set(prev); s.delete(item.key); return s; });
+    }
+  }, []);
+
   // ── Sync Test Repository to DB ──
   const handleSyncRepository = useCallback(async () => {
     const toSync: SaveTestRepositoryInput[] = repoProjects
-      .filter((p) => !repoProjectsInDb.has(p.key))
       .map((p) => ({ project_key: p.key, project_name: p.name }));
     if (toSync.length === 0) return;
     setRepoSyncing(true);
@@ -981,10 +1041,7 @@ export default function ProjectManagement() {
                             <td style={{ padding: "10px 14px" }}>{proj.name}</td>
                             <td style={{ padding: "10px 14px" }}>
                               {inDb ? (
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "#16a34a", background: "#16a34a18", border: "1px solid #16a34a40", borderRadius: 4, padding: "2px 8px" }}>
-                                  <span className="material-symbols" style={{ fontSize: 13 }}>check_circle</span>
-                                  Sudah di DB
-                                </span>
+                                <SyncedBadge />
                               ) : (
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)", background: "var(--surface-container-high)", border: "1px solid var(--outline-variant)", borderRadius: 4, padding: "2px 8px" }}>
                                   <span className="material-symbols" style={{ fontSize: 13 }}>radio_button_unchecked</span>
@@ -1188,12 +1245,9 @@ export default function ProjectManagement() {
                     <td style={{ padding: "10px 14px", whiteSpace: "nowrap", color: "var(--on-surface-variant)" }}>
                       {item.assignee || "-"}
                     </td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                       {uqaInDb.has(item.key) ? (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "#16a34a", background: "#16a34a18", border: "1px solid #16a34a40", borderRadius: 4, padding: "2px 8px" }}>
-                          <span className="material-symbols" style={{ fontSize: 13 }}>check_circle</span>
-                          Sudah di DB
-                        </span>
+                        <SyncedBadge onClick={() => handleSyncUqaRow(item)} syncing={uqaSyncingRows.has(item.key)} />
                       ) : (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)", background: "var(--surface-container-high)", border: "1px solid var(--outline-variant)", borderRadius: 4, padding: "2px 8px" }}>
                           <span className="material-symbols" style={{ fontSize: 13 }}>radio_button_unchecked</span>
@@ -1414,27 +1468,24 @@ export default function ProjectManagement() {
                               return (
                                 <tr
                                   key={plan.key}
-                                  style={{ borderBottom: idx < plans.length - 1 ? "1px solid var(--outline-variant)" : "none", cursor: inDb ? "default" : "pointer", transition: "background 0.1s" }}
+                                  style={{ borderBottom: idx < plans.length - 1 ? "1px solid var(--outline-variant)" : "none", cursor: "pointer", transition: "background 0.1s" }}
                                   onClick={() => {
-                                    if (inDb) return;
                                     setSelectedForSync((prev) => {
                                       const next = new Set(prev);
                                       checked ? next.delete(plan.key) : next.add(plan.key);
                                       return next;
                                     });
                                   }}
-                                  onMouseEnter={(e) => { if (!inDb) e.currentTarget.style.background = "var(--surface-container)"; }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-container)"; }}
                                   onMouseLeave={(e) => (e.currentTarget.style.background = "")}
                                 >
                                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                                    {!inDb && (
-                                      <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        readOnly
-                                        style={{ cursor: "pointer" }}
-                                      />
-                                    )}
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      readOnly
+                                      style={{ cursor: "pointer" }}
+                                    />
                                   </td>
                                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
                                     <button
@@ -1452,12 +1503,9 @@ export default function ProjectManagement() {
                                   <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: 12, fontWeight: 600 }}>
                                     {plan.projectKey}
                                   </td>
-                                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                                     {inDb ? (
-                                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "#16a34a", background: "#16a34a18", border: "1px solid #16a34a40", borderRadius: 4, padding: "2px 8px" }}>
-                                        <span className="material-symbols" style={{ fontSize: 13 }}>check_circle</span>
-                                        Sudah di DB
-                                      </span>
+                                      <SyncedBadge onClick={() => handleResyncPlanRow(plan)} syncing={planSyncingRows.has(plan.key)} />
                                     ) : (
                                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)", background: "var(--surface-container-high)", border: "1px solid var(--outline-variant)", borderRadius: 4, padding: "2px 8px" }}>
                                         <span className="material-symbols" style={{ fontSize: 13 }}>radio_button_unchecked</span>
@@ -1592,22 +1640,19 @@ export default function ProjectManagement() {
                               return (
                                 <tr
                                   key={exec.key}
-                                  style={{ borderBottom: idx < executions.length - 1 ? "1px solid var(--outline-variant)" : "none", cursor: inDb ? "default" : "pointer", transition: "background 0.1s" }}
+                                  style={{ borderBottom: idx < executions.length - 1 ? "1px solid var(--outline-variant)" : "none", cursor: "pointer", transition: "background 0.1s" }}
                                   onClick={() => {
-                                    if (inDb) return;
                                     setSelectedExecsForSync((prev) => {
                                       const next = new Set(prev);
                                       checked ? next.delete(exec.key) : next.add(exec.key);
                                       return next;
                                     });
                                   }}
-                                  onMouseEnter={(e) => { if (!inDb) e.currentTarget.style.background = "var(--surface-container)"; }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-container)"; }}
                                   onMouseLeave={(e) => (e.currentTarget.style.background = "")}
                                 >
                                   <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                                    {!inDb && (
-                                      <input type="checkbox" checked={checked} readOnly style={{ cursor: "pointer" }} />
-                                    )}
+                                    <input type="checkbox" checked={checked} readOnly style={{ cursor: "pointer" }} />
                                   </td>
                                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
                                     <span style={{ fontWeight: 600, color: "var(--primary)", fontSize: 12 }}>{exec.key}</span>
@@ -1624,10 +1669,7 @@ export default function ProjectManagement() {
                                   </td>
                                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
                                     {inDb ? (
-                                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "#16a34a", background: "#16a34a18", border: "1px solid #16a34a40", borderRadius: 4, padding: "2px 8px" }}>
-                                        <span className="material-symbols" style={{ fontSize: 13 }}>check_circle</span>
-                                        Sudah di DB
-                                      </span>
+                                      <SyncedBadge />
                                     ) : (
                                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)", background: "var(--surface-container-high)", border: "1px solid var(--outline-variant)", borderRadius: 4, padding: "2px 8px" }}>
                                         <span className="material-symbols" style={{ fontSize: 13 }}>radio_button_unchecked</span>
