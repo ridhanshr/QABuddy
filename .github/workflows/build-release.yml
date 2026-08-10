@@ -42,6 +42,14 @@ jobs:
 
       - name: Build & package
         run: npm run tauri build -- --target ${{ matrix.arch }}
+        env:
+          CI: true
+          APPLE_SIGNING_IDENTITY: ""
+
+      - name: Strip quarantine attribute
+        run: |
+          find src-tauri/target/${{ matrix.arch }}/release/bundle/dmg -name "*.dmg" \
+            -exec xattr -cr {} \;
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
