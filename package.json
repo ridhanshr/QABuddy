@@ -9,6 +9,8 @@
     "build:renderer": "tsc --noEmit && vite build",
     "dev": "tauri dev",
     "build": "tauri build",
+    "dist:mac": "tauri build",
+    "dist:setup": "tauri build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run",
