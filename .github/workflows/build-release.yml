@@ -44,6 +44,11 @@ jobs:
         run: npm run tauri build -- --target ${{ matrix.arch }}
         env:
           CI: true
+          QABUDDY_DB_HOST: ${{ secrets.QABUDDY_DB_HOST }}
+          QABUDDY_DB_PORT: ${{ secrets.QABUDDY_DB_PORT }}
+          QABUDDY_DB_USER: ${{ secrets.QABUDDY_DB_USER }}
+          QABUDDY_DB_PASSWORD: ${{ secrets.QABUDDY_DB_PASSWORD }}
+          QABUDDY_DB_NAME: ${{ secrets.QABUDDY_DB_NAME }}
 
       - name: Strip quarantine attribute
         run: |
@@ -83,6 +88,12 @@ jobs:
 
       - name: Build & package
         run: npm run tauri build
+        env:
+          QABUDDY_DB_HOST: ${{ secrets.QABUDDY_DB_HOST }}
+          QABUDDY_DB_PORT: ${{ secrets.QABUDDY_DB_PORT }}
+          QABUDDY_DB_USER: ${{ secrets.QABUDDY_DB_USER }}
+          QABUDDY_DB_PASSWORD: ${{ secrets.QABUDDY_DB_PASSWORD }}
+          QABUDDY_DB_NAME: ${{ secrets.QABUDDY_DB_NAME }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
