@@ -460,7 +460,7 @@ export interface DesktopApi {
     depth: ExtractionDepth
   ) => Promise<ExtractedTestCaseResult>;
   createTestCases: (cases: ExtractedTestCase[]) => Promise<{ created: Array<{ key: string; url: string }> }>;
-  createManualTestCases: (cases: ManualTestCase[]) => Promise<{ created: Array<{ key: string; url: string }> }>;
+  createManualTestCases: (cases: ManualTestCase[], assignee?: string) => Promise<{ created: Array<{ key: string; url: string }> }>;
   organizeTestsIntoXray: (source: string, folderPath: string, projectKey: string) => Promise<{ count: number }>;
   getXrayFolders: (projectKey: string) => Promise<XrayFolder[]>;
   checkTestSteps: (entries: ConfluenceTestImportEntry[]) => Promise<StepConflictCheck>;
@@ -523,6 +523,7 @@ export interface DesktopApi {
   updateUqaSchedule: (config: UqaConfig) => Promise<void>;
   getUqaSchedule: () => Promise<UqaConfig>;
   autoGenerateUqaNotes: (issueKey: string) => Promise<AutoUqaGeneratedPayload>;
+  getUqaDbExecutionSummary: (uqaKey: string) => Promise<DbTeSummary[]>;
   getPerUqaReminder: (issueKey: string) => Promise<PerIssueReminder | null>;
   updatePerUqaReminder: (issueKey: string, reminder: PerIssueReminder) => Promise<void>;
   getUqaIssuesFromStore: () => Promise<UqaIssue[]>;
@@ -743,6 +744,7 @@ export interface ConfluenceEntryImage {
   data: string; // data URI: "data:image/png;base64,..."
   order: number;
   note: string;
+  expandGroup?: string;
 }
 
 export interface ConfluenceTestImportEntry {
@@ -846,6 +848,21 @@ export interface AutoUqaGeneratedPayload {
   phases: PhaseTestSummary[];
   generatedNotes: string;
   noLinksFound?: boolean;
+  /** "db" = came from local DB (today's synced TEs), "jira" = live Xray API */
+  source?: "db" | "jira";
+}
+
+export interface DbTeSummary {
+  teJiraKey: string;
+  teTitle?: string;
+  executionStatus: string;
+  lastSync?: string;
+  total: number;
+  done: number;
+  failed: number;
+  aborted: number;
+  inProgress: number;
+  todo: number;
 }
 
 export interface UqaIssueLink {

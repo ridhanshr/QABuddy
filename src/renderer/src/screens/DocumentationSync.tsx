@@ -22,6 +22,7 @@ export default function DocumentationSync() {
     moveConfAttachment,
     moveConfAttachmentByOffset,
     updateConfAttachmentNote,
+    updateConfAttachmentExpandGroup,
     removeImage,
     handleConfFileAttachment,
     handleConfFileDrop,
@@ -328,20 +329,27 @@ export default function DocumentationSync() {
                       <span className="material-symbols" style={{ fontSize: 14 }}>keyboard_arrow_down</span>
                     </button>
                   </div>
+                  <div style={{ padding: '6px 8px 4px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <input
+                      type="text"
+                      value={img.expandGroup || ""}
+                      onChange={(e) => updateConfAttachmentExpandGroup(item.id, img.id, e.target.value)}
+                      placeholder="Nama expand (kosong = 1 expand)"
+                      style={{ width: '100%', boxSizing: 'border-box', fontSize: 11, borderRadius: 6, border: '1px solid var(--outline-variant)', background: 'var(--surface-container-high)', color: 'var(--on-surface)', padding: '4px 8px', height: 28 }}
+                    />
+                    <textarea value={img.note || ""} onChange={(e) => updateConfAttachmentNote(item.id, img.id, e.target.value)} placeholder="Label / catatan di atas gambar" rows={2} style={{ width: '100%', resize: 'vertical', minHeight: 44, boxSizing: 'border-box', fontSize: 12, borderRadius: 6, border: '1px solid var(--outline-variant)', background: 'var(--surface)', color: 'var(--on-surface)', padding: '6px 8px' }} />
+                  </div>
                   {isImage ? (
                     <>
                       <img src={img.data} style={{ width: '100%', height: 118, objectFit: 'cover', flexShrink: 0 }} />
                       <div style={{ width: '100%', padding: '6px 8px', background: 'rgba(0,0,0,0.72)', color: 'white', fontSize: 11, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{img.name}</div>
                     </>
                   ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '42px 12px 10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '12px 12px 10px' }}>
                       <span className="material-symbols" style={{ fontSize: 24, color: 'var(--primary)' }}>description</span>
                       <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{img.name}</span>
                     </div>
                   )}
-                  <div style={{ padding: '8px 10px 10px' }}>
-                    <textarea value={img.note || ""} onChange={(e) => updateConfAttachmentNote(item.id, img.id, e.target.value)} placeholder="Catatan / label attachment" rows={3} style={{ width: '100%', resize: 'vertical', minHeight: 62, boxSizing: 'border-box', fontSize: 12, borderRadius: 6, border: '1px solid var(--outline-variant)', background: 'var(--surface)', color: 'var(--on-surface)', padding: '8px 10px' }} />
-                  </div>
                   <button onMouseDown={(e) => e.stopPropagation()} onDragStart={(e) => e.preventDefault()} onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeImage(item.id, img.id); }} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }} type="button">
                     <span className="material-symbols" style={{ fontSize: 14 }}>close</span>
                   </button>

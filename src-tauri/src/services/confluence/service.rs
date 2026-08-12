@@ -157,27 +157,55 @@ impl ConfluenceService {
         let mut sorted = images.to_vec();
         sorted.sort_by_key(|img| img["order"].as_u64().unwrap_or(0));
 
-        let mut inner = String::new();
+        // Group images by expandGroup, preserving insertion order of groups.
+        let mut group_order: Vec<String> = Vec::new();
+        let mut groups: std::collections::HashMap<String, Vec<&serde_json::Value>> =
+            std::collections::HashMap::new();
         for img in &sorted {
-            let orig_name = img["name"].as_str().unwrap_or("").to_string();
-            let key = (entry_id.to_string(), orig_name);
-            if let Some(uploaded_name) = uploaded.get(&key) {
-                inner.push_str(&format!(
-                    r#"<p><ac:image ac:width="1200"><ri:attachment ri:filename="{}" /></ac:image></p>"#,
-                    escape_html(uploaded_name)
+            let group = img["expandGroup"].as_str().unwrap_or("").trim().to_string();
+            if !groups.contains_key(&group) {
+                group_order.push(group.clone());
+            }
+            groups.entry(group).or_default().push(img);
+        }
+
+        let mut all_expands = String::new();
+        for group_key in &group_order {
+            let imgs = &groups[group_key];
+            let expand_title = if group_key.is_empty() {
+                "Click here to expand...".to_string()
+            } else {
+                escape_html(group_key)
+            };
+
+            let mut inner = String::new();
+            for img in imgs.iter() {
+                let orig_name = img["name"].as_str().unwrap_or("").to_string();
+                let note = img["note"].as_str().unwrap_or("").trim().to_string();
+                let key = (entry_id.to_string(), orig_name);
+                if let Some(uploaded_name) = uploaded.get(&key) {
+                    if !note.is_empty() {
+                        inner.push_str(&format!(
+                            r#"<p><strong>{}</strong></p>"#,
+                            escape_html(&note)
+                        ));
+                    }
+                    inner.push_str(&format!(
+                        r#"<p><ac:image ac:width="1200"><ri:attachment ri:filename="{}" /></ac:image></p>"#,
+                        escape_html(uploaded_name)
+                    ));
+                }
+            }
+
+            if !inner.is_empty() {
+                all_expands.push_str(&format!(
+                    r#"<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">{}</ac:parameter><ac:rich-text-body>{}</ac:rich-text-body></ac:structured-macro>"#,
+                    expand_title, inner
                 ));
             }
         }
 
-        if inner.is_empty() {
-            return String::new();
-        }
-
-        // All images in one Expand macro
-        format!(
-            r#"<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">Click here to expand...</ac:parameter><ac:rich-text-body>{}</ac:rich-text-body></ac:structured-macro>"#,
-            inner
-        )
+        all_expands
     }
 
     /// Update existing vertical-card tables in `content` in-place.
@@ -558,6 +586,7 @@ impl ConfluenceService {
                                     data: format!("data:{mime};base64,{b64}"),
                                     order: order + 1,
                                     note: String::new(),
+                                    expand_group: String::new(),
                                 });
                             }
                             Err(_) => {} // skip failed downloads silently

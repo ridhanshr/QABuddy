@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import logo from "../assets/logo.png";
 
 const ROLES = [
@@ -33,6 +34,11 @@ export default function Login({ onLogin }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [appVersion, setAppVersion] = useState("...");
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion("1.0.0"));
+  }, []);
 
   const switchMode = (m: Mode) => {
     setMode(m);
@@ -281,7 +287,7 @@ export default function Login({ onLogin }: Props) {
         </div>
 
         <p style={{ textAlign: "center", fontSize: 11, color: "var(--on-surface-variant)", marginTop: 20 }}>
-          QA Buddy v0.7.0 · For BRI Internal Use Only
+          QA Buddy v{appVersion} · For BRI Internal Use Only
         </p>
       </div>
     </div>

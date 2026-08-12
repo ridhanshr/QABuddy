@@ -235,7 +235,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
                 {autoLoading && (
                   <div className="uqa-auto-loading">
                     <span className="uqa-auto-spinner" />
-                    <span>Mengambil data Test Execution dari Xray...</span>
+                    <span>Mengambil data Test Execution...</span>
                   </div>
                 )}
 
@@ -248,19 +248,38 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
 
                 {autoData && (
                   <div className="uqa-auto-summary">
-                    <div className="uqa-auto-section-title">Ringkasan per Phase</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <div className="uqa-auto-section-title" style={{ marginBottom: 0 }}>Ringkasan per Test Execution Hari Ini</div>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
+                        padding: "2px 7px", borderRadius: 4,
+                        background: autoData.source === "db" ? "#1d4ed820" : "#7c3aed20",
+                        color: autoData.source === "db" ? "#1d4ed8" : "#7c3aed",
+                        border: `1px solid ${autoData.source === "db" ? "#1d4ed840" : "#7c3aed40"}`,
+                      }}>
+                        {autoData.source === "db" ? "DB (last sync hari ini)" : "Xray API (live)"}
+                      </span>
+                    </div>
 
                     {autoData.phases.length === 0 && (
                       <div className="uqa-auto-phase-empty">
                         {autoData.noLinksFound
-                          ? "Tidak ada Test Execution yang terhubung ke issue ini. Tambahkan link issue dengan tipe Test Execution."
+                          ? "Tidak ada Test Execution yang terhubung ke issue ini di DB. Pastikan Test Plan sudah di-sync ke DB dan Test Execution sudah di-sync hari ini."
                           : "Test Execution ditemukan namun belum memiliki test runs (data masih kosong)."}
                       </div>
                     )}
 
                     {autoData.phases.map((p) => (
                       <div key={p.testExecKey} className="uqa-auto-phase-row">
-                        <span className="uqa-auto-phase-name">{p.phase}</span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span className="uqa-auto-phase-name">{p.phase}</span>
+                            <span style={{ fontSize: 11, color: "var(--on-surface-variant)", fontWeight: 500 }}>{p.testExecKey}</span>
+                          </div>
+                          {p.testExecName && p.testExecName !== p.testExecKey && (
+                            <span style={{ fontSize: 11, color: "var(--on-surface-variant)", opacity: 0.8, fontStyle: "italic" }}>{p.testExecName}</span>
+                          )}
+                        </div>
                         <span className="uqa-auto-phase-stats">
                           {p.todo > 0 && <span className="uqa-auto-stat uqa-auto-stat-todo">{p.todo} To Do</span>}
                           {p.inProgress > 0 && <span className="uqa-auto-stat uqa-auto-stat-progress">{p.inProgress} In Prog</span>}

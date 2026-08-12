@@ -701,6 +701,7 @@ impl JiraService {
         &self,
         config: &JiraConfig,
         cases: &[ManualTestCase],
+        assignee: Option<&str>,
     ) -> Result<Vec<CreatedIssue>> {
         self.assert_configured(config)?;
         let client = self.client(config)?;
@@ -725,15 +726,17 @@ impl JiraService {
                     .filter(|s| !s.is_empty())
                     .collect()
             };
-            let body = json!({
-                "fields": {
-                    "project": { "key": project_key },
-                    "summary": item.title,
-                    "issuetype": { "name": "Test" },
-                    "description": full_description,
-                    "labels": custom_labels,
-                }
+            let mut fields = json!({
+                "project": { "key": project_key },
+                "summary": item.title,
+                "issuetype": { "name": "Test" },
+                "description": full_description,
+                "labels": custom_labels,
             });
+            if let Some(name) = assignee.filter(|s| !s.is_empty()) {
+                fields["assignee"] = json!({ "name": name });
+            }
+            let body = json!({ "fields": fields });
             let resp: Value = client.api.post_json("/issue", &body).await?;
             let key = resp["key"].as_str().unwrap_or("").to_string();
             created.push(CreatedIssue {
@@ -1463,10 +1466,14 @@ impl JiraService {
                 phases,
                 generated_notes: String::new(),
                 no_links_found: Some(true),
+                source: Some("jira".to_string()),
             });
         }
         for link in &links {
             let summary = link["summary"].as_str().unwrap_or("");
+            if summary.to_lowercase().contains("user acceptance test") {
+                continue;
+            }
             let phase = detect_phase_from_name(summary);
             let link_key = link["issueKey"].as_str().unwrap_or("");
             let test_runs = client
@@ -1521,6 +1528,7 @@ impl JiraService {
             phases,
             generated_notes,
             no_links_found: None,
+            source: Some("jira".to_string()),
         })
     }
 
@@ -1786,6 +1794,10 @@ async fn fetch_issue_summaries(client: &JiraClient, keys: &[String]) -> Vec<Valu
         Err(_) => vec![],
     }
 }
+
+pub fn detect_phase_from_name_pub(name: &str) -> String { detect_phase_from_name(name) }
+pub fn phase_rank_pub(phase: &str) -> u8 { phase_rank(phase) }
+pub fn format_uqa_notes_pub(phases: &[crate::models::uqa::PhaseTestSummary]) -> String { format_uqa_notes(phases) }
 
 fn detect_phase_from_name(name: &str) -> String {
     let lower = name.to_lowercase();

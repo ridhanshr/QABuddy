@@ -792,6 +792,7 @@ pub struct MonitoringTestCase {
 }
 
 /// Fetch UQA projects from DB where assignee OR product_tester matches username or display name.
+/// product_tester may contain comma-separated names (e.g. "Alice, Bob"), so we use LIKE.
 #[tauri::command]
 pub async fn get_my_uqa_projects(
     state: State<'_, AppState>,
@@ -799,8 +800,10 @@ pub async fn get_my_uqa_projects(
     display_name: String,
 ) -> Result<Vec<MonitoringUqaProject>, String> {
     let pool = get_pool!(state);
-    // Use display_name if available, otherwise fall back to username for both slots
-    let name_a = if display_name.is_empty() { &username } else { &display_name };
+    // name_a = display name when available, else fall back to username
+    let name_a = if display_name.is_empty() { username.clone() } else { display_name.clone() };
+    let like_username = format!("%{}%", username);
+    let like_name_a  = format!("%{}%", name_a);
     let rows = sqlx::query_as::<_, MonitoringUqaProject>(
         r#"
         SELECT
@@ -814,14 +817,17 @@ pub async fn get_my_uqa_projects(
             DATE_FORMAT(finish_uat, '%Y-%m-%d') AS finish_uat,
             DATE_FORMAT(last_sync, '%Y-%m-%d %H:%i:%s') AS last_sync
         FROM uqa_project
-        WHERE assignee IN (?, ?) OR product_tester IN (?, ?)
+        WHERE assignee LIKE ?
+           OR assignee LIKE ?
+           OR product_tester LIKE ?
+           OR product_tester LIKE ?
         ORDER BY last_sync DESC
         "#,
     )
-    .bind(&username)
-    .bind(name_a)
-    .bind(&username)
-    .bind(name_a)
+    .bind(&like_username)
+    .bind(&like_name_a)
+    .bind(&like_username)
+    .bind(&like_name_a)
     .fetch_all(&pool)
     .await
     .map_err(|e| format!("Gagal fetch UQA projects: {e}"))?;
@@ -916,6 +922,64 @@ pub async fn get_test_cases_by_te_key(
     .await
     .map_err(|e| format!("Gagal fetch test cases: {e}"))?;
     Ok(rows)
+}
+
+/// Summarise TC statuses per Test Execution for a given UQA key, using the
+/// DB chain: uqa_project → test_plan → test_execution → test_case.
+/// Only Test Executions whose last_sync date is today are included.
+/// Returns one row per TE with aggregated status counts.
+#[tauri::command]
+pub async fn get_uqa_db_execution_summary(
+    state: State<'_, AppState>,
+    uqa_key: String,
+) -> Result<Vec<crate::models::uqa::DbTeSummary>, String> {
+    let pool = get_pool!(state);
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            te.te_jira_key,
+            te.title                                          AS te_title,
+            COALESCE(te.execution_status, '')                 AS execution_status,
+            DATE_FORMAT(te.last_sync, '%Y-%m-%d %H:%i:%s')   AS last_sync,
+            COUNT(tc.tc_key)                                  AS total,
+            SUM(tc.test_run_status IN ('PASS','DONE','Done','Pass')) AS done_count,
+            SUM(tc.test_run_status IN ('FAIL','FAILED','Failed','Fail')) AS failed_count,
+            SUM(tc.test_run_status IN ('ABORTED','Aborted'))  AS aborted_count,
+            SUM(tc.test_run_status IN ('EXECUTING','IN_PROGRESS','In Progress','In progress','Executing'))
+                                                              AS in_progress_count,
+            SUM(tc.test_run_status IN ('TODO','To Do','To do','todo'))
+                                                              AS todo_count
+        FROM test_plan tp
+        JOIN test_execution te ON te.tp_jira_key = tp.tp_jira_key
+        LEFT JOIN test_case tc ON tc.te_jira_key = te.te_jira_key
+        WHERE tp.uqa_key = ?
+          AND DATE(te.last_sync) = CURDATE()
+        GROUP BY te.te_jira_key, te.title, te.execution_status, te.last_sync
+        ORDER BY te.last_sync DESC
+        "#,
+    )
+    .bind(&uqa_key)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal fetch DB execution summary: {e}"))?;
+
+    let result = rows
+        .iter()
+        .map(|row| crate::models::uqa::DbTeSummary {
+            te_jira_key:    row.get("te_jira_key"),
+            te_title:       row.get("te_title"),
+            execution_status: row.get("execution_status"),
+            last_sync:      row.get("last_sync"),
+            total:          row.try_get::<i64, _>("total").unwrap_or(0) as u32,
+            done:           row.try_get::<i64, _>("done_count").unwrap_or(0) as u32,
+            failed:         row.try_get::<i64, _>("failed_count").unwrap_or(0) as u32,
+            aborted:        row.try_get::<i64, _>("aborted_count").unwrap_or(0) as u32,
+            in_progress:    row.try_get::<i64, _>("in_progress_count").unwrap_or(0) as u32,
+            todo:           row.try_get::<i64, _>("todo_count").unwrap_or(0) as u32,
+        })
+        .collect();
+
+    Ok(result)
 }
 
 /// Batch fetch tc_key → title. First checks test_case DB table, then falls back

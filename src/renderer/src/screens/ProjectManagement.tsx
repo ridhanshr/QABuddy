@@ -3,28 +3,30 @@ import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
 import type { JiraIssueSummary, DbTestPlan, SaveTestPlanInput, SaveTestExecutionInput, DbTestRepository, SaveTestRepositoryInput, UqaWithDates, SaveUqaProjectInput } from "@shared/types";
 
-function SyncedBadge({ onClick, syncing }: { onClick?: () => void; syncing?: boolean } = {}) {
+function SyncedBadge({ onClick, syncing, justSynced }: { onClick?: () => void; syncing?: boolean; justSynced?: boolean } = {}) {
   const [hovered, setHovered] = React.useState(false);
   const interactive = !!onClick;
+  const isSuccess = justSynced && !syncing;
+  const color = syncing ? "#0d7a3e" : isSuccess ? "#ffffff" : hovered ? "#0d7a3e" : "#16a34a";
+  const bg = syncing ? "#16a34a28" : isSuccess ? "#16a34a" : hovered ? "#16a34a28" : "#16a34a18";
+  const border = syncing ? "#16a34a80" : isSuccess ? "#16a34a" : hovered ? "#16a34a80" : "#16a34a40";
   return (
     <span
-      onClick={onClick}
-      onMouseEnter={() => interactive && setHovered(true)}
+      onClick={!syncing ? onClick : undefined}
+      onMouseEnter={() => interactive && !syncing && setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600,
-        color: (hovered || syncing) ? "#0d7a3e" : "#16a34a",
-        background: (hovered || syncing) ? "#16a34a28" : "#16a34a18",
-        border: `1px solid ${(hovered || syncing) ? "#16a34a80" : "#16a34a40"}`,
+        color, background: bg, border: `1px solid ${border}`,
         borderRadius: 4, padding: "2px 8px",
-        cursor: interactive ? "pointer" : "default",
-        transition: "all 0.15s", userSelect: "none",
+        cursor: interactive && !syncing ? "pointer" : "default",
+        transition: "all 0.2s", userSelect: "none",
       }}
     >
       <span className={`material-symbols${syncing ? " rotating" : ""}`} style={{ fontSize: 13 }}>
-        {syncing ? "sync" : hovered ? "sync" : "check_circle"}
+        {syncing ? "sync" : isSuccess ? "task_alt" : hovered ? "sync" : "check_circle"}
       </span>
-      {syncing ? "Syncing..." : hovered ? "Re-sync" : "Synced to DB"}
+      {syncing ? "Syncing..." : isSuccess ? "Berhasil!" : hovered ? "Re-sync" : "Synced to DB"}
     </span>
   );
 }
@@ -195,6 +197,7 @@ export default function ProjectManagement() {
   const [uqaSyncResult, setUqaSyncResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [uqaInDb, setUqaInDb] = useState<Set<string>>(new Set());
   const [uqaSyncingRows, setUqaSyncingRows] = useState<Set<string>>(new Set());
+  const [uqaSyncedRows, setUqaSyncedRows] = useState<Set<string>>(new Set());
 
   // Test Plans
   const [plans, setPlans] = useState<TestPlanItem[]>([]);
@@ -214,6 +217,7 @@ export default function ProjectManagement() {
   const [selectedForSync, setSelectedForSync] = useState<Set<string>>(new Set());
   const [syncingToDb, setSyncingToDb] = useState(false);
   const [planSyncingRows, setPlanSyncingRows] = useState<Set<string>>(new Set());
+  const [planSyncedRows, setPlanSyncedRows] = useState<Set<string>>(new Set());
   const [syncResult, setSyncResult] = useState<{ ok: boolean; msg: string } | null>(null);
   // UQA key to associate when syncing — pre-filled from breadcrumb if navigated from UQA tab
   const [syncUqaKey, setSyncUqaKey] = useState("");
@@ -259,27 +263,18 @@ export default function ProjectManagement() {
     setUqaLoading(true);
     setUqaError(null);
     try {
-      const username = config.jira.username;
-      const jqlAssignee = `project = "UAT QA Activity 2026" AND assignee = "${username}" ORDER BY updated DESC`;
-      const jqlTester = `project = "UAT QA Activity 2026" AND "Product Tester" = "${username}" ORDER BY updated DESC`;
-      const [assigneeResults, testerResults] = await Promise.all([
-        window.qaBuddy.findIssuesByJql(jqlAssignee, 50),
-        window.qaBuddy.findIssuesByJql(jqlTester, 50),
-      ]);
-      const seen = new Set<string>();
-      const merged: UqaTicket[] = [];
-      for (const r of [...assigneeResults, ...testerResults]) {
-        if (seen.has(r.key)) continue;
-        seen.add(r.key);
-        merged.push({
-          key: r.key,
-          summary: r.summary,
-          status: r.status,
-          assignee: r.assignee,
-          productTester: "",
-          projectKey: extractProjectKey(r.summary),
-        });
-      }
+      const results = await window.qaBuddy.fetchUqaWithDates();
+      const merged: UqaTicket[] = results.map((r) => ({
+        key: r.uqaKey,
+        summary: r.summary,
+        status: r.status,
+        assignee: r.assignee,
+        productTester: r.productTester,
+        projectKey: extractProjectKey(r.summary),
+        startSit: r.startSit,
+        finishSit: r.finishSit,
+        startUat: r.startUat,
+      }));
       merged.sort((a, b) => b.key.localeCompare(a.key, undefined, { numeric: true }));
       uqaCacheRef.current = merged;
       setUqaItems(merged);
@@ -292,7 +287,7 @@ export default function ProjectManagement() {
     } finally {
       setUqaLoading(false);
     }
-  }, [config.jira.username]);
+  }, []);
 
   // ── Load Test Repository ──
   const loadRepository = useCallback(async () => {
@@ -455,6 +450,8 @@ export default function ProjectManagement() {
         title: plan.summary,
       });
       setPlansInDb((prev) => new Set(prev).add(plan.key));
+      setPlanSyncedRows((prev) => new Set(prev).add(plan.key));
+      setTimeout(() => setPlanSyncedRows((prev) => { const s = new Set(prev); s.delete(plan.key); return s; }), 2500);
     } catch { /* silent */ } finally {
       setPlanSyncingRows((prev) => { const s = new Set(prev); s.delete(plan.key); return s; });
     }
@@ -552,9 +549,15 @@ export default function ProjectManagement() {
         uqa_key: item.key,
         project_name: item.summary,
         assignee: item.assignee || undefined,
+        product_tester: item.productTester || undefined,
         status: item.status || undefined,
+        start_sit: item.startSit ?? undefined,
+        finish_sit: item.finishSit ?? undefined,
+        start_uat: item.startUat ?? undefined,
       });
       setUqaInDb((prev) => new Set(prev).add(item.key));
+      setUqaSyncedRows((prev) => new Set(prev).add(item.key));
+      setTimeout(() => setUqaSyncedRows((prev) => { const s = new Set(prev); s.delete(item.key); return s; }), 2500);
     } catch { /* silent */ } finally {
       setUqaSyncingRows((prev) => { const s = new Set(prev); s.delete(item.key); return s; });
     }
@@ -1247,7 +1250,7 @@ export default function ProjectManagement() {
                     </td>
                     <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                       {uqaInDb.has(item.key) ? (
-                        <SyncedBadge onClick={() => handleSyncUqaRow(item)} syncing={uqaSyncingRows.has(item.key)} />
+                        <SyncedBadge onClick={() => handleSyncUqaRow(item)} syncing={uqaSyncingRows.has(item.key)} justSynced={uqaSyncedRows.has(item.key)} />
                       ) : (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)", background: "var(--surface-container-high)", border: "1px solid var(--outline-variant)", borderRadius: 4, padding: "2px 8px" }}>
                           <span className="material-symbols" style={{ fontSize: 13 }}>radio_button_unchecked</span>
@@ -1505,7 +1508,7 @@ export default function ProjectManagement() {
                                   </td>
                                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                                     {inDb ? (
-                                      <SyncedBadge onClick={() => handleResyncPlanRow(plan)} syncing={planSyncingRows.has(plan.key)} />
+                                      <SyncedBadge onClick={() => handleResyncPlanRow(plan)} syncing={planSyncingRows.has(plan.key)} justSynced={planSyncedRows.has(plan.key)} />
                                     ) : (
                                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)", background: "var(--surface-container-high)", border: "1px solid var(--outline-variant)", borderRadius: 4, padding: "2px 8px" }}>
                                         <span className="material-symbols" style={{ fontSize: 13 }}>radio_button_unchecked</span>

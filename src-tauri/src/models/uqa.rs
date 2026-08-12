@@ -80,6 +80,22 @@ pub struct PhaseFailedDetail {
     pub defects: Vec<String>,
 }
 
+/// One Test Execution row returned by `get_uqa_db_execution_summary`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbTeSummary {
+    pub te_jira_key:      String,
+    pub te_title:         Option<String>,
+    pub execution_status: String,
+    pub last_sync:        Option<String>,
+    pub total:            u32,
+    pub done:             u32,
+    pub failed:           u32,
+    pub aborted:          u32,
+    pub in_progress:      u32,
+    pub todo:             u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoUqaGeneratedPayload {
@@ -89,4 +105,7 @@ pub struct AutoUqaGeneratedPayload {
     pub generated_notes: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_links_found: Option<bool>,
+    /// "db" if data came from local DB, "jira" if fetched live from Xray API
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }

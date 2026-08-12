@@ -1050,8 +1050,12 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   const [uqaSyncProgress, setUqaSyncProgress] = useState<UqaSyncProgress | null>(null);
 
   const loadUqaIssuesFromStore = useCallback(async () => {
+    // Wait until we have at least one identity to search by
+    if (!loggedInUser && !jiraDisplayName) return;
     try {
       const dbUqaRows = await window.qaBuddy.getMyUqaProjects(loggedInUser, jiraDisplayName).catch(() => []);
+      // Don't wipe existing results if the query returned nothing (likely a race before displayName resolved)
+      if (dbUqaRows.length === 0) return;
       const dbIssues: UqaIssue[] = dbUqaRows.map((row) => ({
         projectKey: row.uqa_key.split("-")[0] ?? "",
         projectName: row.project_name ?? "",
@@ -1378,7 +1382,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         ...c,
         projectKey: manualProjectKey || config.jira.projectKey,
       }));
-      const result = await window.qaBuddy.createManualTestCases(casesToSubmit);
+      const result = await window.qaBuddy.createManualTestCases(casesToSubmit, loggedInUser || undefined);
 
       // Group newly created test case keys by their target Test Execution key
       const execMap: Record<string, string[]> = {};
@@ -2552,6 +2556,12 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     );
   };
 
+  const updateConfAttachmentExpandGroup = (entryId: string, attachmentId: string, expandGroup: string) => {
+    updateConfEntryImages(entryId, (images) =>
+      images.map((image) => image.id === attachmentId ? { ...image, expandGroup } : image)
+    );
+  };
+
   async function extractCases() {
     if (!extractUrl.trim()) {
       setBanner({ tone: "error", text: "Masukkan URL halaman Confluence terlebih dahulu." });
@@ -3095,6 +3105,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     moveConfAttachment,
     moveConfAttachmentByOffset,
     updateConfAttachmentNote,
+    updateConfAttachmentExpandGroup,
     extractCases,
     exportCases,
     handleJqlSearch,

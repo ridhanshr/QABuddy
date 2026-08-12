@@ -15,6 +15,7 @@ import type {
   AppBootstrap,
   AppConfig,
   AutoUqaGeneratedPayload,
+  DbTeSummary,
   BugFormDraft,
   BugPreview,
   BulkOperationResult,
@@ -137,8 +138,8 @@ const api = {
     cmd<ExtractedTestCaseResult>("extract_test_cases", { url, depth }),
   createTestCases: (cases: ExtractedTestCase[]) =>
     cmd<{ created: Array<{ key: string; url: string }> }>("create_test_cases", { cases }),
-  createManualTestCases: (cases: ManualTestCase[]) =>
-    cmd<{ created: Array<{ key: string; url: string }> }>("create_manual_test_cases", { cases }),
+  createManualTestCases: (cases: ManualTestCase[], assignee?: string) =>
+    cmd<{ created: Array<{ key: string; url: string }> }>("create_manual_test_cases", { cases, assignee }),
   organizeTestsIntoXray: (source: string, folderPath: string, projectKey: string) =>
     cmd<{ count: number }>("organize_tests_into_xray", { source, folderPath, projectKey }),
   getXrayFolders: (projectKey: string) => cmd<XrayFolder[]>("get_xray_folders", { projectKey }),
@@ -308,6 +309,8 @@ const api = {
     cmd<void>("transition_uqa_issue", { issueKey, transitionId }),
   autoGenerateUqaNotes: (issueKey: string) =>
     cmd<AutoUqaGeneratedPayload>("auto_generate_uqa_notes", { issueKey }),
+  getUqaDbExecutionSummary: (uqaKey: string) =>
+    cmd<DbTeSummary[]>("get_uqa_db_execution_summary", { uqaKey }),
   onUqaReminder: (callback: (issueKey: string, summary: string) => void) =>
     on<{ issueKey: string; summary: string }>("uqa-reminder-pushed", (p) =>
       callback(p.issueKey, p.summary)

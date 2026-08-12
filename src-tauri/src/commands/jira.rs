@@ -113,11 +113,12 @@ pub async fn create_test_cases(
 pub async fn create_manual_test_cases(
     state: State<'_, AppState>,
     cases: Vec<ManualTestCase>,
+    assignee: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let config = load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
     let created = jira_service
-        .create_manual_test_cases(&config.jira, &cases)
+        .create_manual_test_cases(&config.jira, &cases, assignee.as_deref())
         .await
         .map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "created": created }))
@@ -446,6 +447,102 @@ pub async fn transition_uqa_issue(
 
 #[tauri::command]
 pub async fn auto_generate_uqa_notes(state: State<'_, AppState>, issue_key: String) -> Result<AutoUqaGeneratedPayload, String> {
+    use crate::models::uqa::{DbTeSummary, PhaseTestSummary, PhaseFailedDetail};
+    use crate::services::jira::service::{detect_phase_from_name_pub, phase_rank_pub, format_uqa_notes_pub};
+
+    // ── Try DB path first ──
+    let db_rows: Vec<DbTeSummary> = {
+        let pool_opt = state.db_pool.lock().await.clone();
+        if let Some(pool) = pool_opt {
+            sqlx::query(
+                r#"
+                SELECT
+                    te.te_jira_key,
+                    te.title                                          AS te_title,
+                    COALESCE(te.execution_status, '')                 AS execution_status,
+                    DATE_FORMAT(te.last_sync, '%Y-%m-%d %H:%i:%s')   AS last_sync,
+                    COUNT(tc.tc_key)                                  AS total,
+                    SUM(tc.test_run_status IN ('PASS','DONE','Done','Pass')) AS done_count,
+                    SUM(tc.test_run_status IN ('FAIL','FAILED','Failed','Fail')) AS failed_count,
+                    SUM(tc.test_run_status IN ('ABORTED','Aborted'))  AS aborted_count,
+                    SUM(tc.test_run_status IN ('EXECUTING','IN_PROGRESS','In Progress','In progress','Executing'))
+                                                                      AS in_progress_count,
+                    SUM(tc.test_run_status IN ('TODO','To Do','To do','todo'))
+                                                                      AS todo_count
+                FROM test_plan tp
+                JOIN test_execution te ON te.tp_jira_key = tp.tp_jira_key
+                LEFT JOIN test_case tc ON tc.te_jira_key = te.te_jira_key
+                WHERE tp.uqa_key = ?
+                  AND DATE(te.last_sync) = CURDATE()
+                GROUP BY te.te_jira_key, te.title, te.execution_status, te.last_sync
+                ORDER BY te.last_sync DESC
+                "#,
+            )
+            .bind(&issue_key)
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|row| {
+                use sqlx::Row;
+                DbTeSummary {
+                    te_jira_key:      row.get("te_jira_key"),
+                    te_title:         row.get("te_title"),
+                    execution_status: row.get("execution_status"),
+                    last_sync:        row.get("last_sync"),
+                    total:            row.try_get::<i64, _>("total").unwrap_or(0) as u32,
+                    done:             row.try_get::<i64, _>("done_count").unwrap_or(0) as u32,
+                    failed:           row.try_get::<i64, _>("failed_count").unwrap_or(0) as u32,
+                    aborted:          row.try_get::<i64, _>("aborted_count").unwrap_or(0) as u32,
+                    in_progress:      row.try_get::<i64, _>("in_progress_count").unwrap_or(0) as u32,
+                    todo:             row.try_get::<i64, _>("todo_count").unwrap_or(0) as u32,
+                }
+            })
+            .collect()
+        } else {
+            vec![]
+        }
+    };
+
+    if !db_rows.is_empty() {
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let phases: Vec<PhaseTestSummary> = db_rows.iter()
+            .filter(|r| {
+                let name = r.te_title.as_deref().unwrap_or(&r.te_jira_key).to_lowercase();
+                !name.contains("user acceptance test")
+            })
+            .map(|r| {
+            let name = r.te_title.as_deref().unwrap_or(&r.te_jira_key);
+            PhaseTestSummary {
+                phase:          detect_phase_from_name_pub(name),
+                test_exec_key:  r.te_jira_key.clone(),
+                test_exec_name: name.to_string(),
+                todo:           r.todo,
+                in_progress:    r.in_progress,
+                done:           r.done,
+                failed:         r.failed,
+                aborted:        r.aborted,
+                failed_details: vec![],
+            }
+        }).collect();
+        let mut activity: Vec<String> = phases.iter()
+            .filter(|p| p.phase != "UNKNOWN")
+            .map(|p| p.phase.clone())
+            .collect();
+        activity.sort_by(|a, b| phase_rank_pub(a).cmp(&phase_rank_pub(b)));
+        activity.dedup();
+        let generated_notes = format_uqa_notes_pub(&phases);
+        return Ok(AutoUqaGeneratedPayload {
+            date,
+            activity,
+            phases,
+            generated_notes,
+            no_links_found: None,
+            source: Some("db".to_string()),
+        });
+    }
+
+    // ── Fall back to live Jira/Xray API ──
     let config = load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
     jira_service.auto_generate_uqa_notes(&config.jira, &issue_key).await.map_err(|e| e.to_string())
@@ -629,10 +726,13 @@ pub async fn fetch_uqa_with_dates(state: State<'_, AppState>) -> Result<Vec<UqaW
                 product_tester: fields
                     .get(&f_product_tester)
                     .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|u| u["displayName"].as_str())
-                    .unwrap_or("")
-                    .to_string(),
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|u| u["displayName"].as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default(),
                 start_sit:  extract_date(fields, &f_start_qa),
                 finish_sit: extract_date(fields, &f_finish_qa),
                 start_uat:  extract_date(fields, &f_start_uat),

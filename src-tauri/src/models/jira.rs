@@ -172,6 +172,8 @@ pub struct ConfluenceEntryImage {
     pub data: String,
     pub order: usize,
     pub note: String,
+    #[serde(default)]
+    pub expand_group: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
