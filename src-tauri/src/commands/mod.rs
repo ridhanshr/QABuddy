@@ -1,3 +1,4 @@
+pub mod bitbucket_commands;
 pub mod brd;
 pub mod bootstrap;
 pub mod config;
@@ -12,6 +13,7 @@ pub mod logs;
 pub mod ocr;
 pub mod rag;
 pub mod updates;
+
 
 use crate::AppState;
 use crate::models::app_config::AppConfig;

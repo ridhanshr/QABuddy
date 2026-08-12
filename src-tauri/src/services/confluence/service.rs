@@ -432,10 +432,26 @@ impl ConfluenceService {
 
         let entry_count = payload.entries.len() as u32;
 
-        // ── 1. Upload all images and build lookup map ────────────────────
+        // ── 1. Check existing attachments to skip redundant uploads ──────
+        let existing_attachments = self.get_attachments(config, page_id).await.unwrap_or_default();
+        let existing_filenames: std::collections::HashSet<String> = existing_attachments
+            .iter()
+            .filter_map(|a| a["title"].as_str().map(|s| s.to_string()))
+            .collect();
+
+        // ── 2. Collect image upload tasks ────────────────────────────────
         let mut uploaded: std::collections::HashMap<(String, String), String> =
             std::collections::HashMap::new();
         let mut total_images = 0u32;
+
+        struct UploadTaskItem {
+            entry_id: String,
+            orig_name: String,
+            upload_name: String,
+            bytes: Vec<u8>,
+        }
+
+        let mut tasks_to_upload: Vec<UploadTaskItem> = Vec::new();
 
         for entry in &payload.entries {
             let entry_id = entry["id"].as_str().unwrap_or("").to_string();
@@ -445,8 +461,10 @@ impl ConfluenceService {
 
             for img in &sorted {
                 let orig_name = img["name"].as_str().unwrap_or("attachment.png").to_string();
-                let data_uri  = img["data"].as_str().unwrap_or("");
-                if data_uri.is_empty() { continue; }
+                let data_uri = img["data"].as_str().unwrap_or("");
+                if data_uri.is_empty() {
+                    continue;
+                }
 
                 let base64_data = if let Some(pos) = data_uri.find(',') {
                     &data_uri[pos + 1..]
@@ -460,9 +478,48 @@ impl ConfluenceService {
 
                 let safe_entry = entry_id.replace(['/', '\\', ' '], "_");
                 let upload_name = format!("{safe_entry}_{orig_name}");
-                if self.upload_attachment(config, page_id, &upload_name, bytes).await.is_ok() {
+
+                if existing_filenames.contains(&upload_name) {
                     uploaded.insert((entry_id.clone(), orig_name), upload_name);
                     total_images += 1;
+                } else {
+                    tasks_to_upload.push(UploadTaskItem {
+                        entry_id: entry_id.clone(),
+                        orig_name,
+                        upload_name,
+                        bytes,
+                    });
+                }
+            }
+        }
+
+        // Run uploads concurrently (max 8 at a time)
+        if !tasks_to_upload.is_empty() {
+            let client = self.client(config);
+            let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+            let mut join_set = tokio::task::JoinSet::new();
+            let page_id_str = page_id.to_string();
+
+            for item in tasks_to_upload {
+                let client = client.clone();
+                let sem = sem.clone();
+                let page_id_clone = page_id_str.clone();
+
+                join_set.spawn(async move {
+                    let _permit = sem.acquire().await;
+                    let res = client
+                        .upload_attachment(&page_id_clone, &item.upload_name, item.bytes)
+                        .await;
+                    (item.entry_id, item.orig_name, item.upload_name, res.is_ok())
+                });
+            }
+
+            while let Some(res) = join_set.join_next().await {
+                if let Ok((entry_id, orig_name, upload_name, success)) = res {
+                    if success {
+                        uploaded.insert((entry_id, orig_name), upload_name);
+                        total_images += 1;
+                    }
                 }
             }
         }
@@ -548,7 +605,7 @@ impl ConfluenceService {
         let mut entries = parse_tables_to_entries(&content);
         let jira_server_id = self.client(config).detect_jira_server_id().await;
 
-        // Download screen capture attachments for entries that need them
+        // Download screen capture attachments concurrently for entries that need them
         let needs_images = entries.iter().any(|e| !e.screen_capture_filenames.is_empty());
         if needs_images {
             // Fetch all page attachments once
@@ -563,37 +620,74 @@ impl ConfluenceService {
                 })
                 .collect();
 
-            for entry in entries.iter_mut() {
-                if entry.screen_capture_filenames.is_empty() {
-                    continue;
-                }
-                let mut images: Vec<crate::models::jira::ConfluenceEntryImage> = Vec::new();
+            struct DownloadTaskItem {
+                entry_idx: usize,
+                order: usize,
+                filename: String,
+                download_path: String,
+            }
+
+            let mut download_tasks: Vec<DownloadTaskItem> = Vec::new();
+            for (entry_idx, entry) in entries.iter().enumerate() {
                 for (order, filename) in entry.screen_capture_filenames.iter().enumerate() {
                     if let Some(download_path) = att_map.get(filename) {
-                        match self.download_attachment(config, download_path).await {
-                            Ok(bytes) => {
-                                let ext = filename.rsplit('.').next().unwrap_or("png").to_lowercase();
-                                let mime = match ext.as_str() {
-                                    "jpg" | "jpeg" => "image/jpeg",
-                                    "gif" => "image/gif",
-                                    "webp" => "image/webp",
-                                    _ => "image/png",
-                                };
-                                let b64 = base64_encode(&bytes);
-                                images.push(crate::models::jira::ConfluenceEntryImage {
-                                    id: uuid::Uuid::new_v4().to_string(),
-                                    name: filename.clone(),
-                                    data: format!("data:{mime};base64,{b64}"),
-                                    order: order + 1,
-                                    note: String::new(),
-                                    expand_group: String::new(),
-                                });
-                            }
-                            Err(_) => {} // skip failed downloads silently
-                        }
+                        download_tasks.push(DownloadTaskItem {
+                            entry_idx,
+                            order,
+                            filename: filename.clone(),
+                            download_path: download_path.clone(),
+                        });
                     }
                 }
-                entry.images = images;
+            }
+
+            if !download_tasks.is_empty() {
+                let client = self.client(config);
+                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+                let mut join_set = tokio::task::JoinSet::new();
+
+                for item in download_tasks {
+                    let client = client.clone();
+                    let sem = sem.clone();
+
+                    join_set.spawn(async move {
+                        let _permit = sem.acquire().await;
+                        let res = client.download_attachment(&item.download_path).await;
+                        (item.entry_idx, item.order, item.filename, res)
+                    });
+                }
+
+                let mut downloaded_map: std::collections::HashMap<
+                    usize,
+                    Vec<(usize, crate::models::jira::ConfluenceEntryImage)>,
+                > = std::collections::HashMap::new();
+
+                while let Some(res) = join_set.join_next().await {
+                    if let Ok((entry_idx, order, filename, Ok(bytes))) = res {
+                        let ext = filename.rsplit('.').next().unwrap_or("png").to_lowercase();
+                        let mime = match ext.as_str() {
+                            "jpg" | "jpeg" => "image/jpeg",
+                            "gif" => "image/gif",
+                            "webp" => "image/webp",
+                            _ => "image/png",
+                        };
+                        let b64 = base64_encode(&bytes);
+                        let img = crate::models::jira::ConfluenceEntryImage {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            name: filename,
+                            data: format!("data:{mime};base64,{b64}"),
+                            order: order + 1,
+                            note: String::new(),
+                            expand_group: String::new(),
+                        };
+                        downloaded_map.entry(entry_idx).or_default().push((order, img));
+                    }
+                }
+
+                for (entry_idx, mut list) in downloaded_map {
+                    list.sort_by_key(|(order, _)| *order);
+                    entries[entry_idx].images = list.into_iter().map(|(_, img)| img).collect();
+                }
             }
         }
 
@@ -1292,13 +1386,23 @@ fn parse_vertical_table(body: &str, counter: &mut usize) -> Option<ConfluenceTes
     })
 }
 
+static RE_TABLE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RE_ROW: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RE_CELL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RE_TH: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RE_TH_CELL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
 /// Parse every `<table>` in a storage body into import entries.
 /// Supports two formats:
 ///   1. Horizontal: first row = headers (No. Test Case, Function, Scenario, Steps, Expected Result)
 ///   2. Vertical (card): each row = | Field Label | Value | — one test case per table
 fn parse_tables_to_entries(content: &str) -> Vec<ConfluenceTestImportEntry> {
     let mut entries: Vec<ConfluenceTestImportEntry> = Vec::new();
-    let table_re = regex::Regex::new(r"(?is)<table\b[^>]*>([\s\S]*?)</table>").unwrap();
+    let table_re = RE_TABLE.get_or_init(|| regex::Regex::new(r"(?is)<table\b[^>]*>([\s\S]*?)</table>").unwrap());
+    let row_re = RE_ROW.get_or_init(|| regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap());
+    let cell_re = RE_CELL.get_or_init(|| regex::Regex::new(r"(?is)<t[dh][^>]*>([\s\S]*?)</t[dh]>").unwrap());
+    let th_re = RE_TH.get_or_init(|| regex::Regex::new(r"(?i)<th\b").unwrap());
+
     let mut counter = 1usize;
     for table_cap in table_re.captures_iter(content) {
         let body = &table_cap[1];
@@ -1313,12 +1417,10 @@ fn parse_tables_to_entries(content: &str) -> Vec<ConfluenceTestImportEntry> {
 
         // Horizontal format: header row + data rows
         let (header_map, has_header) = parse_header_map(body);
-        let row_re = regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap();
-        let cell_re = regex::Regex::new(r"(?is)<t[dh][^>]*>([\s\S]*?)</t[dh]>").unwrap();
         for row_cap in row_re.captures_iter(body) {
             let row = &row_cap[1];
             // Skip header rows.
-            if regex::Regex::new(r"(?i)<th\b").unwrap().is_match(row) {
+            if th_re.is_match(row) {
                 continue;
             }
             let cells: Vec<String> = cell_re
@@ -1338,10 +1440,10 @@ fn parse_tables_to_entries(content: &str) -> Vec<ConfluenceTestImportEntry> {
 /// Map header text → column index. Returns (map, has_header).
 fn parse_header_map(body: &str) -> (std::collections::HashMap<String, usize>, bool) {
     let mut map = std::collections::HashMap::new();
-    let row_re = regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap();
-    let cell_re = regex::Regex::new(r"(?is)<th\b[^>]*>([\s\S]*?)</th>").unwrap();
+    let row_re = RE_ROW.get_or_init(|| regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap());
+    let th_cell_re = RE_TH_CELL.get_or_init(|| regex::Regex::new(r"(?is)<th\b[^>]*>([\s\S]*?)</th>").unwrap());
     for row_cap in row_re.captures_iter(body) {
-        let headers: Vec<String> = cell_re
+        let headers: Vec<String> = th_cell_re
             .captures_iter(&row_cap[1])
             .map(|c| normalise_header(&c[1]))
             .collect();
@@ -1459,6 +1561,8 @@ mod tests {
             test_case_no: "TC-1".into(),
             input_data: String::new(),
             selected: true,
+            screen_capture_filenames: Vec::new(),
+            images: Vec::new(),
         }];
         let table = ConfluenceService::generate_single_table(&entries);
         assert!(table.contains("TC-1"));

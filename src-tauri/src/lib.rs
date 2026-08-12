@@ -228,6 +228,9 @@ pub fn run() {
             commands::db::register_user,
             commands::db::update_user_tokens,
             commands::jira::fetch_uqa_with_dates,
+            commands::bitbucket_commands::get_bitbucket_pr_details,
+            commands::bitbucket_commands::fetch_bitbucket_diff,
+            commands::bitbucket_commands::generate_test_scenarios_from_bitbucket,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

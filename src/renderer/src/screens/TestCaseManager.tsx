@@ -315,6 +315,51 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ success: number; failed: number; errors: string[] } | null>(null);
 
+  // ── Bitbucket Creation Mode State ──
+  const [creationMode, setCreationMode] = useState<"brd" | "bitbucket">("brd");
+  const [bitbucketPrUrl, setBitbucketPrUrl] = useState("");
+  const [bitbucketLoading, setBitbucketLoading] = useState(false);
+  const [bitbucketGenerating, setBitbucketGenerating] = useState(false);
+  const [bitbucketSummary, setBitbucketSummary] = useState<import("@shared/types").BitbucketDiffSummary | null>(null);
+  const [bitbucketGenerateResult, setBitbucketGenerateResult] = useState<import("@shared/types").BitbucketGenerateResponse | null>(null);
+  const [bitbucketError, setBitbucketError] = useState("");
+  const [minConfidence, setMinConfidence] = useState<number>(0);
+  const [filterRisk, setFilterRisk] = useState<string>("All");
+
+  const handleFetchBitbucketPr = useCallback(async () => {
+    if (!bitbucketPrUrl.trim()) return;
+    setBitbucketLoading(true);
+    setBitbucketError("");
+    setBitbucketSummary(null);
+    setBitbucketGenerateResult(null);
+    try {
+      const summary = await window.qaBuddy.getBitbucketPrDetails(bitbucketPrUrl);
+      setBitbucketSummary(summary);
+    } catch (e: any) {
+      setBitbucketError(e?.message || String(e));
+    } finally {
+      setBitbucketLoading(false);
+    }
+  }, [bitbucketPrUrl]);
+
+  const handleGenerateBitbucketScenarios = useCallback(async (forceRefresh = false) => {
+    if (!bitbucketPrUrl.trim()) return;
+    setBitbucketGenerating(true);
+    setBitbucketError("");
+    try {
+      const res = await window.qaBuddy.generateTestScenariosFromBitbucket({
+        prUrlOrId: bitbucketPrUrl,
+        selectedFiles: bitbucketSummary ? bitbucketSummary.files.map(f => f.path) : [],
+        forceRefreshCache: forceRefresh,
+      });
+      setBitbucketGenerateResult(res);
+    } catch (e: any) {
+      setBitbucketError(e?.message || String(e));
+    } finally {
+      setBitbucketGenerating(false);
+    }
+  }, [bitbucketPrUrl, bitbucketSummary]);
+
   // ── Xray Folder Selection ──
   const [xrayFolders, setXrayFolders] = useState<{ label: string; value: string }[]>([]);
   const [xrayFoldersLoading, setXrayFoldersLoading] = useState(false);
@@ -702,11 +747,257 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
 
       {currentTab === "creation" && (
         <div>
-          <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 16px" }}>
-              <span className="material-symbols" style={{ fontSize: 18, verticalAlign: "middle", marginRight: 6 }}>auto_awesome</span>
-              Generate Test Cases from BRD
-            </h3>
+          {/* Sub-tab mode selector */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            <button
+              type="button"
+              className={`button ${creationMode === "brd" ? "primary" : "secondary"}`}
+              onClick={() => setCreationMode("brd")}
+              style={{ fontSize: 13, padding: "8px 16px", borderRadius: 20 }}
+            >
+              <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>description</span>
+              Confluence BRD Generator
+            </button>
+            <button
+              type="button"
+              className={`button ${creationMode === "bitbucket" ? "primary" : "secondary"}`}
+              onClick={() => setCreationMode("bitbucket")}
+              style={{ fontSize: 13, padding: "8px 16px", borderRadius: 20 }}
+            >
+              <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>code</span>
+              Bitbucket Code Diff Generator (AI SLM)
+            </button>
+          </div>
+
+          {creationMode === "bitbucket" ? (
+            <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="material-symbols" style={{ fontSize: 20, color: "var(--primary)" }}>code_blocks</span>
+                  Generate Test Scenarios from Bitbucket Code Diff
+                </h3>
+                <span className="badge" style={{ background: "rgba(37, 99, 235, 0.1)", color: "var(--primary)", border: "1px solid currentColor", padding: "4px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600 }}>
+                  Lightweight SLM Pipeline
+                </span>
+              </div>
+
+              <p style={{ fontSize: 13, color: "var(--on-surface-variant)", marginTop: 0, marginBottom: 16 }}>
+                Masukkan URL PR Bitbucket Server / Data Center internal. QA Buddy akan menganalisis <strong>Change Impact</strong>, mengekstrak <strong>Jira Acceptance Criteria</strong>, memfilter <strong>Existing Tests (Gap Analysis)</strong>, dan menghasilkan skenario lengkap dengan <strong>Confidence Score</strong>.
+              </p>
+
+              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--on-surface-variant)" }}>
+                    Bitbucket Pull Request URL / ID
+                  </label>
+                  <input
+                    className="input"
+                    value={bitbucketPrUrl}
+                    onChange={e => setBitbucketPrUrl(e.target.value)}
+                    placeholder="https://bitbucket.internal.company.com/projects/PROJ/repos/repo/pull-requests/42"
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)" }}
+                  />
+                </div>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                  <button
+                    className="button secondary"
+                    onClick={handleFetchBitbucketPr}
+                    disabled={bitbucketLoading || !bitbucketPrUrl.trim()}
+                    type="button"
+                    style={{ height: 40 }}
+                  >
+                    {bitbucketLoading ? "Fetching PR..." : "Fetch PR & Diff"}
+                  </button>
+                  <button
+                    className="button primary"
+                    onClick={() => handleGenerateBitbucketScenarios(false)}
+                    disabled={bitbucketGenerating || !bitbucketPrUrl.trim()}
+                    type="button"
+                    style={{ height: 40 }}
+                  >
+                    {bitbucketGenerating ? "AI Processing..." : "Generate Scenarios"}
+                  </button>
+                </div>
+              </div>
+
+              {bitbucketError && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: "var(--error-container)", color: "var(--on-error-container)", marginBottom: 16, fontSize: 13 }}>
+                  <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>error</span>
+                  {bitbucketError}
+                </div>
+              )}
+
+              {/* PR Summary Card */}
+              {bitbucketSummary && (
+                <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 16, background: "var(--surface-container-low)", marginBottom: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                    <div>
+                      <h4 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>
+                        {bitbucketSummary.title}
+                      </h4>
+                      <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
+                        PR #{bitbucketSummary.prId} | Author: <strong>{bitbucketSummary.authorName}</strong> | Branch: <code>{bitbucketSummary.branchFrom}</code> → <code>{bitbucketSummary.branchTo}</code>
+                      </span>
+                    </div>
+                    {bitbucketSummary.jiraTicketKey && (
+                      <span className="badge" style={{ background: "var(--primary-container)", color: "var(--on-primary-container)", padding: "4px 10px", borderRadius: 12, fontSize: 12, fontWeight: 700 }}>
+                        Ticket: {bitbucketSummary.jiraTicketKey}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--on-surface-variant)" }}>
+                    <div>📁 Modified Files: <strong>{bitbucketSummary.files.length}</strong></div>
+                    <div>🔑 Commit: <code>{bitbucketSummary.latestCommitHash.substring(0, 8)}</code></div>
+                    {bitbucketSummary.cached && <div>⚡ Cache Key: Matched (PR_ID + CommitHash)</div>}
+                  </div>
+                </div>
+              )}
+
+              {/* Impact & Gap Analysis Section */}
+              {bitbucketGenerateResult && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                  {/* Impact Analysis Card */}
+                  <div style={{ padding: 14, borderRadius: 8, background: "var(--surface-container)", border: "1px solid var(--outline-variant)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <h5 style={{ margin: 0, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                        <span className="material-symbols" style={{ fontSize: 16, color: "var(--primary)" }}>analytics</span>
+                        Change Impact Analysis
+                      </h5>
+                      <span style={{
+                        padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700,
+                        background: bitbucketGenerateResult.impact.regressionRiskLevel === "High" ? "var(--error-container)" : "var(--tertiary-container)",
+                        color: bitbucketGenerateResult.impact.regressionRiskLevel === "High" ? "var(--on-error-container)" : "var(--on-tertiary-container)"
+                      }}>
+                        Risk: {bitbucketGenerateResult.impact.regressionRiskLevel}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: 12, margin: "0 0 8px", color: "var(--on-surface-variant)" }}>
+                      {bitbucketGenerateResult.impact.summaryNotes}
+                    </p>
+                    <div style={{ fontSize: 11, color: "var(--on-surface)" }}>
+                      <strong>Affected Components:</strong> {bitbucketGenerateResult.impact.affectedComponents.join(", ") || "None"}
+                    </div>
+                  </div>
+
+                  {/* Gap Analysis Card */}
+                  <div style={{ padding: 14, borderRadius: 8, background: "var(--surface-container)", border: "1px solid var(--outline-variant)" }}>
+                    <h5 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span className="material-symbols" style={{ fontSize: 16, color: "var(--tertiary)" }}>checklist</span>
+                      Coverage Gap & Duplicate Detection
+                    </h5>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "var(--on-surface-variant)" }}>
+                      {bitbucketGenerateResult.gap.missingCoverageAreas.slice(0, 3).map((gap, i) => (
+                        <li key={i}>{gap}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* Scenarios Header & Filter Toolbar */}
+              {bitbucketGenerateResult && bitbucketGenerateResult.scenarios.length > 0 && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingBottom: 8, borderBottom: "1px solid var(--outline-variant)" }}>
+                    <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>
+                      Generated Scenarios ({bitbucketGenerateResult.scenarios.length})
+                    </h4>
+
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      <label style={{ fontSize: 12, color: "var(--on-surface-variant)", display: "flex", alignItems: "center", gap: 6 }}>
+                        Min Confidence:
+                        <select
+                          value={minConfidence}
+                          onChange={e => setMinConfidence(Number(e.target.value))}
+                          style={{ padding: "4px 8px", borderRadius: 6, fontSize: 12 }}
+                        >
+                          <option value={0}>All (0%+)</option>
+                          <option value={70}>High Confidence (70%+)</option>
+                          <option value={85}>Very High (85%+)</option>
+                        </select>
+                      </label>
+
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => handleGenerateBitbucketScenarios(true)}
+                        style={{ fontSize: 12, padding: "4px 10px" }}
+                        title="Force re-run AI generation without cache"
+                      >
+                        <span className="material-symbols" style={{ fontSize: 14, marginRight: 4, verticalAlign: "middle" }}>refresh</span>
+                        Force Re-Analyze
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Scenario Cards */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {bitbucketGenerateResult.scenarios
+                      .filter(s => s.confidence >= minConfidence)
+                      .map((sc, idx) => (
+                        <div key={idx} style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 14, background: "var(--surface)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <span style={{ fontWeight: 700, fontSize: 13, color: "var(--on-surface-variant)" }}>#{idx + 1}</span>
+                              <h5 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{sc.scenario}</h5>
+                            </div>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                              {/* Confidence Score Badge */}
+                              <span style={{
+                                padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 800,
+                                background: sc.confidence >= 85 ? "rgba(16, 185, 129, 0.15)" : "rgba(234, 179, 8, 0.15)",
+                                color: sc.confidence >= 85 ? "#059669" : "#d97706",
+                                border: "1px solid currentColor"
+                              }}>
+                                Confidence: {sc.confidence}%
+                              </span>
+                              <span className="badge" style={{ background: "var(--surface-container-high)", fontSize: 11 }}>
+                                {sc.scenarioType}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div style={{ background: "var(--surface-container-low)", padding: "8px 12px", borderRadius: 6, fontSize: 12, color: "var(--on-surface-variant)", marginBottom: 10, borderLeft: "3px solid var(--primary)" }}>
+                            <strong>Reasoning:</strong> {sc.reason}
+                          </div>
+
+                          {sc.preconditions.length > 0 && (
+                            <div style={{ fontSize: 12, marginBottom: 8, color: "var(--on-surface-variant)" }}>
+                              <strong>Preconditions:</strong> {sc.preconditions.join("; ")}
+                            </div>
+                          )}
+
+                          <table className="data-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                            <thead>
+                              <tr style={{ background: "var(--surface-container)", textAlign: "left" }}>
+                                <th style={{ padding: "6px 10px", width: 40 }}>Step</th>
+                                <th style={{ padding: "6px 10px" }}>Action</th>
+                                <th style={{ padding: "6px 10px" }}>Expected Result</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sc.steps.map((st, sIdx) => (
+                                <tr key={sIdx} style={{ borderBottom: "1px solid var(--outline-variant)" }}>
+                                  <td style={{ padding: "6px 10px" }}>{st.step}</td>
+                                  <td style={{ padding: "6px 10px" }}>{st.action}</td>
+                                  <td style={{ padding: "6px 10px" }}>{st.expected}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+                <h3 style={{ margin: "0 0 16px" }}>
+                  <span className="material-symbols" style={{ fontSize: 18, verticalAlign: "middle", marginRight: 6 }}>auto_awesome</span>
+                  Generate Test Cases from BRD
+                </h3>
 
             <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
               <div style={{ flex: 2 }}>
@@ -989,9 +1280,10 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
               <p style={{ margin: 0, fontSize: 13 }}>
                 AI akan membaca section <strong>2.1 Proses Bisnis</strong> dan menggenerate test case
                 untuk setiap fitur pada tabel <strong>2.1.3 Fungsi-Fungsi yang Diharapkan</strong>.
-                Test case akan muncul secara bertahap per fitur.
               </p>
             </div>
+          )}
+            </>
           )}
         </div>
       )}

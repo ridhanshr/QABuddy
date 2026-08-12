@@ -393,6 +393,14 @@ const api = {
     cmd<void>("save_test_cases", { cases }),
   syncExecutionTestsToDb: (execKey: string) =>
     cmd<number>("sync_execution_tests_to_db", { execKey }),
+
+  // ── Bitbucket Self-Hosted API ───────────────────────────────────────
+  getBitbucketPrDetails: (prUrlOrId: string) =>
+    cmd<import("@shared/types").BitbucketDiffSummary>("get_bitbucket_pr_details", { prUrlOrId }),
+  fetchBitbucketDiff: (prUrlOrId: string) =>
+    cmd<string>("fetch_bitbucket_diff", { prUrlOrId }),
+  generateTestScenariosFromBitbucket: (request: import("@shared/types").BitbucketGenerateRequest) =>
+    cmd<import("@shared/types").BitbucketGenerateResponse>("generate_test_scenarios_from_bitbucket", { request }),
 };
 
 export type TauriApi = typeof api;

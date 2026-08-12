@@ -315,6 +315,74 @@ export default function Settings() {
                   </label>
                 </div>
               </div>
+
+              {/* Bitbucket Section */}
+              <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px dashed var(--outline-variant)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--primary)" }}>Bitbucket Self-Hosted Configuration</h4>
+                  <span className="bug-preview-badge" style={{ fontSize: 11, background: config.bitbucket?.baseUrl ? "rgba(16, 185, 129, 0.1)" : "var(--surface-container)", color: config.bitbucket?.baseUrl ? "#10b981" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
+                    <span className="tag-dot" style={{ background: config.bitbucket?.baseUrl ? "#10b981" : "#737686", marginRight: 6 }}></span>
+                    {config.bitbucket?.baseUrl ? "Bitbucket Configured" : "Not Configured"}
+                  </span>
+                </div>
+                <div className="bug-form-row-2col">
+                  <label>
+                    <span>Bitbucket Server URL (Self-Hosted)</span>
+                    <input
+                      onChange={(event) =>
+                        setConfig({ ...config, bitbucket: { ...config.bitbucket, baseUrl: event.target.value } })
+                      }
+                      placeholder="https://bitbucket.internal.company.com"
+                      type="url"
+                      value={config.bitbucket?.baseUrl || ""}
+                    />
+                  </label>
+                  <label>
+                    <span>Username / User ID</span>
+                    <input
+                      onChange={(event) =>
+                        setConfig({ ...config, bitbucket: { ...config.bitbucket, username: event.target.value } })
+                      }
+                      placeholder="qa_engineer"
+                      value={config.bitbucket?.username || ""}
+                    />
+                  </label>
+                </div>
+                <div className="bug-form-row-2col">
+                  <label>
+                    <span>Bitbucket HTTP Access Token</span>
+                    <input
+                      onChange={(event) =>
+                        setConfig({ ...config, bitbucket: { ...config.bitbucket, token: event.target.value } })
+                      }
+                      placeholder="HTTP Access Token"
+                      type="password"
+                      value={config.bitbucket?.token || ""}
+                    />
+                  </label>
+                  <label>
+                    <span>Default Project Key / Repo Slug</span>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input
+                        onChange={(event) =>
+                          setConfig({ ...config, bitbucket: { ...config.bitbucket, defaultProjectKey: event.target.value } })
+                        }
+                        placeholder="PROJ"
+                        value={config.bitbucket?.defaultProjectKey || ""}
+                        style={{ flex: 1 }}
+                      />
+                      <input
+                        onChange={(event) =>
+                          setConfig({ ...config, bitbucket: { ...config.bitbucket, defaultRepoSlug: event.target.value } })
+                        }
+                        placeholder="repo-slug"
+                        value={config.bitbucket?.defaultRepoSlug || ""}
+                        style={{ flex: 1 }}
+                      />
+                    </div>
+                  </label>
+                </div>
+              </div>
             </div>
 
             <div className="bug-submit-row" style={{ marginTop: 24, display: "flex", gap: 8 }}>
@@ -461,19 +529,19 @@ export default function Settings() {
                     </select>
                   </label>
                   <label>
-                    <span>Insight Model</span>
+                    <span>Code Diff AI Model (Lightweight SLM)</span>
                     <select
                       onChange={(event) =>
-                        setConfig({ ...config, ollama: { ...config.ollama, insightModel: event.target.value } })
+                        setConfig({ ...config, ollama: { ...config.ollama, diffModel: event.target.value } })
                       }
-                      value={config.ollama.insightModel || ""}
+                      value={config.ollama.diffModel || ""}
                       disabled={modelsLoading}
                     >
-                      <option value="">Use Active Model</option>
+                      <option value="">Use recommended default</option>
                       {ollamaModels.map((model) => (
                         <option key={model} value={model}>{model}</option>
                       ))}
-                      </select>
+                    </select>
                   </label>
                 </div>
                 <div className="bug-form-row-2col" style={{ marginTop: 8 }}>

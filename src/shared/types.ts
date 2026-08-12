@@ -57,6 +57,11 @@ export interface ConfluenceConfig extends AtlassianConnectionConfig {
   jiraServerId?: string;
 }
 
+export interface BitbucketConfig extends AtlassianConnectionConfig {
+  defaultProjectKey?: string;
+  defaultRepoSlug?: string;
+}
+
 export interface OllamaConfig {
   endpoint: string;
   model: string;
@@ -66,6 +71,79 @@ export interface OllamaConfig {
   insightModel?: string;
   defectEmbeddingModel?: string;
   defectExplanationModel?: string;
+  diffModel?: string;
+}
+
+export interface BitbucketFileChange {
+  path: string;
+  changeType: string;
+  linesAdded: number;
+  linesDeleted: number;
+}
+
+export interface BitbucketDiffSummary {
+  projectKey: string;
+  repoSlug: string;
+  prId: number;
+  title: string;
+  latestCommitHash: string;
+  authorName: string;
+  branchFrom: string;
+  branchTo: string;
+  files: BitbucketFileChange[];
+  jiraTicketKey?: string;
+  jiraSummary?: string;
+  jiraDescription?: string;
+  cached: boolean;
+}
+
+export interface ImpactAnalysisResult {
+  affectedComponents: string[];
+  modifiedFunctions: string[];
+  apiRoutesChanged: string[];
+  regressionRiskLevel: "High" | "Medium" | "Low";
+  summaryNotes: string;
+}
+
+export interface GapAnalysisResult {
+  existingTestCount: number;
+  missingCoverageAreas: string[];
+  duplicateRiskNotes: string[];
+}
+
+export interface TestStepItem {
+  step: number;
+  action: string;
+  expected: string;
+}
+
+export interface BitbucketTestScenario {
+  scenario: string;
+  confidence: number;
+  reason: string;
+  scenarioType: string;
+  riskLevel: string;
+  preconditions: string[];
+  steps: TestStepItem[];
+}
+
+export interface BitbucketGenerateRequest {
+  prUrlOrId: string;
+  projectKey?: string;
+  repoSlug?: string;
+  prId?: number;
+  selectedFiles: string[];
+  modelOverride?: string;
+  forceRefreshCache: boolean;
+}
+
+export interface BitbucketGenerateResponse {
+  prId: number;
+  commitHash: string;
+  cacheHit: boolean;
+  impact: ImpactAnalysisResult;
+  gap: GapAnalysisResult;
+  scenarios: BitbucketTestScenario[];
 }
 
 export interface UqaEntry {
@@ -80,43 +158,54 @@ export interface UqaTransition {
   toStatus: string;
 }
 
-export interface UqaIssue {
-  projectKey: string;
-  projectName: string;
-  issueKey: string;
-  summary: string;
-  entries: UqaEntry[];
-  lastUpdated: string | null;
-  needsUpdate: boolean;
-  status: string;
-  statusCategory: string;
-  availableTransitions: UqaTransition[];
-  lastUpdateAuthor: string;
-  lastUpdateDate: string;
-}
-
 export interface PerIssueReminder {
-  enabled: boolean;
+  issueKey?: string;
   remindTime?: string;
   remindDays?: number[];
-}
-
-export interface UqaSyncProgress {
-  status: "fetching" | "processing" | "saving" | "done" | "error";
-  message: string;
-  current: number;
-  total: number;
+  note?: string;
+  enabled?: boolean;
 }
 
 export interface UqaConfig {
   enabled: boolean;
   remindTime: string;
   remindDays: number[];
-  productTesterFieldId: string | null;
-  lastNotifiedDate: Record<string, string>;
-  perIssueReminders: Record<string, PerIssueReminder>;
-  searchMode: "productTester" | "assignee" | "both";
+  productTesterFieldId?: string | null;
+  lastNotifiedDate?: Record<string, string>;
+  perIssueReminders?: Record<string, PerIssueReminder>;
+  searchMode: string;
   projectKeys: string[];
+}
+
+export interface UqaIssue {
+  key?: string;
+  issueKey: string;
+  projectKey: string;
+  projectName?: string;
+  summary: string;
+  status: string;
+  statusCategory?: string;
+  assignee?: string;
+  productTester?: string;
+  lastUpdated?: string | null;
+  needsUpdate?: boolean;
+  availableTransitions?: UqaTransition[];
+  lastUpdateAuthor?: string;
+  lastUpdateDate?: string;
+  entries?: UqaEntry[];
+}
+
+export interface UqaSyncProgress {
+  current: number;
+  total: number;
+  statusText?: string;
+  status?: string;
+  message?: string;
+}
+
+export interface AutoUqaGeneratedPayload {
+  notes: string;
+  suggestedActivity: string;
 }
 
 export interface AppConfig {
@@ -131,6 +220,7 @@ export interface AppConfig {
   dashboard: {
     projects: DashboardProjectConfig[];
   };
+  bitbucket: BitbucketConfig;
 }
 
 export interface ConnectionStatusItem {
@@ -142,6 +232,7 @@ export interface ConnectionStatus {
   jira: ConnectionStatusItem;
   confluence: ConnectionStatusItem;
   ollama: ConnectionStatusItem;
+  bitbucket?: ConnectionStatusItem;
 }
 
 export interface JiraIssueSummary {
@@ -595,6 +686,10 @@ export interface DesktopApi {
   checkUqaProjectsInDb: (uqaKeys: string[]) => Promise<string[]>;
   saveTestCases: (cases: SaveTestCaseInput[]) => Promise<void>;
   syncExecutionTestsToDb: (execKey: string) => Promise<number>;
+  // Bitbucket Self-Hosted
+  getBitbucketPrDetails: (prUrlOrId: string) => Promise<BitbucketDiffSummary>;
+  fetchBitbucketDiff: (prUrlOrId: string) => Promise<string>;
+  generateTestScenariosFromBitbucket: (request: BitbucketGenerateRequest) => Promise<BitbucketGenerateResponse>;
 }
 
 export interface UqaWithDates {
@@ -1161,6 +1256,7 @@ export const ollamaConfigSchema = z.object({
   insightModel: z.string().optional(),
   defectEmbeddingModel: z.string().optional(),
   defectExplanationModel: z.string().optional(),
+  diffModel: z.string().optional(),
 });
 
 export const uqaConfigSchema = z.object({
@@ -1239,6 +1335,7 @@ export const defaultConfig: AppConfig = {
     chatModel: "",
     extractionModel: "",
     insightModel: "",
+    diffModel: "qwen2.5-coder:1.5b",
     defectEmbeddingModel: "embeddinggemma",
     defectExplanationModel: "",
   },
@@ -1258,5 +1355,13 @@ export const defaultConfig: AppConfig = {
   },
   dashboard: {
     projects: [],
+  },
+  bitbucket: {
+    baseUrl: "",
+    authMode: "bearer",
+    username: "",
+    token: "",
+    defaultProjectKey: "",
+    defaultRepoSlug: "",
   },
 };

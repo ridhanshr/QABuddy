@@ -26,6 +26,19 @@ pub struct ConfluenceConfig {
     pub jira_server_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BitbucketConfig {
+    pub base_url: String,
+    pub auth_mode: AuthMode,
+    pub username: String,
+    pub token: String,
+    #[serde(default)]
+    pub default_project_key: String,
+    #[serde(default)]
+    pub default_repo_slug: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OllamaConfig {
@@ -43,6 +56,8 @@ pub struct OllamaConfig {
     pub defect_embedding_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defect_explanation_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +115,8 @@ pub struct AppConfig {
     pub preferences: Preferences,
     pub uqa: UqaConfig,
     pub dashboard: DashboardConfig,
+    #[serde(default)]
+    pub bitbucket: BitbucketConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -114,6 +131,12 @@ pub struct DashboardConfig {
 pub enum AuthMode {
     Bearer,
     Basic,
+}
+
+impl Default for AuthMode {
+    fn default() -> Self {
+        AuthMode::Bearer
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +188,7 @@ impl Default for AppConfig {
                 insight_model: None,
                 defect_embedding_model: Some("embeddinggemma".to_string()),
                 defect_explanation_model: None,
+                diff_model: Some("qwen2.5-coder:1.5b".to_string()),
             },
             preferences: Preferences {
                 theme: ThemePreference::Light,
@@ -181,6 +205,14 @@ impl Default for AppConfig {
                 project_keys: vec![],
             },
             dashboard: DashboardConfig::default(),
+            bitbucket: BitbucketConfig {
+                base_url: String::new(),
+                auth_mode: AuthMode::Bearer,
+                username: String::new(),
+                token: String::new(),
+                default_project_key: String::new(),
+                default_repo_slug: String::new(),
+            },
         }
     }
 }

@@ -14,20 +14,15 @@ use crate::services::text_utils::{parse_confluence_display_url, parse_confluence
 pub struct ConfluenceClient {
     pub base_url: String,
     config: ConfluenceConfig,
+    http_client: Client,
 }
 
 impl ConfluenceClient {
     pub fn new(config: &ConfluenceConfig) -> Self {
-        Self {
-            base_url: normalize_url(&config.base_url),
-            config: config.clone(),
-        }
-    }
-
-    fn build(&self, path_prefix: &str, timeout_secs: u64) -> Result<Client> {
-        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(timeout_secs));
+        let base_url = normalize_url(&config.base_url);
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(120));
         let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(value) = auth_header(&self.config.auth_mode, &self.config.username, &self.config.token) {
+        if let Some(value) = auth_header(&config.auth_mode, &config.username, &config.token) {
             if let Ok(hv) = reqwest::header::HeaderValue::from_str(&value) {
                 headers.insert(reqwest::header::AUTHORIZATION, hv);
             }
@@ -36,9 +31,13 @@ impl ConfluenceClient {
             headers.insert(reqwest::header::ACCEPT, hv);
         }
         builder = builder.default_headers(headers);
-        // path_prefix is folded into each request URL; we keep the client generic.
-        let _ = path_prefix;
-        builder.build().map_err(ServiceError::from)
+        let http_client = builder.build().unwrap_or_else(|_| Client::new());
+
+        Self {
+            base_url,
+            config: config.clone(),
+            http_client,
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -48,8 +47,7 @@ impl ConfluenceClient {
 
     /// Probe `/rest/api/user/current`; returns a human-readable status string.
     pub async fn validate_connection(&self) -> Result<String> {
-        let client = self.build("/rest/api", 30)?;
-        let resp = client
+        let resp = self.http_client
             .get(self.url("/rest/api/user/current"))
             .send()
             .await
@@ -69,11 +67,10 @@ impl ConfluenceClient {
 
     /// Fetch a page with storage+view body, version, and space.
     pub async fn get_page(&self, page_id: &str) -> Result<Value> {
-        let client = self.build("/rest/api", 120)?;
         let path = format!(
             "/rest/api/content/{page_id}?expand=body.storage,body.view,version,space"
         );
-        let resp = client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+        let resp = self.http_client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
@@ -85,12 +82,11 @@ impl ConfluenceClient {
 
     /// Look up a page by space key + title.
     pub async fn get_page_by_title(&self, space_key: &str, title: &str) -> Result<Value> {
-        let client = self.build("/rest/api", 120)?;
         let title_enc = url::form_urlencoded::byte_serialize(title.as_bytes()).collect::<String>();
         let path = format!(
             "/rest/api/content?spaceKey={space_key}&title={title_enc}&expand=body.storage,body.view,version,space"
         );
-        let resp = client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+        let resp = self.http_client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
         let status = resp.status();
         let body: Value = resp.json().await.unwrap_or(Value::Null);
         if !status.is_success() {
@@ -120,7 +116,6 @@ impl ConfluenceClient {
 
     /// List pages for a space key or ancestor/page id.
     pub async fn list_pages(&self, space_or_page_id: &str) -> Result<Vec<Value>> {
-        let client = self.build("/rest/api", 120)?;
         let is_numeric = space_or_page_id.chars().all(|c| c.is_ascii_digit());
         let mut start = 0u32;
         let limit = 50u32;
@@ -138,7 +133,7 @@ impl ConfluenceClient {
                     url::form_urlencoded::byte_serialize(space_or_page_id.as_bytes()).collect::<String>()
                 )
             };
-            let resp = client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+            let resp = self.http_client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
             let status = resp.status();
             let body: Value = resp.json().await.unwrap_or(Value::Null);
             if !status.is_success() {
@@ -163,7 +158,6 @@ impl ConfluenceClient {
         let mut current_version = version;
         let max_retries = 3;
         for attempt in 0..=max_retries {
-            let client = self.build("/rest/api", 120)?;
             let body = json!({
                 "type": "page",
                 "title": title,
@@ -176,7 +170,7 @@ impl ConfluenceClient {
                 }
             });
             let path = format!("/rest/api/content/{page_id}");
-            let resp = client.put(self.url(&path)).json(&body).send().await.map_err(ServiceError::from)?;
+            let resp = self.http_client.put(self.url(&path)).json(&body).send().await.map_err(ServiceError::from)?;
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
 
@@ -226,7 +220,6 @@ impl ConfluenceClient {
 
     /// List attachments (up to 100) for a page.
     pub async fn get_attachments(&self, page_id: &str) -> Result<Vec<Value>> {
-        let client = self.build("/rest/api", 60)?;
         let mut all_results: Vec<Value> = Vec::new();
         let mut start = 0usize;
         let limit = 200usize;
@@ -234,7 +227,7 @@ impl ConfluenceClient {
             let path = format!(
                 "/rest/api/content/{page_id}/child/attachment?limit={limit}&start={start}&expand=version"
             );
-            let resp = client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+            let resp = self.http_client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
             let body: Value = resp.json().await.unwrap_or(Value::Null);
             let results = body
                 .get("results")
@@ -254,8 +247,7 @@ impl ConfluenceClient {
 
     /// Download an attachment by its `/download/...` path and return raw bytes.
     pub async fn download_attachment(&self, download_path: &str) -> Result<Vec<u8>> {
-        let client = self.build("", 120)?;
-        let resp = client
+        let resp = self.http_client
             .get(self.url(download_path))
             .send()
             .await
@@ -275,7 +267,6 @@ impl ConfluenceClient {
         filename: &str,
         data: Vec<u8>,
     ) -> Result<Value> {
-        let client = self.build("/rest/api", 120)?;
         // multipart form, requires X-Atlassian-Token: nocheck
         let part = reqwest::multipart::Part::bytes(data)
             .file_name(filename.to_string())
@@ -286,7 +277,7 @@ impl ConfluenceClient {
             .part("file", part);
 
         let path = format!("/rest/api/content/{page_id}/child/attachment");
-        let resp = client
+        let resp = self.http_client
             .post(self.url(&path))
             .header("X-Atlassian-Token", "nocheck")
             .multipart(form)
@@ -314,11 +305,7 @@ impl ConfluenceClient {
             "/rest/applinks/1.0/listApplicationlinks",
         ];
         for path in candidates {
-            let client = match self.build("", 30) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let resp = client
+            let resp = self.http_client
                 .get(self.url(path))
                 .header("Accept", "application/json, application/xml, text/xml")
                 .send()

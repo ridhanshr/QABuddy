@@ -12,8 +12,8 @@ function relativeTime(dateStr: string): string {
   return dateStr;
 }
 
-function lastEntryDate(entries: UqaEntry[]): string | null {
-  if (entries.length === 0) return null;
+function lastEntryDate(entries?: UqaEntry[]): string | null {
+  if (!entries || entries.length === 0) return null;
   const sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
   return sorted[0].date;
 }
@@ -40,7 +40,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
   const [transitionsLoading, setTransitionsLoading] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [entries, setEntries] = useState<UqaEntry[]>(issue.entries);
+  const [entries, setEntries] = useState<UqaEntry[]>(issue.entries || []);
 
 
   const [autoExpanded, setAutoExpanded] = useState(false);
@@ -71,7 +71,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
     window.qaBuddy.getPerUqaReminder(issue.issueKey).then((r) => {
       setPerReminder(r);
       if (r) {
-        setReminderEnabled(r.enabled);
+        setReminderEnabled(r.enabled ?? false);
         setReminderTime(r.remindTime || "");
         setReminderDays(r.remindDays || []);
       }
