@@ -16,9 +16,13 @@ function extractListItems(html: string): string[] {
   return html.replace(/<[^>]+>/g, "").split("\n").map(s => s.trim()).filter(Boolean);
 }
 
-function HtmlListPreview({ html, maxItems }: { html: string; maxItems: number }) {
+function HtmlListPreview({ html, maxItems, emptyLabel }: { html: string; maxItems: number; emptyLabel?: string }) {
   const items = extractListItems(html);
-  if (items.length === 0) return <span style={{ color: 'var(--on-surface-variant)', opacity: 0.5 }}>-</span>;
+  if (items.length === 0) {
+    return emptyLabel
+      ? <span style={{ color: 'var(--on-surface-variant)', opacity: 0.6, fontSize: 12, fontStyle: 'italic' }}>{emptyLabel}</span>
+      : <span style={{ color: 'var(--on-surface-variant)', opacity: 0.5 }}></span>;
+  }
   const visible = items.slice(0, maxItems);
   const remaining = items.length - visible.length;
   return (
@@ -62,6 +66,7 @@ export default function ManualTestCaseScreen() {
     confImportEntries,
     setConfImportEntries,
     confImportLoading,
+    confParseProgress,
     confImportResult,
     confImportJqlMatched,
     setConfImportJqlMatched,
@@ -747,6 +752,22 @@ export default function ManualTestCaseScreen() {
               </div>
             </div>
 
+            {confParseProgress && (
+              <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 12, border: `1px solid ${confParseProgress.stage === "error" ? "var(--error)" : "var(--outline-variant)"}`, background: confParseProgress.stage === "error" ? "color-mix(in srgb, var(--error) 8%, var(--surface))" : "var(--surface-container-low)", color: "var(--on-surface)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{confParseProgress.message}</div>
+                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
+                    {confParseProgress.total > 0 ? `${confParseProgress.current} / ${confParseProgress.total}` : "—"}
+                  </div>
+                </div>
+                {confParseProgress.detail && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: "var(--on-surface-variant)" }}>
+                    {confParseProgress.detail}
+                  </div>
+                )}
+              </div>
+            )}
+
             {confImportMode === "jql-match" && (
               <div className="field-group" style={{ marginTop: 16 }}>
                 <label>JQL Query</label>
@@ -837,10 +858,10 @@ export default function ManualTestCaseScreen() {
                           {entry.scenarioTitle || entry.scenario}
                         </td>
                         <td style={{ padding: '8px 16px', maxWidth: 250, color: 'var(--on-surface-variant)', verticalAlign: 'top' }}>
-                          <HtmlListPreview html={entry.steps} maxItems={3} />
+                          <HtmlListPreview html={entry.steps} maxItems={3} emptyLabel="No Step" />
                         </td>
                         <td style={{ padding: '8px 16px', maxWidth: 200, color: 'var(--on-surface-variant)', verticalAlign: 'top' }}>
-                          <HtmlListPreview html={entry.expectedResult} maxItems={2} />
+                          <HtmlListPreview html={entry.expectedResult} maxItems={2} emptyLabel="No Expected Result" />
                         </td>
                       </tr>
                     ))}

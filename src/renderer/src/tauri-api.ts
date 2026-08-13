@@ -21,6 +21,7 @@ import type {
   BulkOperationResult,
   ChatHistoryMessage,
   ChatResponse,
+  ConfluenceParseProgress,
   ConfluencePreviewResult,
   ConfluenceTestImportEntry,
   ConnectionStatus,
@@ -175,7 +176,11 @@ const api = {
   parseConfluenceEntries: (pageId: string, options?: ParseConfluenceEntriesOptions) =>
     cmd<ParseConfluenceEntriesResult>("parse_confluence_entries", {
       pageId,
-      debug: options?.debug ?? false,
+      options: {
+        debug: options?.debug ?? false,
+        includeImages: options?.includeImages ?? false,
+        includeJiraServerId: options?.includeJiraServerId ?? false,
+      },
     }),
 
   // RAG
@@ -193,6 +198,8 @@ const api = {
     cmd<void>("rag_clear_index", { source: source ?? null }),
   onRagProgress: (callback: (progress: RagIndexProgress) => void) =>
     on<RagIndexProgress>("rag-progress", callback),
+  onConfluenceParseProgress: (callback: (progress: ConfluenceParseProgress) => void) =>
+    on<ConfluenceParseProgress>("confluence-parse-progress", callback),
 
   // Jira metadata
   getJiraProjects: () => cmd<JiraProject[]>("get_jira_projects"),

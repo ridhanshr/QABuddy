@@ -197,6 +197,8 @@ pub async fn fetch_test_steps(
 
 /// Batch-fetch TC details from Jira for a list of TC keys.
 /// Returns one FetchTestStepsResult per key (None entries are skipped).
+/// Fetches all keys in parallel (single shared client, max 8 concurrent)
+/// instead of sequentially.
 #[tauri::command]
 pub async fn fetch_tc_details_batch(
     state: State<'_, AppState>,
@@ -204,14 +206,40 @@ pub async fn fetch_tc_details_batch(
 ) -> Result<Vec<FetchTestStepsResult>, String> {
     let config = load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
-    let mut results = Vec::new();
-    for key in &tc_keys {
-        match jira_service.fetch_test_steps(&config.jira, key).await {
-            Ok(Some(detail)) => results.push(detail),
-            Ok(None) => {
+    let client = jira_service
+        .client(&config.jira)
+        .map_err(|e| e.to_string())?;
+
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+    let mut set = tokio::task::JoinSet::new();
+    for key in tc_keys {
+        let client = client.clone();
+        let sem = sem.clone();
+        set.spawn(async move {
+            let _permit = sem.acquire().await;
+            (key.clone(), client.fetch_test_steps(&key).await)
+        });
+    }
+
+    let mut results: Vec<FetchTestStepsResult> = Vec::new();
+    while let Some(res) = set.join_next().await {
+        let (key, fetched) = res.map_err(|e| format!("Gagal fetch TC details: {e}"))?;
+        match fetched {
+            Some((steps, results_vec, input_data, summary_vec, labels, function_name)) => {
+                results.push(FetchTestStepsResult {
+                    issue_key: key,
+                    summary: summary_vec.into_iter().next().unwrap_or_default(),
+                    steps: steps.join("\n"),
+                    expected_result: results_vec.join("\n"),
+                    input_data: input_data.join("\n"),
+                    labels,
+                    function_name,
+                });
+            }
+            None => {
                 // No steps — still return a stub so frontend knows the key was processed
                 results.push(FetchTestStepsResult {
-                    issue_key: key.clone(),
+                    issue_key: key,
                     summary: String::new(),
                     steps: String::new(),
                     expected_result: String::new(),
@@ -220,7 +248,6 @@ pub async fn fetch_tc_details_batch(
                     function_name: None,
                 });
             }
-            Err(e) => return Err(format!("Gagal fetch {key}: {e}")),
         }
     }
     Ok(results)
@@ -447,7 +474,7 @@ pub async fn transition_uqa_issue(
 
 #[tauri::command]
 pub async fn auto_generate_uqa_notes(state: State<'_, AppState>, issue_key: String) -> Result<AutoUqaGeneratedPayload, String> {
-    use crate::models::uqa::{DbTeSummary, PhaseTestSummary, PhaseFailedDetail};
+    use crate::models::uqa::{DbTeSummary, PhaseTestSummary};
     use crate::services::jira::service::{detect_phase_from_name_pub, phase_rank_pub, format_uqa_notes_pub};
 
     // ── Try DB path first ──

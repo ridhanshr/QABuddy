@@ -465,6 +465,18 @@ export interface ParseConfluenceEntriesResult {
 
 export interface ParseConfluenceEntriesOptions {
   debug?: boolean;
+  includeImages?: boolean;
+  includeJiraServerId?: boolean;
+  /** Parse in "Update from Confluence" mode: keep the raw scenario with its Jira issue key. */
+  updateFromConfluence?: boolean;
+}
+
+export interface ConfluenceParseProgress {
+  stage: "fetch_page" | "parse_tables" | "detect_jira" | "fetch_attachments" | "download_images" | "done" | "error";
+  message: string;
+  current: number;
+  total: number;
+  detail?: string;
 }
 
 export interface ParseConfluenceParseDebugRow {
@@ -567,6 +579,7 @@ export interface DesktopApi {
   ragGetStats: () => Promise<RagStats>;
   ragClearIndex: (source?: "confluence" | "jira") => Promise<void>;
   onRagProgress: (callback: (progress: RagIndexProgress) => void) => () => void;
+  onConfluenceParseProgress: (callback: (progress: ConfluenceParseProgress) => void) => () => void;
   getJiraProjects: () => Promise<JiraProject[]>;
   getJiraBoards: (projectKey: string) => Promise<JiraBoard[]>;
   getJiraSprints: (boardId: number) => Promise<JiraSprint[]>;

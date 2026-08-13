@@ -1076,7 +1076,6 @@ impl JiraService {
         // Fetch existing steps to get their IDs so we update in-place instead of appending.
         let step_path = format!("/test/{issue_key}/step");
         let existing = client.xray.get_json_or_none(&step_path, &[]).await;
-        eprintln!("[push_entry_to_jira] existing steps for {issue_key}: {:?}", existing);
 
         // ID can be integer or string depending on Xray version
         let first_id: Option<String> = existing
@@ -1088,22 +1087,18 @@ impl JiraService {
                     .or_else(|| s["id"].as_str().map(|s| s.to_string()))
             });
 
-        eprintln!("[push_entry_to_jira] first_id={:?}", first_id);
-
         if let Some(id) = first_id {
             // Xray uses POST /{id} to update an existing step (PUT returns 405).
             let update_path = format!("{step_path}/{id}");
-            eprintln!("[push_entry_to_jira] updating step at {update_path}");
             client
                 .xray
                 .post_json_void(&update_path, &step_body)
                 .await
-                .map_err(|e| { eprintln!("[push_entry_to_jira] step update failed: {e}"); e })?;
+                .map_err(|e| e)?;
         } else {
-            eprintln!("[push_entry_to_jira] no existing steps, creating new");
             client.xray.put_json_void(&step_path, &step_body)
                 .await
-                .map_err(|e| { eprintln!("[push_entry_to_jira] step create failed: {e}"); e })?;
+                .map_err(|e| e)?;
         }
 
         // Update label (category) on the Jira issue — replace existing TC_* labels
@@ -1125,12 +1120,10 @@ impl JiraService {
             labels.push(category.to_string());
         }
         let label_body = serde_json::json!({ "fields": { "labels": labels } });
-        eprintln!("[push_entry_to_jira] updating labels for {issue_key}: {:?}", labels);
         client.api.put_json_void(&path, &label_body)
             .await
-            .map_err(|e| { eprintln!("[push_entry_to_jira] label update failed: {e}"); e })?;
+            .map_err(|e| e)?;
 
-        eprintln!("[push_entry_to_jira] done for {issue_key}");
         Ok(())
     }
 
@@ -1255,7 +1248,18 @@ impl JiraService {
                         }
                     }
                     StepConflictMode::Replace => {
-                        // Overwrite via the single-step PUT below.
+                        let existing = client.xray.get_json_or_none(&path, &[]).await;
+                        if let Some(arr) = existing.as_ref().and_then(|v| v.as_array()) {
+                            for step in arr {
+                                if let Some(id) = step["id"].as_u64() {
+                                    let del_path = format!("{path}/{id}");
+                                    let _ = client.xray.delete_void(&del_path).await;
+                                } else if let Some(id) = step["id"].as_str() {
+                                    let del_path = format!("{path}/{id}");
+                                    let _ = client.xray.delete_void(&del_path).await;
+                                }
+                            }
+                        }
                     }
                 }
                 let body =

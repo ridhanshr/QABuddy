@@ -132,6 +132,7 @@ pub async fn read_text(response: Response) -> Result<String> {
 
 /// A thin wrapper around a reqwest [`Client`] targeting a single base URL +
 /// path prefix. Used by the Jira/Confluence services.
+#[derive(Clone)]
 pub struct AtlassianClient {
     pub base_url: String,
     pub path_prefix: String,
@@ -228,6 +229,19 @@ impl AtlassianClient {
         }
         let text = resp.text().await.unwrap_or_default();
         Err(ServiceError::Api(format!("HTTP {status} Method Not Allowed: {text}")))
+    }
+
+    /// DELETE that ignores the response body (used for Xray step deletion).
+    pub async fn delete_void(&self, path: &str) -> Result<()> {
+        let url = self.url(path, &[]);
+        let resp = send_with_retry(&self.http, Method::DELETE, &url).await?;
+        let status = resp.status();
+        if status.is_success() || status == StatusCode::NO_CONTENT {
+            return Ok(());
+        }
+        let text = resp.text().await.unwrap_or_default();
+        let snippet = if text.len() > 500 { &text[..500] } else { &text };
+        Err(ServiceError::Api(format!("HTTP {}: {}", status, snippet)))
     }
 
     /// Perform a GET but swallow errors, returning `None` on failure. Mirrors

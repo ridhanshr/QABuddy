@@ -12,12 +12,13 @@ use serde_json::Value;
 use crate::models::app_config::ConfluenceConfig;
 use crate::models::jira::ConfluenceTestImportEntry;
 use crate::models::misc::{
-    ConfluencePreviewResult, ParseConfluenceEntriesOptions, ParseConfluenceEntriesResult,
+    ConfluenceParseProgress, ConfluencePreviewResult, ParseConfluenceEntriesOptions, ParseConfluenceEntriesResult,
     SyncToConfluencePayload, SyncToConfluenceResult,
 };
 use crate::services::confluence::client::ConfluenceClient;
 use crate::services::error::Result;
 use crate::services::http::normalize_url;
+use tauri::{AppHandle, Emitter};
 
 pub struct ConfluenceService;
 
@@ -102,6 +103,28 @@ impl ConfluenceService {
         self.client(config)
             .update_page(page_id, title, content, version)
             .await
+    }
+
+    fn emit_parse_progress(
+        app_handle: Option<&AppHandle>,
+        stage: &str,
+        message: impl Into<String>,
+        current: usize,
+        total: usize,
+        detail: Option<String>,
+    ) {
+        if let Some(handle) = app_handle {
+            let _ = handle.emit(
+                "confluence-parse-progress",
+                ConfluenceParseProgress {
+                    stage: stage.to_string(),
+                    message: message.into(),
+                    current,
+                    total,
+                    detail,
+                },
+            );
+        }
     }
 
     // ── Storage-format helpers ──────────────────────────────────────────
@@ -191,7 +214,7 @@ impl ConfluenceService {
                         ));
                     }
                     inner.push_str(&format!(
-                        r#"<p><ac:image ac:width="1200"><ri:attachment ri:filename="{}" /></ac:image></p>"#,
+                        r#"<p><ac:image ac:width="450"><ri:attachment ri:filename="{}" /></ac:image></p>"#,
                         escape_html(uploaded_name)
                     ));
                 }
@@ -220,9 +243,17 @@ impl ConfluenceService {
         uploaded: &std::collections::HashMap<(String, String), String>,
         jira_server_id: Option<&str>,
     ) -> (String, std::collections::HashSet<String>) {
-        // Build lookup: composite key (testCaseNo + "|" + functionName) → entry.
-        // Using only testCaseNo would cause false matches when multiple sub-sections
-        // each restart numbering from TC001.
+        // Build lookup by sourceTableIndex → entry (primary, matches parse order).
+        let mut by_source: std::collections::HashMap<usize, &serde_json::Value> =
+            std::collections::HashMap::new();
+        for entry in entries {
+            if let Some(idx) = entry["sourceTableIndex"].as_u64() {
+                by_source.insert(idx as usize, entry);
+            }
+        }
+
+        // Build lookup: composite key (testCaseNo + "|" + functionName) → entry
+        // (fallback for entries without sourceTableIndex, e.g. manually added).
         let mut by_tc: std::collections::HashMap<String, &serde_json::Value> =
             std::collections::HashMap::new();
         for entry in entries {
@@ -246,37 +277,55 @@ impl ConfluenceService {
         struct Patch { tbl_start: usize, tbl_end: usize, replacement: String, entry_id: String }
         let mut patches: Vec<Patch> = Vec::new();
 
+        // Mirrors the parse step: only vertical-card tables get a sourceTableIndex.
+        let mut vertical_index = 0usize;
+
         for (tbl_start, tbl_end) in table_positions {
             let original_table = &content[tbl_start..tbl_end];
 
             if !is_vertical_table(original_table) {
                 continue;
             }
-
-            let tc_val = extract_vertical_cell(original_table, "no. test case")
-                .or_else(|| extract_vertical_cell(original_table, "no test case"))
-                .or_else(|| extract_vertical_cell(original_table, "no. tc"))
-                .unwrap_or_default();
-            let tc_key = tc_val.trim().to_lowercase();
-            if tc_key.is_empty() { continue; }
-
-            let fun_val = extract_vertical_cell(original_table, "function")
-                .or_else(|| extract_vertical_cell(original_table, "function name"))
-                .unwrap_or_default();
-            let fun_key = fun_val.trim().to_lowercase();
-
-            // Try composite key first; fall back to tc-only if function not present
-            let composite = format!("{tc_key}|{fun_key}");
-            let entry = if let Some(e) = by_tc.get(&composite) {
-                e
-            } else if !fun_key.is_empty() {
-                // No composite match — this table belongs to a different sub-section
+            // Only tables the parser would count as import entries advance the index.
+            let mut dummy = 0usize;
+            if parse_vertical_table(original_table, &mut dummy).is_none() {
                 continue;
-            } else if let Some(e) = by_tc.get(&tc_key) {
-                e
-            } else {
-                continue;
+            }
+            let my_index = vertical_index;
+            vertical_index += 1;
+
+            // Prefer the exact sourceTableIndex match (updates the same table in place).
+            let entry = by_source.get(&my_index).copied();
+            let entry = match entry {
+                Some(e) => Some(e),
+                None => {
+                    let tc_val = extract_vertical_cell(original_table, "no. test case")
+                        .or_else(|| extract_vertical_cell(original_table, "no test case"))
+                        .or_else(|| extract_vertical_cell(original_table, "no. tc"))
+                        .unwrap_or_default();
+                    let tc_key = tc_val.trim().to_lowercase();
+                    if tc_key.is_empty() { continue; }
+
+                    let fun_val = extract_vertical_cell(original_table, "function")
+                        .or_else(|| extract_vertical_cell(original_table, "function name"))
+                        .unwrap_or_default();
+                    let fun_key = fun_val.trim().to_lowercase();
+
+                    // Try composite key first; fall back to tc-only if function not present
+                    let composite = format!("{tc_key}|{fun_key}");
+                    if let Some(e) = by_tc.get(&composite) {
+                        Some(*e)
+                    } else if !fun_key.is_empty() {
+                        // No composite match — this table belongs to a different sub-section
+                        None
+                    } else if let Some(e) = by_tc.get(&tc_key) {
+                        Some(*e)
+                    } else {
+                        None
+                    }
+                }
             };
+            let Some(entry) = entry else { continue };
 
             let entry_id = entry["id"].as_str().unwrap_or("").to_string();
             let images = entry["images"].as_array().cloned().unwrap_or_default();
@@ -287,7 +336,7 @@ impl ConfluenceService {
                 ("scenario",        scenario_to_html(entry["scenario"].as_str().unwrap_or(""), jira_server_id)),
                 ("kategori",        category_html.clone()),
                 ("category",        category_html),
-                ("input data",      format!("<p>{}</p>", escape_html(entry["inputData"].as_str().unwrap_or("")))),
+                ("input data",      text_to_list_html(entry["inputData"].as_str().unwrap_or(""))),
                 ("steps",           text_to_list_html(entry["steps"].as_str().unwrap_or(""))),
                 ("expected result", text_to_list_html(entry["expectedResult"].as_str().unwrap_or(""))),
                 ("result",          Self::result_cell_html(entry["result"].as_str().unwrap_or(""))),
@@ -347,7 +396,7 @@ impl ConfluenceService {
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Function</th><td class=\"confluenceTd\"><p>{}</p></td></tr>", escape_html(&function_name)));
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Scenario</th><td class=\"confluenceTd\">{scenario_html}</td></tr>"));
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Kategori</th><td class=\"confluenceTd\"><p>{}</p></td></tr>", escape_html(category)));
-            html.push_str(&format!("<tr><th class=\"confluenceTh\">Input Data</th><td class=\"confluenceTd\"><p>{}</p></td></tr>", escape_html(&input_data)));
+            html.push_str(&format!("<tr><th class=\"confluenceTh\">Input Data</th><td class=\"confluenceTd\">{}</td></tr>", text_to_list_html(&input_data)));
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Steps</th><td class=\"confluenceTd\">{}</td></tr>", text_to_list_html(&steps)));
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Expected Result</th><td class=\"confluenceTd\">{}</td></tr>", text_to_list_html(&expected)));
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Result</th><td class=\"confluenceTd\">{}</td></tr>", result_html));
@@ -461,7 +510,21 @@ impl ConfluenceService {
 
             for img in &sorted {
                 let orig_name = img["name"].as_str().unwrap_or("attachment.png").to_string();
+                if orig_name.is_empty() {
+                    continue;
+                }
                 let data_uri = img["data"].as_str().unwrap_or("");
+
+                // If an attachment with this exact name already lives on the
+                // page, reuse it instead of re-uploading. After a parse the image
+                // name IS the Confluence attachment title, so unchanged
+                // attachments (only steps/expected edited) are never re-sent.
+                if existing_filenames.contains(&orig_name) {
+                    uploaded.insert((entry_id.clone(), orig_name.clone()), orig_name);
+                    continue;
+                }
+
+                // Nothing to upload and nothing to reference.
                 if data_uri.is_empty() {
                     continue;
                 }
@@ -478,18 +541,12 @@ impl ConfluenceService {
 
                 let safe_entry = entry_id.replace(['/', '\\', ' '], "_");
                 let upload_name = format!("{safe_entry}_{orig_name}");
-
-                if existing_filenames.contains(&upload_name) {
-                    uploaded.insert((entry_id.clone(), orig_name), upload_name);
-                    total_images += 1;
-                } else {
-                    tasks_to_upload.push(UploadTaskItem {
-                        entry_id: entry_id.clone(),
-                        orig_name,
-                        upload_name,
-                        bytes,
-                    });
-                }
+                tasks_to_upload.push(UploadTaskItem {
+                    entry_id: entry_id.clone(),
+                    orig_name,
+                    upload_name,
+                    bytes,
+                });
             }
         }
 
@@ -551,10 +608,6 @@ impl ConfluenceService {
             content.push_str(&new_tables);
         }
 
-        // Always refresh the trailer
-        content = Self::strip_generated_markers(&content);
-        content.push_str("\n<p>Generated by QA Buddy</p>");
-
         // ── 5. Repair any unclosed inline tags left over from the original page ─
         let content = close_unclosed_inline_tags(&content);
 
@@ -584,13 +637,30 @@ impl ConfluenceService {
     /// rows; columns are mapped to ConfluenceTestImportEntry fields by header.
     pub async fn parse_confluence_entries(
         &self,
+        app_handle: Option<&AppHandle>,
         config: &ConfluenceConfig,
         page_id: &str,
-        _options: &ParseConfluenceEntriesOptions,
+        options: &ParseConfluenceEntriesOptions,
     ) -> Result<ParseConfluenceEntriesResult> {
+        Self::emit_parse_progress(
+            app_handle,
+            "fetch_page",
+            "Memuat halaman Confluence",
+            0,
+            1,
+            Some(format!("Page ID: {page_id}")),
+        );
         let (title, content, _version) = match self.get_page_preview(config, page_id).await {
             Ok(t) => (Some(t.0), t.1, t.2),
             Err(e) => {
+                Self::emit_parse_progress(
+                    app_handle,
+                    "error",
+                    "Gagal memuat halaman Confluence",
+                    0,
+                    1,
+                    Some(e.to_string()),
+                );
                 return Ok(ParseConfluenceEntriesResult {
                     page_id: page_id.to_string(),
                     page_title: String::new(),
@@ -602,14 +672,78 @@ impl ConfluenceService {
                 });
             }
         };
-        let mut entries = parse_tables_to_entries(&content);
-        let jira_server_id = self.client(config).detect_jira_server_id().await;
+        Self::emit_parse_progress(
+            app_handle,
+            "fetch_page",
+            "Halaman Confluence berhasil dimuat",
+            1,
+            1,
+            title.clone(),
+        );
+        let table_positions = iter_table_positions(&content);
+        let total_tables = table_positions.len();
+        Self::emit_parse_progress(
+            app_handle,
+            "parse_tables",
+            "Mulai parsing tabel",
+            0,
+            total_tables,
+            Some(format!("{total_tables} tabel terdeteksi")),
+        );
+        let mut entries = parse_tables_to_entries_with_progress(&content, Some(&table_positions), |current, total| {
+            Self::emit_parse_progress(
+                app_handle,
+                "parse_tables",
+                format!("Parsing tabel {current} / {total}"),
+                current,
+                total,
+                None,
+            );
+        });
+        let jira_server_id = if options.include_jira_server_id {
+            Self::emit_parse_progress(
+                app_handle,
+                "detect_jira",
+                "Mendeteksi Jira Server ID",
+                0,
+                1,
+                None,
+            );
+            let detected = self.client(config).detect_jira_server_id().await;
+            Self::emit_parse_progress(
+                app_handle,
+                "detect_jira",
+                "Deteksi Jira Server ID selesai",
+                1,
+                1,
+                detected.clone(),
+            );
+            detected
+        } else {
+            None
+        };
 
         // Download screen capture attachments concurrently for entries that need them
-        let needs_images = entries.iter().any(|e| !e.screen_capture_filenames.is_empty());
+        let needs_images = options.include_images && entries.iter().any(|e| !e.screen_capture_filenames.is_empty());
         if needs_images {
+            Self::emit_parse_progress(
+                app_handle,
+                "fetch_attachments",
+                "Memuat attachment page",
+                0,
+                1,
+                None,
+            );
             // Fetch all page attachments once
             let all_attachments = self.get_attachments(config, page_id).await.unwrap_or_default();
+            Self::emit_parse_progress(
+                app_handle,
+                "fetch_attachments",
+                "Attachment page berhasil dimuat",
+                1,
+                1,
+                Some(format!("{} attachment ditemukan", all_attachments.len())),
+            );
             // Build filename → download_path map
             let att_map: std::collections::HashMap<String, String> = all_attachments
                 .iter()
@@ -642,6 +776,15 @@ impl ConfluenceService {
             }
 
             if !download_tasks.is_empty() {
+                let total_downloads = download_tasks.len();
+                Self::emit_parse_progress(
+                    app_handle,
+                    "download_images",
+                    "Mulai memproses image attachment",
+                    0,
+                    total_downloads,
+                    None,
+                );
                 let client = self.client(config);
                 let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
                 let mut join_set = tokio::task::JoinSet::new();
@@ -661,8 +804,18 @@ impl ConfluenceService {
                     usize,
                     Vec<(usize, crate::models::jira::ConfluenceEntryImage)>,
                 > = std::collections::HashMap::new();
+                let mut processed = 0usize;
 
                 while let Some(res) = join_set.join_next().await {
+                    processed += 1;
+                    Self::emit_parse_progress(
+                        app_handle,
+                        "download_images",
+                        format!("Memproses image {processed} / {total_downloads}"),
+                        processed,
+                        total_downloads,
+                        None,
+                    );
                     if let Ok((entry_idx, order, filename, Ok(bytes))) = res {
                         let ext = filename.rsplit('.').next().unwrap_or("png").to_lowercase();
                         let mime = match ext.as_str() {
@@ -691,6 +844,15 @@ impl ConfluenceService {
             }
         }
 
+        Self::emit_parse_progress(
+            app_handle,
+            "done",
+            format!("Selesai: {} entries ditemukan", entries.len()),
+            entries.len(),
+            entries.len(),
+            title.clone(),
+        );
+
         Ok(ParseConfluenceEntriesResult {
             page_id: page_id.to_string(),
             page_title: title.unwrap_or_default(),
@@ -707,6 +869,56 @@ impl ConfluenceService {
 
 fn base64_encode(data: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(data)
+}
+
+fn parse_tables_to_entries_with_progress<F: FnMut(usize, usize)>(
+    content: &str,
+    table_positions: Option<&[(usize, usize)]>,
+    mut on_progress: F,
+) -> Vec<ConfluenceTestImportEntry> {
+    let mut entries: Vec<ConfluenceTestImportEntry> = Vec::new();
+    let table_positions = table_positions
+        .map(|positions| positions.to_vec())
+        .unwrap_or_else(|| iter_table_positions(content));
+    let total = table_positions.len();
+    let row_re = RE_ROW.get_or_init(|| regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap());
+    let cell_re = RE_CELL.get_or_init(|| regex::Regex::new(r"(?is)<t[dh][^>]*>([\s\S]*?)</t[dh]>").unwrap());
+    let th_re = RE_TH.get_or_init(|| regex::Regex::new(r"(?i)<th\b").unwrap());
+
+    let mut counter = 1usize;
+    let mut vertical_index = 0usize;
+    for (idx, (start, end)) in table_positions.iter().enumerate() {
+        let body = &content[*start..*end];
+        on_progress(idx + 1, total);
+
+        if is_vertical_table(body) {
+            if let Some(mut entry) = parse_vertical_table(body, &mut counter) {
+                entry.source_table_index = Some(vertical_index);
+                vertical_index += 1;
+                entries.push(entry);
+            }
+            continue;
+        }
+
+        let (header_map, has_header) = parse_header_map(body);
+        for row_cap in row_re.captures_iter(body) {
+            let row = &row_cap[1];
+            if th_re.is_match(row) {
+                continue;
+            }
+            let cells: Vec<String> = cell_re
+                .captures_iter(row)
+                .map(|c| c[1].to_string())
+                .collect();
+            if cells.iter().all(|c| strip_inner_tags(c).trim().is_empty()) {
+                continue;
+            }
+            let entry = build_entry(&cells, &header_map, has_header, &mut counter);
+            entries.push(entry);
+        }
+    }
+
+    entries
 }
 
 /// Extract the plain-text value of a named field row in a vertical-card table.
@@ -1121,9 +1333,11 @@ fn scenario_to_html(scenario: &str, jira_server_id: Option<&str>) -> String {
     html
 }
 
-/// Convert a numbered-list string like "- 1. foo - 2. bar - 3. baz"
-/// into a Confluence XHTML ordered list `<ol><li>foo</li>…</ol>`.
-/// If the text doesn't look like a numbered list, wraps it in a plain `<p>`.
+/// Convert steps/expected-result text into a Confluence XHTML list.
+/// Mirrors the Electron `toListItems(text, format, plainLinesAsBullets=true)`:
+///   - all lines numbered ("1. " / "1) ") → `<ol>`
+///   - all lines bulleted ("- " / "* " / "• ") → `<ul>`
+///   - otherwise (plain lines) → `<ul>` with each line as a bullet
 fn text_to_list_html(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -1133,12 +1347,11 @@ fn text_to_list_html(text: &str) -> String {
     // Split into non-empty lines.
     let lines: Vec<&str> = trimmed.lines().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 
-    // Check if lines look like a numbered list ("1. " / "1) ") or bulleted ("- " / "• ").
     let numbered_re = regex::Regex::new(r"^\d+[.)]\s+").unwrap();
-    let bullet_re   = regex::Regex::new(r"^[-–•]\s+").unwrap();
+    let bullet_re   = regex::Regex::new(r"^[-*•]\s+").unwrap();
 
-    let is_numbered = lines.len() > 1 && lines.iter().all(|l| numbered_re.is_match(l));
-    let is_bullet   = lines.len() > 1 && lines.iter().all(|l| bullet_re.is_match(l));
+    let is_numbered = lines.iter().all(|l| numbered_re.is_match(l));
+    let is_bullet   = lines.iter().all(|l| bullet_re.is_match(l));
 
     if is_numbered {
         let mut html = String::from("<ol>");
@@ -1172,12 +1385,13 @@ fn text_to_list_html(text: &str) -> String {
         return html;
     }
 
-    // Multi-line plain text — emit each line as its own <p>.
-    if lines.len() > 1 {
-        return lines.iter().map(|l| format!("<p>{}</p>", escape_html(l))).collect::<String>();
+    // Plain lines — render each as a bullet (main branch's plainLinesAsBullets=true).
+    let mut html = String::from("<ul>");
+    for line in &lines {
+        html.push_str(&format!("<li>{}</li>", escape_html(line)));
     }
-
-    format!("<p>{}</p>", escape_html(trimmed))
+    html.push_str("</ul>");
+    html
 }
 
 /// Normalize a field label from a vertical-format table row (left column).
@@ -1216,25 +1430,40 @@ fn is_vertical_table(body: &str) -> bool {
     checked > 0 && matched >= 3
 }
 
-/// Extract a Jira issue key from a Confluence Jira macro in storage format.
-/// e.g. <ac:structured-macro ac:name="jira"><ac:parameter ac:name="key">TRALOS-1</ac:parameter>...
-/// Falls back to stripping all tags if no macro found.
+/// Extract scenario text from a Confluence cell, mirroring the Electron
+/// `extractTextValue` + `cleanConfluenceMacros`: each Jira macro is replaced by
+/// its issue key while surrounding summary text is preserved.
+/// e.g. `<p>Login <ac:structured-macro jira key="TRALOS-1"/>…</p>` → `Login TRALOS-1`.
 fn extract_scenario_text(raw: &str) -> String {
-    // Try to find a Jira macro key parameter
+    // Replace full <ac:structured-macro ac:name="jira">…</ac:structured-macro>
+    // blocks with their issue key (keeps surrounding text).
+    let macro_re = regex::Regex::new(
+        r#"(?is)<ac:structured-macro\b[^>]*\bac:name\s*=\s*"jira"[^>]*>.*?</ac:structured-macro>"#,
+    )
+    .unwrap();
     let key_re = regex::Regex::new(
         r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*"key"[^>]*>([\s\S]*?)</ac:parameter>"#,
     )
     .unwrap();
-    let keys: Vec<String> = key_re
-        .captures_iter(raw)
-        .map(|c| strip_inner_tags(&c[1]).trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if !keys.is_empty() {
-        return keys.join(", ");
+    let cleaned = macro_re.replace_all(raw, |caps: &regex::Captures| {
+        let keys: Vec<String> = key_re
+            .captures_iter(&caps[0])
+            .map(|c| strip_inner_tags(&c[1]).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if keys.is_empty() {
+            String::new()
+        } else {
+            keys.join(", ")
+        }
+    });
+    let text = strip_inner_tags(&cleaned);
+    if text.trim().is_empty() {
+        // No jira macro found — plain text fallback.
+        strip_inner_tags(raw).trim().to_string()
+    } else {
+        text.trim().to_string()
     }
-    // Fallback: plain text
-    strip_inner_tags(raw).trim().to_string()
 }
 
 /// Extract attachment filenames from a Confluence cell.
@@ -1350,13 +1579,13 @@ fn parse_vertical_table(body: &str, counter: &mut usize) -> Option<ConfluenceTes
             scenario = extract_scenario_text(raw_value);
             found_any = true;
         } else if label.contains("input data") {
-            input_data = strip_inner_tags(raw_value).trim().to_string();
+            input_data = extract_text_lines(raw_value);
             found_any = true;
         } else if label.contains("steps") || label.contains("langkah") {
-            steps = strip_inner_tags(raw_value).trim().to_string();
+            steps = extract_text_lines(raw_value);
             found_any = true;
         } else if label.contains("expected") || label.contains("hasil yang diharapkan") {
-            expected_result = strip_inner_tags(raw_value).trim().to_string();
+            expected_result = extract_text_lines(raw_value);
             found_any = true;
         }
     }
@@ -1381,6 +1610,7 @@ fn parse_vertical_table(body: &str, counter: &mut usize) -> Option<ConfluenceTes
         steps,
         expected_result,
         selected: true,
+        source_table_index: None,
         screen_capture_filenames,
         images: Vec::new(), // populated later by parse_confluence_entries
     })
@@ -1397,44 +1627,7 @@ static RE_TH_CELL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new(
 ///   1. Horizontal: first row = headers (No. Test Case, Function, Scenario, Steps, Expected Result)
 ///   2. Vertical (card): each row = | Field Label | Value | — one test case per table
 fn parse_tables_to_entries(content: &str) -> Vec<ConfluenceTestImportEntry> {
-    let mut entries: Vec<ConfluenceTestImportEntry> = Vec::new();
-    let table_re = RE_TABLE.get_or_init(|| regex::Regex::new(r"(?is)<table\b[^>]*>([\s\S]*?)</table>").unwrap());
-    let row_re = RE_ROW.get_or_init(|| regex::Regex::new(r"(?is)<tr\b[^>]*>([\s\S]*?)</tr>").unwrap());
-    let cell_re = RE_CELL.get_or_init(|| regex::Regex::new(r"(?is)<t[dh][^>]*>([\s\S]*?)</t[dh]>").unwrap());
-    let th_re = RE_TH.get_or_init(|| regex::Regex::new(r"(?i)<th\b").unwrap());
-
-    let mut counter = 1usize;
-    for table_cap in table_re.captures_iter(content) {
-        let body = &table_cap[1];
-
-        // Detect vertical (card) format first
-        if is_vertical_table(body) {
-            if let Some(entry) = parse_vertical_table(body, &mut counter) {
-                entries.push(entry);
-            }
-            continue;
-        }
-
-        // Horizontal format: header row + data rows
-        let (header_map, has_header) = parse_header_map(body);
-        for row_cap in row_re.captures_iter(body) {
-            let row = &row_cap[1];
-            // Skip header rows.
-            if th_re.is_match(row) {
-                continue;
-            }
-            let cells: Vec<String> = cell_re
-                .captures_iter(row)
-                .map(|c| strip_inner_tags(&c[1]).trim().to_string())
-                .collect();
-            if cells.iter().all(|c| c.is_empty()) {
-                continue;
-            }
-            let entry = build_entry(&cells, &header_map, has_header, &mut counter);
-            entries.push(entry);
-        }
-    }
-    entries
+    parse_tables_to_entries_with_progress(content, None, |_current, _total| {})
 }
 
 /// Map header text → column index. Returns (map, has_header).
@@ -1475,29 +1668,28 @@ fn build_entry(
     has_header: bool,
     counter: &mut usize,
 ) -> ConfluenceTestImportEntry {
-    let pick = |key: &str| -> String {
+    let pick_raw = |key: &str| -> Option<&str> {
         header_map
             .get(key)
             .and_then(|i| cells.get(*i))
-            .cloned()
-            .unwrap_or_default()
+            .map(|s| s.as_str())
     };
     let (test_case_no, function_name, scenario, steps, expected_result) = if has_header {
         (
-            pick("testcase"),
-            pick("function"),
-            pick("scenario"),
-            pick("steps"),
-            pick("expected"),
+            pick_raw("testcase").map(|v| strip_inner_tags(v).trim().to_string()).unwrap_or_default(),
+            pick_raw("function").map(|v| strip_inner_tags(v).trim().to_string()).unwrap_or_default(),
+            pick_raw("scenario").map(extract_scenario_text).unwrap_or_default(),
+            pick_raw("steps").map(extract_text_lines).unwrap_or_default(),
+            pick_raw("expected").map(extract_text_lines).unwrap_or_default(),
         )
     } else {
         // Positional fallback: [No, Function, Scenario, Steps, Expected].
         (
-            cells.first().cloned().unwrap_or_default(),
-            cells.get(1).cloned().unwrap_or_default(),
-            cells.get(2).cloned().unwrap_or_default(),
-            cells.get(3).cloned().unwrap_or_default(),
-            cells.get(4).cloned().unwrap_or_default(),
+            cells.first().map(|v| strip_inner_tags(v).trim().to_string()).unwrap_or_default(),
+            cells.get(1).map(|v| strip_inner_tags(v).trim().to_string()).unwrap_or_default(),
+            cells.get(2).map(|v| extract_scenario_text(v)).unwrap_or_default(),
+            cells.get(3).map(|v| extract_text_lines(v)).unwrap_or_default(),
+            cells.get(4).map(|v| extract_text_lines(v)).unwrap_or_default(),
         )
     };
     let id = format!("tc-{}", counter);
@@ -1512,6 +1704,7 @@ fn build_entry(
         test_case_no,
         input_data: String::new(),
         selected: true,
+        source_table_index: None,
         screen_capture_filenames: Vec::new(),
         images: Vec::new(),
     }
@@ -1530,6 +1723,52 @@ fn strip_inner_tags(raw: &str) -> String {
         .replace("&#39;", "'");
     let stripped = re.replace_all(&decoded, " ");
     ws.replace_all(stripped.trim(), " ").to_string()
+}
+
+/// Extract list/paragraph content from a Confluence cell into newline-separated
+/// lines. Mirrors the Electron `extractTextLines` (confluence-service.ts):
+///   1. `<li>` items joined with `\n`
+///   2. `<p>` items joined with `\n` (each paragraph split on `<br>` so
+///      "a<br>b" becomes two lines, not one)
+///   3. `<br>`-separated segments joined with `\n`
+///   4. otherwise the single plain-text value
+fn extract_text_lines(raw: &str) -> String {
+    let li_re = regex::Regex::new(r"(?is)<li\b[^>]*>([\s\S]*?)</li>").unwrap();
+    let li_items: Vec<String> = li_re
+        .captures_iter(raw)
+        .map(|c| strip_inner_tags(&c[1]).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !li_items.is_empty() {
+        return li_items.join("\n");
+    }
+
+    let p_re = regex::Regex::new(r"(?is)<p\b[^>]*>([\s\S]*?)</p>").unwrap();
+    let p_items: Vec<String> = p_re
+        .captures_iter(raw)
+        .flat_map(|c| split_br_lines(&c[1]))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !p_items.is_empty() {
+        return p_items.join("\n");
+    }
+
+    let br_items: Vec<String> = split_br_lines(raw);
+    if br_items.len() > 1 {
+        return br_items.join("\n");
+    }
+
+    strip_inner_tags(raw).trim().to_string()
+}
+
+/// Split inner HTML on `<br>` (any variant) and strip tags from each segment.
+fn split_br_lines(inner: &str) -> Vec<String> {
+    let br_re = regex::Regex::new(r"(?i)<br\s*/?>").unwrap();
+    br_re
+        .split(inner)
+        .map(|s| strip_inner_tags(s).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -1561,6 +1800,7 @@ mod tests {
             test_case_no: "TC-1".into(),
             input_data: String::new(),
             selected: true,
+            source_table_index: None,
             screen_capture_filenames: Vec::new(),
             images: Vec::new(),
         }];
@@ -1576,5 +1816,20 @@ mod tests {
         assert!(!cleaned.contains("Generated by QA Buddy"));
         assert!(cleaned.contains("hello"));
         assert!(cleaned.contains("world"));
+    }
+
+    #[test]
+    fn extract_text_lines_splits_br_inside_p() {
+        let html = r#"<td class="confluenceTd"><p>Reguler: 4687400237774496<br>Co-Branding: 4359720100296005<br>Corporate: 5534790146445614</p></td>"#;
+        let lines = extract_text_lines(html);
+        let expected = "Reguler: 4687400237774496\nCo-Branding: 4359720100296005\nCorporate: 5534790146445614";
+        assert_eq!(lines, expected);
+    }
+
+    #[test]
+    fn extract_text_lines_joins_list_items() {
+        let html = "<ol><li>Klik menu</li><li>Pilih opsi</li></ol>";
+        let lines = extract_text_lines(html);
+        assert_eq!(lines, "Klik menu\nPilih opsi");
     }
 }

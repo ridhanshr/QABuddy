@@ -157,6 +157,10 @@ pub struct ConfluenceTestImportEntry {
     pub test_case_no: String,
     pub input_data: String,
     pub selected: bool,
+    /// Index of the parsed vertical table this entry was loaded from.
+    /// Used by sync to update the existing table in-place instead of appending a new one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_table_index: Option<usize>,
     /// Attachment filenames extracted from the Screen Capture column (for image download)
     pub screen_capture_filenames: Vec<String>,
     /// Base64-encoded images downloaded from Confluence attachments

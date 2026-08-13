@@ -11,7 +11,21 @@ use crate::services::http::{jira_agile_client, jira_api_client, jira_xray_client
 use crate::services::text_utils::adf_to_plain_text;
 use crate::services::http::normalize_url;
 
+/// Strip Markdown-style bullet prefixes (`- `, `* `, `• `, `1. `, `1) `) from
+/// each line. Xray can store imported lines with these prefixes; the
+/// Documentation Sync editor works with plain step text.
+fn strip_xray_bullet_prefixes(value: &str) -> String {
+    let bullet_re = regex::Regex::new(r"^(?:(?:[-*\u{2022}])\s+|\d+[.)]\s+)+").unwrap();
+    value
+        .lines()
+        .map(|line| bullet_re.replace(line.trim(), "").to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Low-level Jira client bundling the three API surfaces.
+#[derive(Clone)]
 pub struct JiraClient {
     pub config: JiraConfig,
     pub api: AtlassianClient,
@@ -162,17 +176,17 @@ impl JiraClient {
         };
         let steps: Vec<String> = arr
             .iter()
-            .map(|s| extract_raw(&s["step"]).trim().to_string())
+            .map(|s| strip_xray_bullet_prefixes(&extract_raw(&s["step"])))
             .filter(|s| !s.is_empty())
             .collect();
         let results: Vec<String> = arr
             .iter()
-            .map(|s| extract_raw(&s["result"]).trim().to_string())
+            .map(|s| strip_xray_bullet_prefixes(&extract_raw(&s["result"])))
             .filter(|s| !s.is_empty())
             .collect();
         let input_data: Vec<String> = arr
             .iter()
-            .map(|s| extract_raw(&s["data"]).trim().to_string())
+            .map(|s| strip_xray_bullet_prefixes(&extract_raw(&s["data"])))
             .filter(|s| !s.is_empty())
             .collect();
         if steps.is_empty() && results.is_empty() {

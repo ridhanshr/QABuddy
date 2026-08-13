@@ -4,6 +4,7 @@ import type {
   AppConfig,
   BulkOperationResult,
   ChatResponse,
+  ConfluenceParseProgress,
   ConfluenceTestImportEntry,
   ConnectionStatus,
   ConnectionStatusItem,
@@ -14,6 +15,7 @@ import type {
   DashboardDigest,
   ExtractedTestCase,
   ExtractionDepth,
+  FetchTestStepsResult,
   JiraBoard,
   JiraIssueSummary,
   JiraProject,
@@ -396,16 +398,19 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   const [confLoading, setConfLoading] = useState(false);
   const [confProgressHidden, setConfProgressHidden] = useState(false);
   const [confPagePreview, setConfPagePreview] = useState<{ title: string; content: string; version: number } | null>(null);
-  const confImageWidth = 1200;
+  const confImageWidth = 450;
   const [confPageLoading, setConfPageLoading] = useState(false);
+  const [confAttachmentHydrating, setConfAttachmentHydrating] = useState(false);
   const [confSyncPreview, setConfSyncPreview] = useState<ConfluencePreviewResult | null>(null);
   const [confPreviewLoading, setConfPreviewLoading] = useState(false);
   const [confParseStatus, setConfParseStatus] = useState<ParseConfluenceEntriesResult | null>(null);
+  const [confParseProgress, setConfParseProgress] = useState<ConfluenceParseProgress | null>(null);
   const [confEntries, setConfEntries] = useState<any[]>([createEmptyConfEntry()]);
   const [confFetchingSteps, setConfFetchingSteps] = useState<Set<string>>(new Set());
   const [confPushingSteps, setConfPushingSteps] = useState<Set<string>>(new Set());
   const [deletedConfTableIndices, setDeletedConfTableIndices] = useState<number[]>([]);
   const [draggedAttachment, setDraggedAttachment] = useState<{ entryId: string; attachmentId: string } | null>(null);
+  const confParseProgressClearTimer = useRef<number | null>(null);
 
   const confSections = useMemo(() => {
     const sections = confEntries.map(e => e.section || "").filter(Boolean);
@@ -824,6 +829,28 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     });
     return cleanup;
   }, [loadRagStats]);
+
+  useEffect(() => {
+    const cleanup = window.qaBuddy.onConfluenceParseProgress((progress) => {
+      if (confParseProgressClearTimer.current !== null) {
+        window.clearTimeout(confParseProgressClearTimer.current);
+        confParseProgressClearTimer.current = null;
+      }
+      setConfParseProgress(progress);
+      if (progress.stage === "done") {
+        confParseProgressClearTimer.current = window.setTimeout(() => {
+          setConfParseProgress(null);
+          confParseProgressClearTimer.current = null;
+        }, 1500);
+      }
+    });
+    return () => {
+      if (confParseProgressClearTimer.current !== null) {
+        window.clearTimeout(confParseProgressClearTimer.current);
+      }
+      cleanup();
+    };
+  }, []);
 
   // ── Defect Repository State ──────────────────────────────────────────
   const [defectSources, setDefectSources] = useState<import("@shared/types").JiraProjectSource[]>([]);
@@ -1719,7 +1746,12 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         return;
       }
       const pageId = pageIdMatch[1];
-      const result = await window.qaBuddy.parseConfluenceEntries(pageId);
+      setConfParseProgress(null);
+      const result = await window.qaBuddy.parseConfluenceEntries(pageId, {
+        updateFromConfluence: true,
+        includeImages: false,
+        includeJiraServerId: false,
+      });
       if (!result.contentLoaded || result.entries.length === 0) {
         setBanner({ tone: "info", text: "Tidak ada entry yang ditemukan di halaman Confluence tersebut." });
         setConfImportLoading(false);
@@ -1752,10 +1784,34 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       const titleMap = keysToFetch.length > 0
         ? await window.qaBuddy.getTestCaseTitles(keysToFetch).catch(() => ({} as Record<string, string>))
         : {};
-      const entriesWithTitles = entries.map(e => ({
-        ...e,
-        scenarioTitle: titleMap[e.issueKey] || undefined,
-      }));
+
+      // Batch-fetch steps/expected from Xray for all entries with an issue key,
+      // in parallel (max 8 concurrent), so the user doesn't have to fetch one-by-one.
+      const detailMap: Record<string, FetchTestStepsResult> = {};
+      if (keysToFetch.length > 0) {
+        try {
+          const details = await window.qaBuddy.fetchTcDetailsBatch(keysToFetch);
+          for (const d of details) {
+            detailMap[d.issueKey] = d;
+          }
+        } catch {
+          // non-fatal — entries still load with the Confluence steps
+        }
+      }
+
+      const entriesWithTitles = entries.map(e => {
+        const detail = e.issueKey ? detailMap[e.issueKey] : undefined;
+        // Only fill steps/expected from Xray when the Confluence entry has none —
+        // existing Confluence steps are the source pushed to Jira on update.
+        const fillSteps = detail?.steps && !(e.steps ?? "").trim();
+        const fillExpected = detail?.expectedResult && !(e.expectedResult ?? "").trim();
+        return {
+          ...e,
+          scenarioTitle: titleMap[e.issueKey] || undefined,
+          steps: fillSteps ? detail.steps : e.steps,
+          expectedResult: fillExpected ? detail.expectedResult : e.expectedResult,
+        };
+      });
 
       setConfImportEntries(entriesWithTitles);
       setBanner({
@@ -2016,8 +2072,12 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     const resolvedPageId = pageId;
     setConfPageLoading(true);
     setConfParseStatus(null);
+    setConfParseProgress(null);
     try {
-      const result = await window.qaBuddy.parseConfluenceEntries(pageId);
+      const result = await window.qaBuddy.parseConfluenceEntries(pageId, {
+        includeImages: true,
+        includeJiraServerId: true,
+      });
       const effectiveResult = { ...result, pageId: result.pageId || resolvedPageId };
       setConfParseStatus(effectiveResult);
       if (!effectiveResult.contentLoaded) {
@@ -2045,6 +2105,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
             data: image.data || "",
             order: typeof image.order === "number" ? image.order : index + 1,
             note: image.note || "",
+            expandGroup: image.expandGroup || "",
           })),
           true
         );
@@ -2060,12 +2121,70 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       setConfTab("form");
       setBanner({
         tone: "success",
-        text: `Berhasil memuat ${entriesList.length} entry dari halaman "${effectiveResult.pageTitle || effectiveResult.pageId}".${effectiveResult.jiraServerId ? ` Jira Server ID terdeteksi: ${effectiveResult.jiraServerId}.` : ""}`,
+        text: `Berhasil memuat ${entriesList.length} entry dari halaman "${effectiveResult.pageTitle || effectiveResult.pageId}".`,
       });
     } catch (error) {
       setBanner({ tone: "error", text: toErrorMessage(error, "Gagal parse entries dari Confluence.") });
     } finally {
       setConfPageLoading(false);
+    }
+  }
+
+  async function loadConfPageAttachments(options?: { silent?: boolean }) {
+    const pageId = config.confluence.targetPageId.trim();
+    if (!pageId) {
+      setBanner({ tone: "error", text: "Masukkan Target Page ID terlebih dahulu." });
+      return;
+    }
+    setConfAttachmentHydrating(true);
+    setConfParseProgress(null);
+    try {
+      const result = await window.qaBuddy.parseConfluenceEntries(pageId, {
+        includeImages: true,
+        includeJiraServerId: true,
+      });
+      const hydratedEntries = result.entries || [];
+      setConfEntries((current) =>
+        current.map((entry, index) => {
+          const hydrated = hydratedEntries[index];
+          if (!hydrated) {
+            return entry;
+          }
+          return {
+            ...entry,
+            screenCaptureFilenames: hydrated.screenCaptureFilenames || entry.screenCaptureFilenames || [],
+            images: normalizeConfAttachments(
+              (hydrated.images || []).map((image: any, imageIndex: number) => ({
+                id: image.id || crypto.randomUUID(),
+                name: image.name,
+                data: image.data || "",
+                order: typeof image.order === "number" ? image.order : imageIndex + 1,
+                note: image.note || "",
+                expandGroup: image.expandGroup || "",
+              })),
+              true
+            ),
+          };
+        })
+      );
+      if (result.jiraServerId && result.jiraServerId !== config.confluence.jiraServerId) {
+        setConfig((current) => ({
+          ...current,
+          confluence: { ...current.confluence, jiraServerId: result.jiraServerId },
+        }));
+      }
+      if (!options?.silent) {
+        setBanner({
+          tone: "success",
+          text: "Attachment existing dari page berhasil dimuat ke editor.",
+        });
+      }
+    } catch (error) {
+      if (!options?.silent) {
+        setBanner({ tone: "error", text: toErrorMessage(error, "Gagal memuat attachment existing dari Confluence.") });
+      }
+    } finally {
+      setConfAttachmentHydrating(false);
     }
   }
 
@@ -2387,9 +2506,11 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
                   ...e,
                   steps: result.steps,
                   expectedResult: result.expectedResult,
-                  scenario: issueKey,
+                  // Preserve existing scenario/functionName so the table match
+                  // (and in-place sync) isn't broken by Xray folder/summary data.
+                  ...(e.scenario ? {} : { scenario: issueKey }),
                   ...(matchedCategory ? { category: matchedCategory } : {}),
-                  ...(result.functionName ? { functionName: result.functionName } : {}),
+                  ...(e.functionName ? {} : (result.functionName ? { functionName: result.functionName } : {})),
                   isDirty: true,
                 }
               : e
@@ -3035,9 +3156,11 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     confPagePreview,
     setConfPagePreview,
     confPageLoading,
+    confAttachmentHydrating,
     confSyncPreview,
     confPreviewLoading,
     confParseStatus,
+    confParseProgress,
     confEntries,
     confSections,
     setConfEntries,
@@ -3088,6 +3211,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     loadConfPagePreview,
     previewConfluenceSync,
     parseConfPageEntries,
+    loadConfPageAttachments,
     syncConfluence,
     handleConfFileUpload,
     addConfEntry,

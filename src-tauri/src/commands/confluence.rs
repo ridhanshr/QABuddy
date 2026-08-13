@@ -23,14 +23,20 @@ pub async fn get_confluence_page(
 #[tauri::command]
 pub async fn parse_confluence_entries(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     page_id: String,
     options: Option<ParseConfluenceEntriesOptions>,
 ) -> Result<ParseConfluenceEntriesResult, String> {
     let config = load_config(state.clone()).await?;
     let confluence_service = state.confluence_service.lock().await;
-    let options = options.unwrap_or(ParseConfluenceEntriesOptions { debug: false });
+    let options = options.unwrap_or(ParseConfluenceEntriesOptions {
+        debug: false,
+        include_images: false,
+        include_jira_server_id: false,
+        update_from_confluence: false,
+    });
     confluence_service
-        .parse_confluence_entries(&config.confluence, &page_id, &options)
+        .parse_confluence_entries(Some(&app_handle), &config.confluence, &page_id, &options)
         .await
         .map_err(|e| e.to_string())
 }

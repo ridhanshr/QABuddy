@@ -100,9 +100,15 @@ mod tests {
         let mut chunk_text: Option<String> = None;
         match confluence
             .parse_confluence_entries(
+                None,
                 &config.confluence,
                 &config.confluence.target_page_id,
-                &ParseConfluenceEntriesOptions { debug: false },
+                &ParseConfluenceEntriesOptions {
+                    debug: false,
+                    include_images: false,
+                    include_jira_server_id: false,
+                    update_from_confluence: false,
+                },
             )
             .await
         {

@@ -8,6 +8,7 @@ export default function DocumentationSync() {
     activeView,
     loading,
     confParseStatus,
+    confParseProgress,
     confTab,
     setConfTab,
     syncConfluence,
@@ -32,9 +33,11 @@ export default function DocumentationSync() {
     config,
     setConfig,
     parseConfPageEntries,
+    loadConfPageAttachments,
     loadConfPagePreview,
     previewConfluenceSync,
     confPageLoading,
+    confAttachmentHydrating,
     confPreviewLoading,
     confPagePreview,
     confSyncPreview,
@@ -45,6 +48,11 @@ export default function DocumentationSync() {
     confPushingSteps,
     loggedInUser,
   } = useApp();
+
+  const hasDeferredAttachments = useMemo(
+    () => confEntries.some((entry) => (entry.screenCaptureFilenames?.length || 0) > 0 && (entry.images?.length || 0) === 0),
+    [confEntries]
+  );
 
   // ── Import Test Execution modal state ────────────────────────────────
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -228,6 +236,7 @@ export default function DocumentationSync() {
   };
 
   const renderEntryCard = (item: any, globalIndex: number) => {
+    const hasDeferredEntryImages = (item.screenCaptureFilenames?.length || 0) > 0 && (item.images?.length || 0) === 0;
     return (
       <div
         key={item.id}
@@ -306,13 +315,34 @@ export default function DocumentationSync() {
         <div className="field-group" style={{ marginTop: 24 }}>
           <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Screen Capture (Paste images, drag files, or click to attach)</label>
           <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 6, marginBottom: 10 }}>Urutan attachment disimpan eksplisit. Drag-and-drop kartu untuk mengubah urutan sebelum sync.</p>
-          <div onPaste={(e) => handleImagePaste(item.id, e)} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files.length > 0) handleConfFileDrop(item.id, e.dataTransfer.files); }} style={{ minHeight: 120, border: '2px dashed var(--outline-variant)', borderRadius: 12, padding: 20, display: 'flex', flexWrap: 'wrap', gap: 12, background: 'var(--surface-container-lowest)', cursor: 'text', alignItems: item.images.length === 0 ? 'center' : 'flex-start', justifyContent: item.images.length === 0 ? 'center' : 'flex-start', transition: 'border-color 0.2s, background 0.2s' }}>
-            {item.images.length === 0 && (
+          <div onPaste={(e) => handleImagePaste(item.id, e)} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer.files.length > 0) handleConfFileDrop(item.id, e.dataTransfer.files); }} style={{ minHeight: 120, border: '2px dashed var(--outline-variant)', borderRadius: 12, padding: 20, display: 'flex', flexWrap: 'wrap', gap: 12, background: 'var(--surface-container-lowest)', cursor: 'text', alignItems: item.images.length === 0 && !hasDeferredEntryImages ? 'center' : 'flex-start', justifyContent: item.images.length === 0 && !hasDeferredEntryImages ? 'center' : 'flex-start', transition: 'border-color 0.2s, background 0.2s' }}>
+            {item.images.length === 0 && !hasDeferredEntryImages && (
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--on-surface-variant)', pointerEvents: 'none' }}>
                 <span className="material-symbols" style={{ fontSize: 32, marginBottom: 8, color: 'var(--primary)' }}>add_photo_alternate</span>
                 <p style={{ fontSize: 13, fontWeight: 500, margin: 0 }}>Paste images, drag files, or click to attach</p>
                 <p style={{ fontSize: 11, color: 'var(--on-surface-variant)', marginTop: 4, opacity: 0.8 }}>Supports PNG, JPG, PDF, and document files</p>
               </div>
+            )}
+            {hasDeferredEntryImages && (
+              <>
+                {Array.from({ length: item.screenCaptureFilenames.length }).map((_, index) => (
+                  <div key={`loading-${item.id}-${index}`} style={{ width: 188, minHeight: 232, borderRadius: 8, border: '1px solid var(--outline-variant)', overflow: 'hidden', background: 'var(--surface-container)', boxShadow: 'var(--shadow-sm)', display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', background: 'var(--surface-container-high)', borderBottom: '1px solid var(--outline-variant)' }}>
+                      <span className={`material-symbols ${confAttachmentHydrating ? 'spin' : ''}`} style={{ fontSize: 14, color: 'var(--primary)' }}>progress_activity</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, background: 'var(--primary)', color: 'white', borderRadius: 4, padding: '1px 6px' }}>#{index + 1}</span>
+                      <span style={{ fontSize: 11, color: 'var(--on-surface-variant)' }}>Loading image...</span>
+                    </div>
+                    <div style={{ height: 118, background: 'linear-gradient(90deg, var(--surface-container) 25%, var(--surface-container-high) 50%, var(--surface-container) 75%)', backgroundSize: '200% 100%', animation: 'progressSlide 1.2s ease-in-out infinite' }} />
+                    <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ height: 28, borderRadius: 6, background: 'var(--surface-container-high)' }} />
+                      <div style={{ height: 44, borderRadius: 6, background: 'var(--surface-container-high)' }} />
+                      <div style={{ fontSize: 11, color: 'var(--on-surface-variant)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {item.screenCaptureFilenames[index] || `Attachment ${index + 1}`}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </>
             )}
             {normalizeConfAttachments(item.images).map((img: ConfAttachment) => {
               const isImage = img.data.startsWith("data:image/");
@@ -372,10 +402,34 @@ export default function DocumentationSync() {
       <div style={{ marginBottom: 32 }}>
         <h2 className="text-display">Test Evidence Management</h2>
         <p className="text-body-lg">Sync your testing documentation directly to Confluence pages.</p>
+        {confParseProgress && (
+          <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 12, border: `1px solid ${confParseProgress.stage === "error" ? "var(--error)" : "var(--outline-variant)"}`, background: confParseProgress.stage === "error" ? "color-mix(in srgb, var(--error) 8%, var(--surface))" : "var(--surface-container-low)", color: "var(--on-surface)", display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{confParseProgress.message}</div>
+              <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
+                {confParseProgress.total > 0 ? `${confParseProgress.current} / ${confParseProgress.total}` : "—"}
+              </div>
+            </div>
+            {confParseProgress.detail && (
+              <div style={{ fontSize: 12, color: "var(--on-surface-variant)", lineHeight: 1.5 }}>
+                {confParseProgress.detail}
+              </div>
+            )}
+          </div>
+        )}
+
         {confParseStatus && (
           <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 12, border: `1px solid ${confParseStatus.contentLoaded ? "var(--outline-variant)" : "var(--error)"}`, background: confParseStatus.contentLoaded ? "var(--surface-container-low)" : "color-mix(in srgb, var(--error) 8%, var(--surface))", color: "var(--on-surface)", display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ fontSize: 13, fontWeight: 700 }}>{confParseStatus.contentLoaded ? `Page ${confParseStatus.pageId} berhasil dibaca${confParseStatus.pageTitle ? `: ${confParseStatus.pageTitle}` : ""}` : `Page ${confParseStatus.pageId} tidak terambil`}</div>
             <div style={{ fontSize: 12, color: "var(--on-surface-variant)", lineHeight: 1.5 }}>{confParseStatus.contentLoaded ? `${confParseStatus.entries.length} entry terdeteksi dari page ini${confParseStatus.jiraServerId ? `, Jira Server ID: ${confParseStatus.jiraServerId}` : ""}.` : `Content tidak bisa diambil${confParseStatus.error ? `, error: ${confParseStatus.error}` : ""}.`}</div>
+            {confParseStatus.contentLoaded && hasDeferredAttachments && !confAttachmentHydrating && (
+              <div style={{ marginTop: 8 }}>
+                <button className="secondary-button" onClick={() => void loadConfPageAttachments()} disabled={confPageLoading} type="button" style={{ padding: "6px 12px", borderRadius: 8, fontSize: 12 }}>
+                  <span className="material-symbols" style={{ fontSize: 16, marginRight: 6 }}>imagesmode</span>
+                  {confPageLoading ? "Loading..." : "Load Existing Attachments"}
+                </button>
+              </div>
+            )}
           </div>
         )}
         <div className="doc-sync-tabs">

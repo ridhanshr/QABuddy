@@ -36,6 +36,27 @@ pub struct ConfluencePreviewResult {
 pub struct ParseConfluenceEntriesOptions {
     #[serde(default)]
     pub debug: bool,
+    #[serde(default)]
+    pub include_images: bool,
+    #[serde(default)]
+    pub include_jira_server_id: bool,
+    /// Parse in "Update from Confluence" mode (mirrors Electron
+    /// `parseConfluenceEntries(pageId, { updateFromConfluence: true })`):
+    /// keeps the raw scenario (with its Jira issue key) instead of enriching
+    /// it from the rendered view content.
+    #[serde(default)]
+    pub update_from_confluence: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfluenceParseProgress {
+    pub stage: String,
+    pub message: String,
+    pub current: usize,
+    pub total: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
