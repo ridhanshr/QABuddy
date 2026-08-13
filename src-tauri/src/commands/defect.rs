@@ -36,40 +36,56 @@ fn extract_project_key_from_uqa_name(project_name: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn get_defect_sources(state: State<'_, AppState>) -> Result<Vec<JiraProjectSource>, String> {
+pub async fn get_defect_sources(
+    state: State<'_, AppState>,
+    username: String,
+    display_name: String,
+) -> Result<Vec<JiraProjectSource>, String> {
     let pool = state.db_pool.lock().await
         .as_ref()
         .ok_or("Database tidak tersedia")?
         .clone();
 
-    let rows = sqlx::query("SELECT DISTINCT project_name FROM uqa_project WHERE project_name IS NOT NULL AND project_name != ''")
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| format!("Gagal fetch uqa_project: {e}"))?;
+    // Filter by the logged-in user (same logic as get_my_uqa_projects)
+    let name_a = if display_name.is_empty() { username.clone() } else { display_name.clone() };
+    let like_username = format!("%{}%", username);
+    let like_name_a = format!("%{}%", name_a);
 
-    let mut seen_keys = std::collections::HashSet::new();
+    let rows = sqlx::query(
+        r#"
+        SELECT uqa_key, project_name
+        FROM uqa_project
+        WHERE project_name IS NOT NULL AND project_name != ''
+          AND (
+            assignee LIKE ? OR assignee LIKE ?
+            OR product_tester LIKE ? OR product_tester LIKE ?
+          )
+        ORDER BY project_name ASC
+        "#,
+    )
+    .bind(&like_username)
+    .bind(&like_name_a)
+    .bind(&like_username)
+    .bind(&like_name_a)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal fetch uqa_project: {e}"))?;
+
     let mut sources: Vec<JiraProjectSource> = Vec::new();
 
     for row in rows {
         use sqlx::Row;
+        let uqa_key: String = row.get("uqa_key");
         let project_name: String = row.get("project_name");
         if let Some(project_key) = extract_project_key_from_uqa_name(&project_name) {
-            let key_upper = project_key.to_uppercase();
-            if seen_keys.contains(&key_upper) {
-                continue;
-            }
-            seen_keys.insert(key_upper);
-            // Display name: "<PROJECT_KEY> - <description after second dash>"
+            // Display name: "<UQA_KEY> · <PROJECT_KEY> - <description>"
             let parts: Vec<&str> = project_name.splitn(3, " - ").collect();
-            let display_name = if parts.len() >= 3 {
-                format!("{} - {}", project_key, parts[2].trim())
-            } else {
-                project_key.clone()
-            };
+            let description = if parts.len() >= 3 { parts[2].trim() } else { project_name.as_str() };
+            let display_name_str = format!("{} · {} - {}", uqa_key, project_key, description);
             sources.push(JiraProjectSource {
-                id: format!("auto-{}", project_key.to_lowercase()),
+                id: format!("auto-{}", uqa_key.to_lowercase()),
                 project_key,
-                project_name: display_name,
+                project_name: display_name_str,
                 is_active: true,
                 last_synced_at: None,
                 auto_sync_enabled: Some(false),
@@ -84,7 +100,6 @@ pub async fn get_defect_sources(state: State<'_, AppState>) -> Result<Vec<JiraPr
         }
     }
 
-    sources.sort_by(|a, b| a.project_key.cmp(&b.project_key));
     Ok(sources)
 }
 

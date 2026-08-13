@@ -337,7 +337,7 @@ const api = {
     cmd<void>("update_per_uqa_reminder", { issueKey, reminder }),
 
   // ── Defect Repository ────────────────────────────────────────────────
-  getDefectSources: () => cmd<JiraProjectSource[]>("get_defect_sources"),
+  getDefectSources: (username: string, displayName: string) => cmd<JiraProjectSource[]>("get_defect_sources", { username, displayName }),
   saveDefectSource: (source: JiraProjectSource) =>
     cmd<JiraProjectSource[]>("save_defect_source", { source }),
   deleteDefectSource: (id: string) => cmd<JiraProjectSource[]>("delete_defect_source", { id }),

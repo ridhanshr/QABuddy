@@ -869,12 +869,12 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
   const loadDefectSources = useCallback(async () => {
     try {
-      const sources = await window.qaBuddy.getDefectSources();
+      const sources = await window.qaBuddy.getDefectSources(loggedInUser, jiraDisplayName);
       setDefectSources(sources);
     } catch {
       // ignore
     }
-  }, []);
+  }, [loggedInUser, jiraDisplayName]);
 
   const loadDefectStats = useCallback(async () => {
     try {

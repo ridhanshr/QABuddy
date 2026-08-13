@@ -629,7 +629,7 @@ export interface DesktopApi {
   syncUqaIssues: () => Promise<UqaIssue[]>;
   onUqaSyncProgress: (callback: (progress: UqaSyncProgress) => void) => () => void;
   // Defect Repository
-  getDefectSources: () => Promise<JiraProjectSource[]>;
+  getDefectSources: (username: string, displayName: string) => Promise<JiraProjectSource[]>;
   saveDefectSource: (source: JiraProjectSource) => Promise<JiraProjectSource[]>;
   deleteDefectSource: (id: string) => Promise<JiraProjectSource[]>;
   syncDefectSource: (projectKey: string) => Promise<{ indexed: number; skipped: number }>;
