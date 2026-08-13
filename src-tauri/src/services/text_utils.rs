@@ -133,16 +133,33 @@ fn clean_trailing(s: &str) -> String {
 }
 
 /// Return the substring spanning the first `open` to its matching `close`.
+/// Tracks string literals (including `\"` escapes) so braces inside JSON
+/// string values don't break the depth counting.
 fn match_braces(s: &str, open: char, close: char) -> Option<String> {
     let first = s.find(open)?;
     let mut depth = 0i32;
     let bytes = s.as_bytes();
     let mut idx = first;
+    let mut in_string = false;
+    let mut escaped = false;
     while idx < s.len() {
-        let ch = bytes[idx] as char;
-        if ch == open {
+        let b = bytes[idx];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            idx += 1;
+            continue;
+        }
+        if b == b'"' {
+            in_string = true;
+        } else if b as char == open {
             depth += 1;
-        } else if ch == close {
+        } else if b as char == close {
             depth -= 1;
             if depth == 0 {
                 return Some(s[first..=idx].to_string());
@@ -398,6 +415,23 @@ mod tests {
     fn extract_json_block_with_prose() {
         let v = extract_json_block("Here is the result: {\"b\":3} done.").unwrap();
         assert_eq!(v["b"], 3);
+    }
+
+    #[test]
+    fn extract_json_block_ignores_braces_inside_strings() {
+        // A scenario whose string values contain JSON-like braces must not
+        // break the greedy outer-object matching.
+        let raw = r#"Some notes: {"scenarios":[{"scenario":"Return body {\"code\":400}","confidence":90,"reason":"r","scenarioType":"Negative","riskLevel":"High","preconditions":[],"steps":[{"step":1,"action":"Post {\"x\":1}","expected":"HTTP 400"}]}]}"#;
+        let v = extract_json_block(raw).unwrap();
+        let arr = v["scenarios"].as_array().unwrap();
+        assert_eq!(arr[0]["scenario"].as_str().unwrap(), "Return body {\"code\":400}");
+    }
+
+    #[test]
+    fn match_braces_skips_braces_in_quoted_strings() {
+        let s = r#"{"a":"text with {brace} and } close","b":1}"#;
+        let slice = match_braces(s, '{', '}').unwrap();
+        assert_eq!(slice, s);
     }
 
     #[test]

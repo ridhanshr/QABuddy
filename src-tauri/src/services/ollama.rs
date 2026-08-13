@@ -301,14 +301,15 @@ impl OllamaService {
     }
 
     pub async fn client_for(&self, endpoint: &str, model: &str) -> OllamaClient {
-        let guard = self.state.lock().await;
+        let fresh = OllamaClient::new(endpoint, model);
+        let mut guard = self.state.lock().await;
         if let Some(c) = guard.as_ref() {
-            if !endpoint.is_empty() || !model.is_empty() {
+            if c.endpoint() == fresh.endpoint() && c.model() == fresh.model() {
                 return c.clone();
             }
         }
-        drop(guard);
-        OllamaClient::new(endpoint, model)
+        *guard = Some(fresh.clone());
+        fresh
     }
 
     fn model_or(config: &OllamaConfig, override_name: Option<&str>, fallback: &str) -> String {

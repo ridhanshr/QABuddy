@@ -604,7 +604,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
                 updates.model = models[0];
               }
               // Also fix specialized models if they reference a non-existent model
-              for (const key of ["jqlModel", "chatModel", "extractionModel", "insightModel", "diffModel", "defectEmbeddingModel", "defectExplanationModel"] as const) {
+              for (const key of ["jqlModel", "chatModel", "extractionModel", "insightModel", "defectEmbeddingModel", "defectExplanationModel"] as const) {
                 const val = config.ollama[key];
                 if (val && !models.includes(val)) {
                   updates[key] = "";

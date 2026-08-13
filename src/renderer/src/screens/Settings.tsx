@@ -528,21 +528,6 @@ export default function Settings() {
                       ))}
                     </select>
                   </label>
-                  <label>
-                    <span>Code Diff AI Model (Lightweight SLM)</span>
-                    <select
-                      onChange={(event) =>
-                        setConfig({ ...config, ollama: { ...config.ollama, diffModel: event.target.value } })
-                      }
-                      value={config.ollama.diffModel || ""}
-                      disabled={modelsLoading}
-                    >
-                      <option value="">Use recommended default</option>
-                      {ollamaModels.map((model) => (
-                        <option key={model} value={model}>{model}</option>
-                      ))}
-                    </select>
-                  </label>
                 </div>
                 <div className="bug-form-row-2col" style={{ marginTop: 8 }}>
                   <label>

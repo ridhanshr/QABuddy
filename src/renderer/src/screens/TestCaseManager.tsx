@@ -967,24 +967,16 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                             </div>
                           )}
 
-                          <table className="data-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                            <thead>
-                              <tr style={{ background: "var(--surface-container)", textAlign: "left" }}>
-                                <th style={{ padding: "6px 10px", width: 40 }}>Step</th>
-                                <th style={{ padding: "6px 10px" }}>Action</th>
-                                <th style={{ padding: "6px 10px" }}>Expected Result</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {sc.steps.map((st, sIdx) => (
-                                <tr key={sIdx} style={{ borderBottom: "1px solid var(--outline-variant)" }}>
-                                  <td style={{ padding: "6px 10px" }}>{st.step}</td>
-                                  <td style={{ padding: "6px 10px" }}>{st.action}</td>
-                                  <td style={{ padding: "6px 10px" }}>{st.expected}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                          {sc.steps.length > 0 && (
+                            <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginTop: 4 }}>
+                              <strong>Expected Result:</strong>
+                              <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+                                {sc.steps.map((st, sIdx) => (
+                                  <li key={sIdx}>{st.expected}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                         </div>
                       ))}
                   </div>

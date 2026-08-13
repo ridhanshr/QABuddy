@@ -71,7 +71,6 @@ export interface OllamaConfig {
   insightModel?: string;
   defectEmbeddingModel?: string;
   defectExplanationModel?: string;
-  diffModel?: string;
 }
 
 export interface BitbucketFileChange {
@@ -129,11 +128,7 @@ export interface BitbucketTestScenario {
 
 export interface BitbucketGenerateRequest {
   prUrlOrId: string;
-  projectKey?: string;
-  repoSlug?: string;
-  prId?: number;
   selectedFiles: string[];
-  modelOverride?: string;
   forceRefreshCache: boolean;
 }
 
@@ -1264,7 +1259,6 @@ export const ollamaConfigSchema = z.object({
   insightModel: z.string().optional(),
   defectEmbeddingModel: z.string().optional(),
   defectExplanationModel: z.string().optional(),
-  diffModel: z.string().optional(),
 });
 
 export const uqaConfigSchema = z.object({
@@ -1343,7 +1337,6 @@ export const defaultConfig: AppConfig = {
     chatModel: "",
     extractionModel: "",
     insightModel: "",
-    diffModel: "qwen2.5-coder:1.5b",
     defectEmbeddingModel: "embeddinggemma",
     defectExplanationModel: "",
   },
