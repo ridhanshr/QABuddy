@@ -203,11 +203,6 @@ export interface UqaSyncProgress {
   message?: string;
 }
 
-export interface AutoUqaGeneratedPayload {
-  notes: string;
-  suggestedActivity: string;
-}
-
 export interface AppConfig {
   jira: JiraConfig;
   confluence: ConfluenceConfig;
