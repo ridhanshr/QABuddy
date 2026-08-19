@@ -34,6 +34,7 @@ interface QuickUpdateDialogProps {
 function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogProps) {
   const { config, setConfig } = useApp();
   const [activity, setActivity] = useState("");
+  const [phase, setPhase] = useState<"SIT" | "UAT" | "DT">("SIT");
   const [submitting, setSubmitting] = useState(false);
   const [transitions, setTransitions] = useState<UqaTransition[]>([]);
   const [selectedTransition, setSelectedTransition] = useState("");
@@ -87,8 +88,9 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
     setMessage(null);
     try {
       const today = new Date().toISOString().slice(0, 10);
-      await window.qaBuddy.appendUqaEntry(issue.issueKey, today, activity.trim());
-      setEntries((prev) => [...prev, { date: today, activity: activity.trim() }]);
+      // Date=today, Activity=phase (SIT/UAT/DT), Notes=user's activity text
+      await window.qaBuddy.appendUqaEntry(issue.issueKey, today, phase, activity.trim());
+      setEntries((prev) => [...prev, { date: today, activity: `${phase}: ${activity.trim()}` }]);
       setActivity("");
       setMessage({ type: "success", text: "Aktivitas berhasil dicatat!" });
       onSubmitted(issue.issueKey);
@@ -97,7 +99,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
     } finally {
       setSubmitting(false);
     }
-  }, [activity, issue.issueKey, onSubmitted]);
+  }, [activity, phase, issue.issueKey, onSubmitted]);
 
   const handleTransition = useCallback(async () => {
     if (!selectedTransition) return;
@@ -492,6 +494,28 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
               <span>Aktivitas Hari Ini (Manual)</span>
             </div>
             <div className="uqa-section-body">
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <label style={{ fontSize: 13, fontWeight: 600, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>
+                  Fase:
+                </label>
+                {(["SIT", "UAT", "DT"] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPhase(p)}
+                    disabled={submitting}
+                    style={{
+                      padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      border: `1px solid ${phase === p ? "var(--primary)" : "var(--outline-variant)"}`,
+                      background: phase === p ? "var(--primary)" : "transparent",
+                      color: phase === p ? "var(--on-primary)" : "var(--on-surface-variant)",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
               <textarea
                 className="input uqa-textarea"
                 value={activity}

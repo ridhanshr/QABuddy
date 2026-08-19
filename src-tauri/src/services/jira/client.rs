@@ -333,26 +333,47 @@ impl JiraClient {
     }
 
     /// Append a wiki-format row to an issue's description.
-    pub async fn append_to_description(&self, issue_key: &str, row: &str) -> Result<()> {
+    /// Append a 3-column (Date/Activity/Notes) wiki row. Always uses 3-column format.
+    /// If existing description uses the old 2-column header, it is upgraded automatically.
+    pub async fn append_to_description(
+        &self,
+        issue_key: &str,
+        date: &str,
+        activity: &str,
+        notes: &str,
+    ) -> Result<()> {
+        let row = format!("|{}|{}|{}|", date, activity, notes);
         let detail = self
             .get_issue_detail(issue_key)
             .await?
             .ok_or_else(|| ServiceError::NotFound(format!("Issue {issue_key} not found")))?;
         let existing = &detail["description"];
-        let new_description = if let Some(s) = existing.as_str() {
-            format!("{}\n{}", s.trim_end(), row)
+        let existing_text = if let Some(s) = existing.as_str() {
+            s.trim_end().to_string()
         } else if existing.is_object() {
-            let plain = adf_to_plain_text(existing);
-            format!("{}\n{}", plain.trim_end(), row)
+            adf_to_plain_text(existing).trim_end().to_string()
         } else {
-            format!("||Date||Activity||\n{row}")
+            String::new()
+        };
+        let new_description = if existing_text.is_empty() {
+            format!("||Date||Activity||Notes||\n{row}")
+        } else if existing_text.contains("||Date||Activity||Notes||") {
+            // Header already 3-column — just append the row
+            format!("{}\n{}", existing_text, row)
+        } else if existing_text.contains("||Date||Activity||") {
+            // Upgrade old 2-column header to 3-column exactly once
+            let upgraded = existing_text.replacen("||Date||Activity||", "||Date||Activity||Notes||", 1);
+            format!("{}\n{}", upgraded, row)
+        } else {
+            // No recognised header — prepend one and append row
+            format!("||Date||Activity||Notes||\n{}\n{}", existing_text, row)
         };
         let body = serde_json::json!({ "fields": { "description": new_description } });
         let path = format!("/issue/{issue_key}");
         self.api.put_json_void(&path, &body).await
     }
 
-    /// Append a 3-column (Date/Activity/Notes) wiki row.
+    /// Append a 3-column (Date/Activity/Notes) wiki row (alias kept for auto-generate path).
     pub async fn append_to_description_with_notes(
         &self,
         issue_key: &str,
@@ -360,23 +381,7 @@ impl JiraClient {
         activity: &str,
         notes: &str,
     ) -> Result<()> {
-        let row = format!("|{date}|{activity}|{notes}|");
-        let detail = self
-            .get_issue_detail(issue_key)
-            .await?
-            .ok_or_else(|| ServiceError::NotFound(format!("Issue {issue_key} not found")))?;
-        let existing = &detail["description"];
-        let new_description = if let Some(s) = existing.as_str() {
-            format!("{}\n{}", s.trim_end(), row)
-        } else if existing.is_object() {
-            let plain = adf_to_plain_text(existing);
-            format!("{}\n{}", plain.trim_end(), row)
-        } else {
-            format!("||Date||Activity||Notes||\n{row}")
-        };
-        let body = serde_json::json!({ "fields": { "description": new_description } });
-        let path = format!("/issue/{issue_key}");
-        self.api.put_json_void(&path, &body).await
+        self.append_to_description(issue_key, date, activity, notes).await
     }
 
     /// Fetch issue links, filtering for Test Execution type.

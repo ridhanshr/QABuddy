@@ -223,6 +223,7 @@ pub fn run() {
             commands::db::get_test_cases_by_te_key,
             commands::db::get_uqa_db_execution_summary,
             commands::db::update_test_case_run_status,
+            commands::db::update_test_execution_status,
             commands::db::get_test_case_titles,
             commands::db::login_user,
             commands::db::register_user,

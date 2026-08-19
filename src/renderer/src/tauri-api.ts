@@ -308,8 +308,8 @@ const api = {
   getUqaIssues: () => cmd<UqaIssue[]>("get_uqa_issues"),
   getUqaTransitions: (issueKey: string) =>
     cmd<UqaTransition[]>("get_uqa_transitions", { issueKey }),
-  appendUqaEntry: (issueKey: string, date: string, activity: string) =>
-    cmd<void>("append_uqa_entry", { issueKey, date, activity }),
+  appendUqaEntry: (issueKey: string, date: string, phase: string, activity: string) =>
+    cmd<void>("append_uqa_entry", { issueKey, date, phase, activity }),
   appendUqaEntryWithNotes: (issueKey: string, date: string, activity: string, notes: string) =>
     cmd<void>("append_uqa_entry_with_notes", { issueKey, date, activity, notes }),
   transitionUqaIssue: (issueKey: string, transitionId: string) =>
@@ -367,6 +367,7 @@ const api = {
   fetchTcDetailsBatch: (tcKeys: string[]) => cmd<FetchTestStepsResult[]>("fetch_tc_details_batch", { tcKeys }),
   updateTestRunStatus: (teKey: string, tcKey: string, status: string) => cmd<void>("update_test_run_status", { teKey, tcKey, status }),
   updateTestCaseRunStatus: (tcKey: string, teJiraKey: string, testRunStatus: string, executedBy: string) => cmd<void>("update_test_case_run_status", { tcKey, teJiraKey, testRunStatus, executedBy }),
+  updateTestExecutionStatus: (teJiraKey: string, executionStatus: string) => cmd<void>("update_test_execution_status", { teJiraKey, executionStatus }),
   getTestCaseTitles: (tcKeys: string[]) => cmd<Record<string, string>>("get_test_case_titles", { tcKeys }),
 
   // ── OCR ──────────────────────────────────────────────────────────────

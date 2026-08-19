@@ -1066,6 +1066,27 @@ pub async fn update_test_case_run_status(
     Ok(())
 }
 
+/// Update execution_status and last_sync for a specific TE in the DB.
+#[tauri::command]
+pub async fn update_test_execution_status(
+    state: State<'_, AppState>,
+    te_jira_key: String,
+    execution_status: String,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    sqlx::query(
+        r#"UPDATE test_execution
+           SET execution_status = ?, last_sync = NOW()
+           WHERE te_jira_key = ?"#,
+    )
+    .bind(&execution_status)
+    .bind(&te_jira_key)
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal update execution_status: {e}"))?;
+    Ok(())
+}
+
 // ── User auth & token sync ────────────────────────────────────────────────────
 
 /// Update jira_api_token and confluence_api_token for a user after saving settings.

@@ -1346,10 +1346,10 @@ impl JiraService {
         issue_key: &str,
         date: &str,
         activity: &str,
+        notes: &str,
     ) -> Result<()> {
         let client = self.client(config)?;
-        let row = format!("|{date}|{activity}|");
-        client.append_to_description(issue_key, &row).await
+        client.append_to_description(issue_key, date, activity, notes).await
     }
 
     pub async fn append_uqa_entry_with_notes(
@@ -1361,9 +1361,7 @@ impl JiraService {
         notes: &str,
     ) -> Result<()> {
         let client = self.client(config)?;
-        client
-            .append_to_description_with_notes(issue_key, date, activity, notes)
-            .await
+        client.append_to_description(issue_key, date, activity, notes).await
     }
 
     pub async fn transition_uqa_issue(

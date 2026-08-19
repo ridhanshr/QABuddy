@@ -1,11 +1,15 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { MonitoringUqaProject, MonitoringTestExecution, MonitoringTestCase } from "@shared/types";
+
+const TE_STATUSES = ["TODO", "EXECUTING", "PASS", "FAIL", "ABORTED"] as const;
+const TC_STATUSES = ["TODO", "EXECUTING", "PASS", "FAIL", "ABORTED"] as const;
 
 function statusColor(status: string | null): string {
   if (!status) return "var(--on-surface-variant)";
   const s = status.toLowerCase();
   if (s === "pass" || s === "done" || s === "closed") return "var(--green, #2e7d32)";
   if (s === "fail" || s === "failed") return "var(--error)";
+  if (s === "aborted") return "var(--warning, #e65100)";
   if (s === "in progress" || s === "executing") return "var(--primary)";
   return "var(--on-surface-variant)";
 }
@@ -27,9 +31,98 @@ function StatusBadge({ status }: { status: string | null }) {
   );
 }
 
+interface StatusDropdownProps {
+  currentStatus: string | null;
+  options: readonly string[];
+  onSelect: (status: string) => Promise<void>;
+}
+
+function StatusDropdown({ currentStatus, options, onSelect }: StatusDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [localStatus, setLocalStatus] = useState(currentStatus);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setLocalStatus(currentStatus); }, [currentStatus]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  async function handleSelect(status: string) {
+    setOpen(false);
+    if (status === localStatus) return;
+    setLoading(true);
+    try {
+      await onSelect(status);
+      setLocalStatus(status);
+    } catch {
+      // keep old status on error
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        disabled={loading}
+        title="Ganti status"
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 4,
+          padding: "2px 6px 2px 2px", borderRadius: 12, border: "1px solid var(--outline-variant)",
+          background: "var(--surface-container-low)", cursor: "pointer",
+          fontSize: 12, color: "var(--on-surface)", transition: "all 0.15s",
+        }}
+      >
+        {loading
+          ? <span className="material-symbols spin" style={{ fontSize: 14 }}>progress_activity</span>
+          : <><StatusBadge status={localStatus} /><span className="material-symbols" style={{ fontSize: 14, color: "var(--on-surface-variant)" }}>expand_more</span></>
+        }
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 100,
+          background: "var(--surface-container)", border: "1px solid var(--outline-variant)",
+          borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.15)", minWidth: 140, overflow: "hidden",
+        }}>
+          {options.map(s => (
+            <button
+              key={s}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); void handleSelect(s); }}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 14px",
+                background: s === localStatus ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "transparent",
+                border: "none", cursor: "pointer", textAlign: "left", fontSize: 13,
+                color: s === localStatus ? "var(--primary)" : "var(--on-surface)",
+                fontWeight: s === localStatus ? 600 : 400,
+              }}
+            >
+              <span style={{
+                width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                background: statusColor(s),
+              }} />
+              {s}
+              {s === localStatus && <span className="material-symbols" style={{ fontSize: 14, marginLeft: "auto" }}>check</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
-  username: string;     // nomor pegawai, e.g. "00400291"
-  displayName: string;  // nama lengkap dari Jira, e.g. "Mirza Raevan Faisal"
+  username: string;
+  displayName: string;
 }
 
 export default function MonitoringScreen({ username, displayName }: Props) {
@@ -46,7 +139,6 @@ export default function MonitoringScreen({ username, displayName }: Props) {
   const [errorTC, setErrorTC] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
-    // Tunggu displayName tersedia — UQA project & test execution pakai displayName (nama lengkap)
     if (!displayName) return;
     setLoadingUqa(true);
     setLoadingTE(true);
@@ -83,7 +175,32 @@ export default function MonitoringScreen({ username, displayName }: Props) {
     } finally {
       setLoadingTC(false);
     }
-  }, [username, displayName]);
+  }, [username]);
+
+  async function handleChangeTeStatus(te: MonitoringTestExecution, newStatus: string) {
+    // Update Jira Xray (TE-level status tidak ada di Xray per TC, jadi cukup DB)
+    await window.qaBuddy.updateTestExecutionStatus(te.te_jira_key, newStatus);
+    setTestExecutions(prev =>
+      prev.map(t => t.te_jira_key === te.te_jira_key ? { ...t, execution_status: newStatus } : t)
+    );
+    if (selectedTE?.te_jira_key === te.te_jira_key) {
+      setSelectedTE(prev => prev ? { ...prev, execution_status: newStatus } : prev);
+    }
+  }
+
+  async function handleChangeTcStatus(tc: MonitoringTestCase, newStatus: string) {
+    // Update Xray API + DB
+    await Promise.all([
+      window.qaBuddy.updateTestRunStatus(tc.te_jira_key, tc.tc_key, newStatus),
+      window.qaBuddy.updateTestCaseRunStatus(tc.tc_key, tc.te_jira_key, newStatus, displayName),
+    ]);
+    setTestCases(prev =>
+      prev.map(t => t.tc_key === tc.tc_key && t.te_jira_key === tc.te_jira_key
+        ? { ...t, test_run_status: newStatus, executed_by: displayName }
+        : t
+      )
+    );
+  }
 
   const cell: React.CSSProperties = {
     padding: "10px 12px",
@@ -221,7 +338,13 @@ export default function MonitoringScreen({ username, displayName }: Props) {
                     </td>
                     <td style={cell}>{te.title || "—"}</td>
                     <td style={cell}><span style={{ fontFamily: "monospace", fontSize: 12 }}>{te.tp_jira_key || "—"}</span></td>
-                    <td style={cell}><StatusBadge status={te.execution_status} /></td>
+                    <td style={{ ...cell }} onClick={e => e.stopPropagation()}>
+                      <StatusDropdown
+                        currentStatus={te.execution_status}
+                        options={TE_STATUSES}
+                        onSelect={(s) => handleChangeTeStatus(te, s)}
+                      />
+                    </td>
                     <td style={cell}>{te.assignee || "—"}</td>
                     <td style={{ ...cell, fontSize: 12, color: "var(--on-surface-variant)" }}>{te.last_sync || "—"}</td>
                   </tr>
@@ -277,7 +400,13 @@ export default function MonitoringScreen({ username, displayName }: Props) {
                   <tr key={`${tc.tc_key}-${tc.te_jira_key}`} style={{ background: "var(--surface)" }}>
                     <td style={cell}><span style={{ fontFamily: "monospace", fontWeight: 600, color: "var(--tertiary)", fontSize: 12 }}>{tc.tc_key}</span></td>
                     <td style={{ ...cell, maxWidth: 300 }}>{tc.title || "—"}</td>
-                    <td style={cell}><StatusBadge status={tc.test_run_status} /></td>
+                    <td style={cell}>
+                      <StatusDropdown
+                        currentStatus={tc.test_run_status}
+                        options={TC_STATUSES}
+                        onSelect={(s) => handleChangeTcStatus(tc, s)}
+                      />
+                    </td>
                     <td style={cell}>{tc.executed_by || "—"}</td>
                     <td style={{ ...cell, fontSize: 12, color: "var(--on-surface-variant)" }}>{tc.executed_at || "—"}</td>
                   </tr>

@@ -232,6 +232,9 @@ export default function ProjectManagement() {
   const [selectedExecsForSync, setSelectedExecsForSync] = useState<Set<string>>(new Set());
   const [syncingExecs, setSyncingExecs] = useState(false);
   const [execSyncResult, setExecSyncResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  // Per-TE resync state (Synced to DB badge hover → re-sync)
+  const [execSyncingRows, setExecSyncingRows] = useState<Set<string>>(new Set());
+  const [execSyncedRows, setExecSyncedRows] = useState<Set<string>>(new Set());
   // Per-TE TC sync state
   const [syncingTcForExec, setSyncingTcForExec] = useState<Set<string>>(new Set());
   const [tcSyncResultForExec, setTcSyncResultForExec] = useState<Record<string, { ok: boolean; msg: string }>>({});
@@ -456,6 +459,25 @@ export default function ProjectManagement() {
       setPlanSyncingRows((prev) => { const s = new Set(prev); s.delete(plan.key); return s; });
     }
   }, [syncUqaKey, breadcrumb.projectKey, uqaItems]);
+
+  // ── Re-sync single TE row to DB ──
+  const handleResyncExecRow = useCallback(async (exec: { key: string; summary: string; status: string; assignee: string }) => {
+    setExecSyncingRows((prev) => new Set(prev).add(exec.key));
+    try {
+      await window.qaBuddy.saveTestExecutions([{
+        te_jira_key: exec.key,
+        title: exec.summary,
+        tp_jira_key: breadcrumb.planKey!,
+        assignee: exec.assignee || undefined,
+        execution_status: exec.status || undefined,
+      }]);
+      setExecsInDb((prev) => new Set(prev).add(exec.key));
+      setExecSyncedRows((prev) => new Set(prev).add(exec.key));
+      setTimeout(() => setExecSyncedRows((prev) => { const s = new Set(prev); s.delete(exec.key); return s; }), 2500);
+    } catch { /* silent */ } finally {
+      setExecSyncingRows((prev) => { const s = new Set(prev); s.delete(exec.key); return s; });
+    }
+  }, [breadcrumb.planKey]);
 
   // ── Sync selected Test Executions to DB ──
   const handleSyncExecs = useCallback(async () => {
@@ -1670,9 +1692,13 @@ export default function ProjectManagement() {
                                   <td style={{ padding: "10px 14px", minWidth: 220 }} onClick={(e) => e.stopPropagation()}>
                                     <ExecProgressBar exec={exec} />
                                   </td>
-                                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                                     {inDb ? (
-                                      <SyncedBadge />
+                                      <SyncedBadge
+                                        onClick={() => handleResyncExecRow({ key: exec.key, summary: exec.summary, status: exec.status, assignee: exec.assignee || "" })}
+                                        syncing={execSyncingRows.has(exec.key)}
+                                        justSynced={execSyncedRows.has(exec.key)}
+                                      />
                                     ) : (
                                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)", background: "var(--surface-container-high)", border: "1px solid var(--outline-variant)", borderRadius: 4, padding: "2px 8px" }}>
                                         <span className="material-symbols" style={{ fontSize: 13 }}>radio_button_unchecked</span>

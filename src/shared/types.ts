@@ -605,7 +605,7 @@ export interface DesktopApi {
   // UQA
   getUqaIssues: () => Promise<UqaIssue[]>;
   getUqaTransitions: (issueKey: string) => Promise<UqaTransition[]>;
-  appendUqaEntry: (issueKey: string, date: string, activity: string) => Promise<void>;
+  appendUqaEntry: (issueKey: string, date: string, phase: string, activity: string) => Promise<void>;
   appendUqaEntryWithNotes: (issueKey: string, date: string, activity: string, notes: string) => Promise<void>;
   transitionUqaIssue: (issueKey: string, transitionId: string) => Promise<void>;
   onUqaReminder: (callback: (issueKey: string, summary: string) => void) => () => void;
@@ -648,6 +648,7 @@ export interface DesktopApi {
   fetchTcDetailsBatch: (tcKeys: string[]) => Promise<FetchTestStepsResult[]>;
   updateTestRunStatus: (teKey: string, tcKey: string, status: string) => Promise<void>;
   updateTestCaseRunStatus: (tcKey: string, teJiraKey: string, testRunStatus: string, executedBy: string) => Promise<void>;
+  updateTestExecutionStatus: (teJiraKey: string, executionStatus: string) => Promise<void>;
   getTestCaseTitles: (tcKeys: string[]) => Promise<Record<string, string>>;
   // BRD / Test Management
   generateTestCasesFromBRD: (request: BRDGenerationRequest) => Promise<BRDGenerationResult>;

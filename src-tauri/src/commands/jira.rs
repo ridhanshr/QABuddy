@@ -442,10 +442,17 @@ pub async fn get_uqa_transitions(state: State<'_, AppState>, issue_key: String) 
 }
 
 #[tauri::command]
-pub async fn append_uqa_entry(state: State<'_, AppState>, issue_key: String, date: String, activity: String) -> Result<(), String> {
+pub async fn append_uqa_entry(
+    state: State<'_, AppState>,
+    issue_key: String,
+    date: String,
+    phase: String,
+    activity: String,
+) -> Result<(), String> {
     let config = load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
-    jira_service.append_uqa_entry(&config.jira, &issue_key, &date, &activity).await.map_err(|e| e.to_string())
+    // Date=date, Activity column=phase (SIT/UAT/DT), Notes column=user's activity text
+    jira_service.append_uqa_entry(&config.jira, &issue_key, &date, &phase, &activity).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

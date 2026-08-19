@@ -386,8 +386,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Epic Progress + Quick Actions */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 24 }}>
+      {/* Epic Progress + Ready for QA */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 24, marginBottom: 24, alignItems: "stretch" }}>
+        {/* Epic Progress */}
         <div className="card" style={{ padding: 24 }}>
             {dashboardLoading ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -443,53 +444,25 @@ export default function Dashboard() {
         )}
         </div>
 
+        {/* Ready for QA */}
         <div className="card" style={{ padding: 24 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Quick Actions</h4>
-            <span className="material-symbols" style={{ fontSize: 24, color: "var(--primary)" }}>bolt</span>
+            <div>
+              <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Ready for QA</h4>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>Tickets awaiting verification in the active sprint.{activeProjectTab !== "all" ? ` (${activeProjectTab})` : ""}</p>
+            </div>
+            <div className="search-box">
+              <span className="material-symbols">search</span>
+              <input
+                onChange={(event) => setTicketSearch(event.target.value)}
+                placeholder="Search tickets..."
+                type="text"
+                value={ticketSearch}
+              />
+            </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            {[
-              { label: "Add Defect", icon: "bug_report", color: "var(--error)", onClick: () => setActiveView("defect-repository") },
-              { label: "Chat Assistant", icon: "chat_spark", color: "var(--severity-epic)", onClick: () => setActiveView("chat-assistant") },
-              { label: "Sync Docs", icon: "description", color: "var(--info)", onClick: () => setActiveView("documentation-sync") },
-              { label: "Extract Test Cases", icon: "terminal", color: "var(--tertiary)", onClick: () => setActiveView("manual-test-case") },
-            ].map((action) => (
-              <button
-                key={action.label}
-                onClick={action.onClick}
-                type="button"
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 10, border: "1px solid var(--outline-variant)", background: "var(--surface-container-low)", cursor: "pointer", color: "var(--on-surface)", fontSize: 13, fontWeight: 500, textAlign: "left", transition: "all 0.15s" }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = action.color; (e.currentTarget as HTMLElement).style.background = "var(--surface-container-high)" }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--outline-variant)"; (e.currentTarget as HTMLElement).style.background = "var(--surface-container-low)" }}
-              >
-                <span className="material-symbols" style={{ fontSize: 22, color: action.color }}>{action.icon}</span>
-                {action.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
 
-      {/* Ready for QA Section */}
-      <div className="dashboard-section">
-        <div className="section-header-row">
-          <div>
-            <h3 className="section-title">Ready for QA</h3>
-            <p className="section-subtitle">Tickets awaiting verification in the active sprint.{activeProjectTab !== "all" ? ` (${activeProjectTab})` : ""}</p>
-          </div>
-          <div className="search-box">
-            <span className="material-symbols">search</span>
-            <input
-              onChange={(event) => setTicketSearch(event.target.value)}
-              placeholder="Search tickets..."
-              type="text"
-              value={ticketSearch}
-            />
-          </div>
-        </div>
-
-        <div className="data-card">
+        <div className="data-card" style={{ margin: 0 }}>
           <table className="data-table">
             <thead>
               <tr>
@@ -626,6 +599,7 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+        </div>
         </div>
       </div>
 
