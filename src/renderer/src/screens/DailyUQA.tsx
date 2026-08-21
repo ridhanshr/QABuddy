@@ -38,7 +38,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
   const [submitting, setSubmitting] = useState(false);
   const [transitions, setTransitions] = useState<UqaTransition[]>([]);
   const [selectedTransition, setSelectedTransition] = useState("");
-  const [transitionsLoading, setTransitionsLoading] = useState(false);
+  const [transitionsLoading, setTransitionsLoading] = useState(true);
   const [transitioning, setTransitioning] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [entries, setEntries] = useState<UqaEntry[]>(issue.entries || []);
@@ -107,6 +107,13 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
     setMessage(null);
     try {
       await window.qaBuddy.transitionUqaIssue(issue.issueKey, selectedTransition);
+      // Resolve the target status name from the selected transition
+      const targetTransition = transitions.find((t) => t.id === selectedTransition);
+      const newStatus = targetTransition?.toStatus || targetTransition?.name || "";
+      // Update DB — fire and forget, don't block UX on DB failure
+      if (newStatus) {
+        window.qaBuddy.updateUqaProjectStatus(issue.issueKey, newStatus).catch(() => {});
+      }
       setMessage({ type: "success", text: "Status berhasil diupdate!" });
       onSubmitted(issue.issueKey);
     } catch (err: any) {
@@ -114,7 +121,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
     } finally {
       setTransitioning(false);
     }
-  }, [selectedTransition, issue.issueKey, onSubmitted]);
+  }, [selectedTransition, transitions, issue.issueKey, onSubmitted]);
 
   const handleAutoGenerate = useCallback(async () => {
     setAutoLoading(true);
@@ -332,19 +339,28 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
           </div>
 
           {/* Section 2: Transition */}
-          {transitions.length > 0 && (
-            <div className="uqa-section-card uqa-section-card-compact">
-              <div className="uqa-section-header">
-                <span className="material-symbols">swap_horiz</span>
-                <span>Transition</span>
-              </div>
-              <div className="uqa-section-body">
+          <div className="uqa-section-card uqa-section-card-compact">
+            <div className="uqa-section-header">
+              <span className="material-symbols">swap_horiz</span>
+              <span>Transition</span>
+            </div>
+            <div className="uqa-section-body">
+              {transitionsLoading ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--on-surface-variant)" }}>
+                  <span className="material-symbols spin" style={{ fontSize: 16 }}>progress_activity</span>
+                  Memuat transisi...
+                </div>
+              ) : transitions.length === 0 ? (
+                <div style={{ fontSize: 13, color: "var(--on-surface-variant)", fontStyle: "italic" }}>
+                  Tidak ada transisi yang tersedia.
+                </div>
+              ) : (
                 <div className="uqa-transition-row">
                   <select
                     className="input"
                     value={selectedTransition}
                     onChange={(e) => setSelectedTransition(e.target.value)}
-                    disabled={transitionsLoading || transitioning}
+                    disabled={transitioning}
                   >
                     <option value="">→ Pilih status...</option>
                     {transitions.map((t) => (
@@ -360,9 +376,9 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
                     {transitioning ? "..." : "Apply"}
                   </button>
                 </div>
-              </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* Section 3: Recent Activity */}
           <div className="uqa-section-card">

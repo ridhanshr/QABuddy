@@ -232,6 +232,7 @@ export interface JiraIssueSummary {
   status: string;
   priority: string;
   assignee: string;
+  reporter: string;
   type: string;
   url: string;
 }
@@ -542,7 +543,7 @@ export interface DesktopApi {
   onUpdateStatusPushed: (callback: (info: UpdateInfo) => void) => () => void;
   testConnections: () => Promise<ConnectionStatus>;
   healthcheck: () => Promise<any>;
-  getDashboard: (options?: { skipInsight?: boolean }) => Promise<DashboardDigest>;
+  getDashboard: (options?: { skipInsight?: boolean; readyForQaIssueType?: string }) => Promise<DashboardDigest>;
   getProjectInsight: (request: ProjectInsightRequest) => Promise<string>;
   askAssistant: (prompt: string, history?: ChatHistoryMessage[]) => Promise<ChatResponse>;
   polishBugReport: (draft: BugFormDraft) => Promise<BugPreview>;
@@ -608,6 +609,7 @@ export interface DesktopApi {
   appendUqaEntry: (issueKey: string, date: string, phase: string, activity: string) => Promise<void>;
   appendUqaEntryWithNotes: (issueKey: string, date: string, activity: string, notes: string) => Promise<void>;
   transitionUqaIssue: (issueKey: string, transitionId: string) => Promise<void>;
+  updateUqaProjectStatus: (uqaKey: string, status: string) => Promise<void>;
   onUqaReminder: (callback: (issueKey: string, summary: string) => void) => () => void;
   checkUqaOnStartup: () => Promise<UqaIssue[]>;
   cancelRequest: (requestId: string) => void;
@@ -643,6 +645,7 @@ export interface DesktopApi {
   updateUserTokens: (pn: string, jiraApiToken: string, confluenceApiToken: string) => Promise<void>;
   getMyUqaProjects: (username: string, displayName: string) => Promise<MonitoringUqaProject[]>;
   getMyTestExecutions: (username: string, displayName: string) => Promise<MonitoringTestExecution[]>;
+  getTeByProjectPrefix: (projectPrefix: string) => Promise<MonitoringTestExecution[]>;
   getMyTestCasesByExecution: (teJiraKey: string, username: string) => Promise<MonitoringTestCase[]>;
   getTestCasesByTeKey: (teJiraKey: string) => Promise<MonitoringTestCase[]>;
   fetchTcDetailsBatch: (tcKeys: string[]) => Promise<FetchTestStepsResult[]>;
@@ -767,13 +770,8 @@ export interface SaveTestPlanInput {
 export interface SaveTestCaseInput {
   tc_key: string;
   te_jira_key: string;
-  scenario?: string;
-  category?: string;
-  steps?: string;
-  expected_result?: string;
-  input_data?: string;
-  function_name?: string;
-  test_case_no?: string;
+  title?: string;
+  id_jira_repo?: string;
 }
 
 export interface JiraProject {

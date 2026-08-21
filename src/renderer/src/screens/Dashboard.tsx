@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
-import type { DashboardProjectConfig, DashboardProjectData, JiraIssueSummary, ProjectInsightRequest } from "@shared/types";
+import type { DashboardProjectConfig, DashboardProjectData, JiraIssueSummary, MonitoringUqaProject, ProjectInsightRequest } from "@shared/types";
 
 import jiraIcon from "../assets/jira.png";
 import confluenceIcon from "../assets/confluence.png";
@@ -36,11 +36,28 @@ export default function Dashboard() {
     dashboardProjects,
     setDashboardProjects,
     saveDashboardConfig,
+    jiraDisplayName,
+    loggedInUser,
+    setDashboard,
+    setDashboardLoading,
   } = useApp();
+
+  const READY_FOR_QA_ISSUE_TYPES = ["Bug", "Test Execution", "Test Plan", "Task", "Epic"] as const;
+  type ReadyForQaIssueType = typeof READY_FOR_QA_ISSUE_TYPES[number];
 
   const [activeProjectTab, setActiveProjectTab] = useState<string>("all");
   const [projectPage, setProjectPage] = useState(1);
+  const [readyForQaIssueType, setReadyForQaIssueType] = useState<ReadyForQaIssueType>("Bug");
+  const [filterByMe, setFilterByMe] = useState(true);
   const projectRowsPerPage = 10;
+
+  // My UQA Projects card state
+  const [myUqaProjects, setMyUqaProjects] = useState<MonitoringUqaProject[]>([]);
+  const [myUqaLoading, setMyUqaLoading] = useState(false);
+  const [expandedUqaStatus, setExpandedUqaStatus] = useState<string | null>(null);
+
+  // Projects Status card state
+  const [expandedSdlcType, setExpandedSdlcType] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const insightCache = useRef<Map<string, string>>(new Map());
   const [projectInsight, setProjectInsight] = useState<string | null>(null);
@@ -59,6 +76,83 @@ export default function Dashboard() {
     }
     return () => { document.body.style.overflow = ""; };
   }, [showDashboardConfig]);
+
+  // Re-fetch Ready for QA when user explicitly changes issue type (skip on initial mount)
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    setDashboardLoading(true);
+    window.qaBuddy.getDashboard({ skipInsight: true, readyForQaIssueType })
+      .then((d) => { setDashboard(d); })
+      .catch(() => {})
+      .finally(() => { setDashboardLoading(false); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readyForQaIssueType]);
+
+  // Fetch my UQA projects for the status card
+  useEffect(() => {
+    if (!loggedInUser && !jiraDisplayName) return;
+    setMyUqaLoading(true);
+    window.qaBuddy.getMyUqaProjects(loggedInUser || "", jiraDisplayName || "")
+      .then((rows) => setMyUqaProjects(rows))
+      .catch(() => setMyUqaProjects([]))
+      .finally(() => setMyUqaLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loggedInUser, jiraDisplayName]);
+
+  // Group UQA projects by status
+  const uqaByStatus = myUqaProjects.reduce<Record<string, MonitoringUqaProject[]>>((acc, p) => {
+    const s = p.status || "Tanpa Status";
+    (acc[s] ||= []).push(p);
+    return acc;
+  }, {});
+  const STATUS_RANK = (s: string): number => {
+    const sl = s.toLowerCase();
+    if (sl.includes("queue"))   return 0;
+    if (sl.includes("in progress") || sl.includes("ongoing") || sl.includes("on going")) return 1;
+    if (sl.includes("under review") || sl.includes("review")) return 2;
+    if (sl.includes("done") && sl.includes("uat"))    return 3;
+    if (sl.includes("done") && sl.includes("deploy")) return 4;
+    if (sl.includes("done") && sl.includes("live"))   return 5;
+    if (sl.includes("cancel"))  return 6;
+    if (sl.includes("done") || sl.includes("selesai")) return 7;
+    return 99;
+  };
+  const uqaStatusOrder = Object.keys(uqaByStatus).sort((a, b) => STATUS_RANK(a) - STATUS_RANK(b));
+
+  // Group all UQA projects by SDLC type (segment after first " - " in project_name)
+  const SDLC_ORDER = ["NCM", "NCM OPS", "ECM", "Support"];
+  const extractSdlcType = (projectName: string | null): string => {
+    if (!projectName) return "Lainnya";
+    const afterFirst = projectName.indexOf(" - ");
+    if (afterFirst === -1) return "Lainnya";
+    const segment = projectName.slice(afterFirst + 3).split(" - ")[0]?.trim() || "";
+    // Normalize to canonical label; anything not NCM OPS / ECM / Support → NCM
+    const sl = segment.toLowerCase();
+    if (sl === "ncm ops" || sl === "ncm-ops") return "NCM OPS";
+    if (sl === "ecm") return "ECM";
+    if (sl === "support") return "Support";
+    return "NCM";
+  };
+  const sdlcByType = myUqaProjects.reduce<Record<string, MonitoringUqaProject[]>>((acc, p) => {
+    const t = extractSdlcType(p.project_name);
+    (acc[t] ||= []).push(p);
+    return acc;
+  }, {});
+  const sdlcTypeOrder = Object.keys(sdlcByType).sort((a, b) => {
+    const ra = SDLC_ORDER.indexOf(a);
+    const rb = SDLC_ORDER.indexOf(b);
+    if (ra !== -1 && rb !== -1) return ra - rb;
+    if (ra !== -1) return -1;
+    if (rb !== -1) return 1;
+    return a.localeCompare(b);
+  });
+  const SDLC_COLORS: Record<string, string> = {
+    "NCM":     "#1e40af",  // dark blue
+    "NCM OPS": "#6d28d9",  // violet
+    "ECM":     "#065f46",  // dark emerald
+    "Support": "#92400e",  // amber brown
+  };
 
   // Computed data based on active tab
   const projectKeys = Object.keys(dashboard?.projects || {});
@@ -122,15 +216,16 @@ export default function Dashboard() {
     : null;
 
   // Local pagination for per-project QA table
-  const projectFiltered = activeProjectData
+  // Filter by assignee or reporter matching the logged-in user's display name
+  const userFilteredReadyForQa = filterByMe && jiraDisplayName
     ? activeReadyForQa.filter((i) =>
-        !ticketSearch || i.key.toLowerCase().includes(ticketSearch.toLowerCase()) || i.summary.toLowerCase().includes(ticketSearch.toLowerCase())
+        i.assignee === jiraDisplayName || i.reporter === jiraDisplayName
       )
-    : activeProjectTab === "all" && hasProjects
-      ? activeReadyForQa.filter((i) =>
-          !ticketSearch || i.key.toLowerCase().includes(ticketSearch.toLowerCase()) || i.summary.toLowerCase().includes(ticketSearch.toLowerCase())
-        )
-      : [];
+    : activeReadyForQa;
+
+  const projectFiltered = userFilteredReadyForQa.filter((i) =>
+    !ticketSearch || i.key.toLowerCase().includes(ticketSearch.toLowerCase()) || i.summary.toLowerCase().includes(ticketSearch.toLowerCase())
+  );
   const projectTotalPages = Math.max(1, Math.ceil(projectFiltered.length / projectRowsPerPage));
   const projectPaginated = projectFiltered.slice(
     (projectPage - 1) * projectRowsPerPage,
@@ -206,22 +301,247 @@ export default function Dashboard() {
           border-radius: 6px;
         }
       `}</style>
-      {/* Dashboard header with settings gear */}
+      {/* Dashboard header */}
       <div className="section-header-row" style={{ marginBottom: 0 }}>
         <div>
           <h2 className="text-display" style={{ margin: 0 }}>Dashboard</h2>
         </div>
-        <button className="icon-btn" onClick={() => {
-          const projects = config.dashboard?.projects || [];
-          setDashboardProjects(projects);
-          setLabelExcludeDrafts(projects.map(p => p.excludeLabels.join(", ")));
-          setLabelIncludeDrafts(projects.map(p => p.includeLabels.join(", ")));
-          setStatusExcludeDrafts(projects.map(p => p.excludeStatuses.join(", ")));
-          setStatusIncludeDrafts(projects.map(p => p.includeStatuses.join(", ")));
-          setShowDashboardConfig(true);
-        }} type="button" title="Dashboard Settings">
-          <span className="material-symbols">settings</span>
-        </button>
+      </div>
+
+      {/* My UQA Projects by Status */}
+      <div style={{ marginBottom: 24 }}>
+        <div className="card" style={{ padding: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div>
+              <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>My Projects</h4>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>
+                Project UQA yang saya tangani · {myUqaProjects.length} project
+              </p>
+            </div>
+            <button
+              type="button"
+              title="Refresh"
+              onClick={() => {
+                setMyUqaLoading(true);
+                window.qaBuddy.getMyUqaProjects(loggedInUser || "", jiraDisplayName || "")
+                  .then((rows) => setMyUqaProjects(rows))
+                  .catch(() => setMyUqaProjects([]))
+                  .finally(() => setMyUqaLoading(false));
+              }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", display: "flex", alignItems: "center" }}
+            >
+              <span className="material-symbols" style={{ fontSize: 20 }}>refresh</span>
+            </button>
+          </div>
+
+          {myUqaLoading ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="skeleton" style={{ height: 56, width: 140, borderRadius: 10 }} />
+              ))}
+            </div>
+          ) : myUqaProjects.length === 0 ? (
+            <p style={{ fontSize: 13, color: "var(--on-surface-variant)", fontStyle: "italic" }}>
+              Tidak ada project UQA ditemukan.
+            </p>
+          ) : (
+            <>
+              {/* Status pill row — stretch to fill card width */}
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${uqaStatusOrder.length}, 1fr)`, gap: 8, marginBottom: expandedUqaStatus ? 16 : 0 }}>
+                {uqaStatusOrder.map((status, idx) => {
+                  const count = uqaByStatus[status].length;
+                  const isActive = expandedUqaStatus === status;
+                  const sl = status.toLowerCase();
+                  const color =
+                    sl.includes("queue")                                          ? "#3d5a80"
+                    : sl.includes("in progress") || sl.includes("ongoing") || sl.includes("on going") ? "#8b1a1a"
+                    : sl.includes("under review") || sl.includes("review")       ? "#2d6a4f"
+                    : sl.includes("done - uat") || sl.includes("done-uat") || (sl.includes("done") && sl.includes("uat")) ? "#6a0dad"
+                    : sl.includes("done - deploy") || sl.includes("done-deploy") || (sl.includes("done") && sl.includes("deploy")) ? "#007c91"
+                    : sl.includes("done - live") || sl.includes("done-live") || (sl.includes("done") && sl.includes("live")) ? "#c0531a"
+                    : sl.includes("cancel") || sl.includes("cancelled")          ? "#b8860b"
+                    : sl.includes("hold") || sl.includes("pending")              ? "#9e2a2b"
+                    : sl.includes("done") || sl.includes("selesai")              ? "#1b5e20"
+                    : ["#3d5a80","#8b1a1a","#2d6a4f","#6a0dad","#007c91","#c0531a","#b8860b","#9e2a2b","#1b5e20","#4a4a8a"][idx % 10];
+                  return (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => setExpandedUqaStatus(isActive ? null : status)}
+                      style={{
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                        padding: "12px 8px", borderRadius: 12, border: "2px solid",
+                        cursor: "pointer", transition: "all 0.15s",
+                        background: isActive ? color : `${color}18`,
+                        borderColor: isActive ? color : `${color}55`,
+                        color: isActive ? "#fff" : "var(--on-surface)",
+                      }}
+                    >
+                      <span style={{ fontSize: 24, fontWeight: 700, lineHeight: 1, color: isActive ? "#fff" : color }}>{count}</span>
+                      <span style={{ fontSize: 10, fontWeight: 600, textAlign: "center", lineHeight: 1.3, color: isActive ? "#ffffffcc" : "var(--on-surface-variant)" }}>{status}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Expanded project list */}
+              {expandedUqaStatus && uqaByStatus[expandedUqaStatus] && (
+                <div style={{ borderTop: "1px solid var(--outline-variant)", paddingTop: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-variant)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    {expandedUqaStatus} — {uqaByStatus[expandedUqaStatus].length} project
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {uqaByStatus[expandedUqaStatus].map((p) => (
+                      <div
+                        key={p.uqa_key}
+                        style={{
+                          display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+                          padding: "10px 14px", borderRadius: 8, background: "var(--surface-container-low)",
+                          gap: 12,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: "var(--on-surface)", marginBottom: 2 }}>
+                            {p.project_name || p.uqa_key}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--on-surface-variant)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                            {p.assignee && <span>PM: {p.assignee}</span>}
+                            {p.product_tester && <span>Tester: {p.product_tester}</span>}
+                            {p.start_qa && <span>Start: {p.start_qa}</span>}
+                            {p.finish_uat && <span>Target UAT: {p.finish_uat}</span>}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          title="Buka di Jira"
+                          onClick={() => void window.qaBuddy.openExternal(`${config.jira.baseUrl}/browse/${p.uqa_key}`)}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", flexShrink: 0, padding: 4 }}
+                        >
+                          <span className="material-symbols" style={{ fontSize: 18 }}>open_in_new</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Projects Status — grouped by SDLC type */}
+      <div style={{ marginBottom: 24 }}>
+        <div className="card" style={{ padding: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div>
+              <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Project SDLC Types</h4>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>
+                Project dikelompokkan berdasarkan SDLC type · {myUqaProjects.length} project
+              </p>
+            </div>
+          </div>
+
+          {myUqaLoading ? (
+            <div style={{ display: "flex", gap: 12 }}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="skeleton" style={{ height: 72, flex: 1, borderRadius: 10 }} />
+              ))}
+            </div>
+          ) : myUqaProjects.length === 0 ? (
+            <p style={{ fontSize: 13, color: "var(--on-surface-variant)", fontStyle: "italic" }}>
+              Tidak ada project UQA ditemukan.
+            </p>
+          ) : (
+            <>
+              {/* SDLC type pill row — equal width, full card */}
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${sdlcTypeOrder.length}, 1fr)`, gap: 10, marginBottom: expandedSdlcType ? 16 : 0 }}>
+                {sdlcTypeOrder.map((sdlcType) => {
+                  const projects = sdlcByType[sdlcType];
+                  const isActive = expandedSdlcType === sdlcType;
+                  const color = SDLC_COLORS[sdlcType] || "#4b5563";
+                  return (
+                    <button
+                      key={sdlcType}
+                      type="button"
+                      onClick={() => setExpandedSdlcType(isActive ? null : sdlcType)}
+                      style={{
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                        padding: "14px 8px", borderRadius: 12, border: "2px solid",
+                        cursor: "pointer", transition: "all 0.15s",
+                        background: isActive ? color : `${color}18`,
+                        borderColor: isActive ? color : `${color}55`,
+                      }}
+                    >
+                      <span style={{ fontSize: 26, fontWeight: 700, lineHeight: 1, color: isActive ? "#fff" : color }}>{projects.length}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, textAlign: "center", lineHeight: 1.3, color: isActive ? "#ffffffee" : color, letterSpacing: "0.04em" }}>{sdlcType}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Expanded project list for selected SDLC type */}
+              {expandedSdlcType && sdlcByType[expandedSdlcType] && (
+                <div style={{ borderTop: "1px solid var(--outline-variant)", paddingTop: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-variant)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    {expandedSdlcType} — {sdlcByType[expandedSdlcType].length} project
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {sdlcByType[expandedSdlcType].map((p) => {
+                      const statusLower = (p.status || "").toLowerCase();
+                      const statusColor =
+                        statusLower.includes("queue")   ? "#3d5a80"
+                        : statusLower.includes("in progress") || statusLower.includes("ongoing") || statusLower.includes("on going") ? "#8b1a1a"
+                        : statusLower.includes("under review") || statusLower.includes("review") ? "#2d6a4f"
+                        : statusLower.includes("done") && statusLower.includes("uat")    ? "#6a0dad"
+                        : statusLower.includes("done") && statusLower.includes("deploy") ? "#007c91"
+                        : statusLower.includes("done") && statusLower.includes("live")   ? "#c0531a"
+                        : statusLower.includes("cancel") ? "#b8860b"
+                        : statusLower.includes("done")  ? "#1b5e20"
+                        : "var(--outline)";
+                      return (
+                        <div
+                          key={p.uqa_key}
+                          style={{
+                            display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+                            padding: "10px 14px", borderRadius: 8, background: "var(--surface-container-low)", gap: 12,
+                          }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: "var(--on-surface)", marginBottom: 4 }}>
+                              {p.project_name || p.uqa_key}
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              {p.status && (
+                                <span style={{
+                                  display: "inline-block", padding: "2px 8px", borderRadius: 20,
+                                  fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
+                                  background: `${statusColor}20`, color: statusColor, border: `1px solid ${statusColor}50`,
+                                }}>
+                                  {p.status}
+                                </span>
+                              )}
+                              <span style={{ fontSize: 11, color: "var(--on-surface-variant)" }}>{p.uqa_key}</span>
+                              {p.product_tester && <span style={{ fontSize: 11, color: "var(--on-surface-variant)" }}>· Tester: {p.product_tester}</span>}
+                              {p.finish_uat && <span style={{ fontSize: 11, color: "var(--on-surface-variant)" }}>· Target UAT: {p.finish_uat}</span>}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            title="Buka di Jira"
+                            onClick={() => void window.qaBuddy.openExternal(`${config.jira.baseUrl}/browse/${p.uqa_key}`)}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", flexShrink: 0, padding: 4 }}
+                          >
+                            <span className="material-symbols" style={{ fontSize: 18 }}>open_in_new</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Project tabs */}
@@ -254,16 +574,16 @@ export default function Dashboard() {
         </div>
       )}
       {updateInfo?.updateAvailable && (
-        <div 
-          className="card" 
-          style={{ 
-            background: "linear-gradient(135deg, rgba(249, 115, 22, 0.1) 0%, rgba(239, 68, 68, 0.1) 100%)", 
-            border: "1px solid rgba(249, 115, 22, 0.25)", 
-            padding: "16px 20px", 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "space-between", 
-            marginBottom: 20, 
+        <div
+          className="card"
+          style={{
+            background: "linear-gradient(135deg, rgba(249, 115, 22, 0.1) 0%, rgba(239, 68, 68, 0.1) 100%)",
+            border: "1px solid rgba(249, 115, 22, 0.25)",
+            padding: "16px 20px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 20,
             borderRadius: 12,
             boxShadow: "0 4px 20px -2px rgba(249, 115, 22, 0.08)",
             animation: "fadeIn 0.3s ease-in-out"
@@ -279,25 +599,18 @@ export default function Dashboard() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <button 
-              className="insight-btn primary" 
-              onClick={() => {
-                if (updateInfo.url) {
-                  window.qaBuddy.openExternal(updateInfo.url).catch(() => {});
-                }
-              }}
+            <button
+              className="insight-btn primary"
+              onClick={() => { if (updateInfo.url) { window.qaBuddy.openExternal(updateInfo.url).catch(() => {}); } }}
               style={{ background: "var(--warning, #f97316)", color: "#fff", borderColor: "transparent", fontSize: 12, fontWeight: 600, padding: "8px 16px", cursor: "pointer" }}
               type="button"
             >
               <span className="material-symbols" style={{ fontSize: 16 }}>download</span>
               Unduh
             </button>
-            <button 
-              className="insight-btn secondary" 
-              onClick={() => {
-                setSettingsTab("updates");
-                setActiveView("settings");
-              }}
+            <button
+              className="insight-btn secondary"
+              onClick={() => { setSettingsTab("updates"); setActiveView("settings"); }}
               style={{ fontSize: 12, padding: "8px 16px", cursor: "pointer" }}
               type="button"
             >
@@ -351,106 +664,33 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Bug Metrics Cards */}
-      <div className="dashboard-section">
-        <div className="section-header-row">
-          <div>
-            <h3 className="section-title">Bug Metrics</h3>
-            <p className="section-subtitle">Overview of bug tracker statistics.{activeProjectTab !== "all" ? ` (${activeProjectTab})` : ""}</p>
-          </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
-          {(() => {
-            const p = activeProjectTab !== "all" ? activeProjectTab : config.jira.projectKey;
-            const base = config.jira.baseUrl.replace(/\/+$/, "");
-            const baseJql = `project = "${p}" AND status NOT IN ("DROPPED/CANCELLED", "DEPLOYED") AND labels not in (NOT_DEFECT)`;
-            return [
-              { label: "Total Open", value: activeBugMetrics.totalOpen, icon: "bug_report", color: "var(--severity-total)", jql: baseJql },
-              { label: "Critical", value: activeBugMetrics.critical, icon: "warning", color: "var(--severity-critical)", jql: `${baseJql} AND priority = Critical` },
-              { label: "High", value: activeBugMetrics.high, icon: "arrow_upward", color: "var(--severity-high)", jql: `${baseJql} AND priority = High` },
-              { label: "Medium", value: activeBugMetrics.medium, icon: "drag_handle", color: "var(--severity-medium)", jql: `${baseJql} AND priority = Medium` },
-              { label: "Low", value: activeBugMetrics.low, icon: "arrow_downward", color: "var(--severity-low)", jql: `${baseJql} AND priority = Low` },
-              { label: "Epic", value: activeBugMetrics.epicTotal, icon: "layers", color: "var(--severity-epic)", jql: `project = "${p}" AND issuetype = Epic` },
-            ].map((metric) => (
-              <div key={metric.label} className="card" style={{ padding: 20, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: base ? "pointer" : "default" }} onClick={() => { if (base) void window.qaBuddy.openExternal(`${base}/issues/?jql=${encodeURIComponent(metric.jql)}`); }}>
-                <span className="material-symbols filled" style={{ fontSize: 28, color: metric.color }}>{metric.icon}</span>
-                <div style={{ fontSize: 28, fontWeight: 700, color: "var(--on-surface)" }}>
-                  {dashboardLoading
-                    ? <div className="skeleton" style={{ height: 32, width: 60, margin: "0 auto" }} />
-                    : metric.value}
-                </div>
-                <div style={{ fontSize: 12, color: "var(--on-surface-variant)", fontWeight: 500 }}>{metric.label}</div>
-              </div>
-            ));
-          })()}
-        </div>
-      </div>
-
-      {/* Epic Progress + Ready for QA */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 24, marginBottom: 24, alignItems: "stretch" }}>
-        {/* Epic Progress */}
+      {/* Ready for QA — full width */}
+      <div style={{ marginBottom: 24 }}>
         <div className="card" style={{ padding: 24 }}>
-            {dashboardLoading ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                <div className="skeleton" style={{ height: 20, width: 160 }} />
-                <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div className="skeleton" style={{ height: 14, width: "100%" }} />
-                    <div className="skeleton" style={{ height: 8, width: "100%" }} />
-                    <div className="skeleton" style={{ height: 14, width: "100%" }} />
-                    <div className="skeleton" style={{ height: 8, width: "100%" }} />
-                    <div className="skeleton" style={{ height: 14, width: "60%" }} />
-                  </div>
-                  <div className="skeleton" style={{ height: 48, width: 64 }} />
-                </div>
-              </div>
-            ) : (<>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div>
-                <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Epic Progress</h4>
-                <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>Completed Epics vs Tasks under open Epics</p>
-              </div>
-              <span className="material-symbols" style={{ fontSize: 24, color: "var(--primary)" }}>layers</span>
-            </div>
-            <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
-                <span style={{ color: "var(--on-surface-variant)" }}>Completed Epics</span>
-                <span style={{ fontWeight: 600 }}>{activeBugMetrics.epicCompleted} / {activeBugMetrics.epicTotal}</span>
-              </div>
-              <div style={{ height: 8, borderRadius: 4, background: "var(--surface-container-low)", overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 4, background: "var(--severity-epic)", width: `${Math.min(100, (activeBugMetrics.epicCompleted / Math.max(1, activeBugMetrics.epicTotal)) * 100)}%` }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 16, marginBottom: 6 }}>
-                <span style={{ color: "var(--on-surface-variant)" }}>Resolved Tasks</span>
-                <span style={{ fontWeight: 600 }}>{activeBugMetrics.epicTasksResolved}</span>
-              </div>
-              <div style={{ height: 8, borderRadius: 4, background: "var(--surface-container-low)", overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 4, background: "var(--tertiary)", width: `${Math.min(100, (activeBugMetrics.epicTasksResolved / Math.max(1, activeBugMetrics.epicTasksTotal)) * 100)}%` }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 16, marginBottom: 6 }}>
-                <span style={{ color: "var(--on-surface-variant)" }}>Tasks under Epics</span>
-                <span style={{ fontWeight: 600 }}>{activeBugMetrics.epicTasksTotal} total</span>
-              </div>
-            </div>
-            <div style={{ textAlign: "center", padding: "0 8px" }}>
-              <div style={{ fontSize: 36, fontWeight: 700, color: activeBugMetrics.epicTotal > 0 && activeBugMetrics.epicCompleted >= activeBugMetrics.epicTotal ? "var(--tertiary)" : "var(--warning)" }}>
-                {activeBugMetrics.epicTotal > 0 ? Math.round((activeBugMetrics.epicCompleted / activeBugMetrics.epicTotal) * 100) : 0}%
-              </div>
-              <div style={{ fontSize: 11, color: "var(--on-surface-variant)", marginTop: 2 }}>epic completion</div>
-            </div>
-            </div>
-          </>
-        )}
-        </div>
-
-        {/* Ready for QA */}
-        <div className="card" style={{ padding: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
             <div>
               <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Ready for QA</h4>
-              <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>Tickets awaiting verification in the active sprint.{activeProjectTab !== "all" ? ` (${activeProjectTab})` : ""}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>
+                {filterByMe ? "Issue milik saya" : "Semua issue"}{activeProjectTab !== "all" ? ` (${activeProjectTab})` : ""} · {projectFiltered.length} ditemukan
+              </p>
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setFilterByMe((v) => !v)}
+                title={filterByMe ? "Tampilkan semua issue" : "Tampilkan hanya issue saya"}
+                style={{
+                  display: "flex", alignItems: "center", gap: 5, padding: "4px 10px",
+                  borderRadius: 20, border: "1.5px solid", cursor: "pointer", fontSize: 11, fontWeight: 600,
+                  background: filterByMe ? "var(--primary)" : "transparent",
+                  color: filterByMe ? "var(--on-primary)" : "var(--on-surface-variant)",
+                  borderColor: filterByMe ? "var(--primary)" : "var(--outline-variant)",
+                  transition: "all 0.15s",
+                }}
+              >
+                <span className="material-symbols" style={{ fontSize: 14 }}>person</span>
+                {filterByMe ? "Milik saya" : "Semua"}
+              </button>
             <div className="search-box">
               <span className="material-symbols">search</span>
               <input
@@ -460,6 +700,27 @@ export default function Dashboard() {
                 value={ticketSearch}
               />
             </div>
+            </div>
+          </div>
+          {/* Issue type pill selector */}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+            {READY_FOR_QA_ISSUE_TYPES.map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => { setReadyForQaIssueType(t); setProjectPage(1); }}
+                style={{
+                  padding: "4px 12px", fontSize: 12, borderRadius: 20, border: "1.5px solid",
+                  cursor: "pointer", fontWeight: readyForQaIssueType === t ? 600 : 400,
+                  background: readyForQaIssueType === t ? "var(--primary)" : "transparent",
+                  color: readyForQaIssueType === t ? "var(--on-primary)" : "var(--on-surface-variant)",
+                  borderColor: readyForQaIssueType === t ? "var(--primary)" : "var(--outline-variant)",
+                  transition: "all 0.15s",
+                }}
+              >
+                {t}
+              </button>
+            ))}
           </div>
 
         <div className="data-card" style={{ margin: 0 }}>
@@ -603,8 +864,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Bottom Row: Recent Activity + Connection Status + KB Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
+      {/* Bottom Row: Recent Activity + Connection Status */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
         <div className="card" style={{ padding: 24 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Recent Activity</h4>
@@ -652,47 +913,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="card" style={{ padding: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Knowledge Base</h4>
-            <span className="material-symbols" style={{ fontSize: 20, color: "var(--on-surface-variant)" }}>database</span>
-          </div>
-          {ragStats ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, overflow: "hidden" }}>
-              <div style={{ display: "flex", gap: 12, minWidth: 0 }}>
-                <div style={{ flex: "1 1 0", padding: "12px", borderRadius: 8, background: "var(--surface-container-low)", textAlign: "center", overflow: "hidden" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ragStats.totalChunks}</div>
-                  <div style={{ fontSize: 11, color: "var(--on-surface-variant)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Total Chunks</div>
-                </div>
-                <div style={{ flex: "1 1 0", padding: "12px", borderRadius: 8, background: "var(--surface-container-low)", textAlign: "center", overflow: "hidden" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ragStats.confluencePages}</div>
-                  <div style={{ fontSize: 11, color: "var(--on-surface-variant)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Pages</div>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 12, minWidth: 0 }}>
-                <div style={{ flex: "1 1 0", padding: "12px", borderRadius: 8, background: "var(--surface-container-low)", textAlign: "center", overflow: "hidden" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ragStats.jiraIssues}</div>
-                  <div style={{ fontSize: 11, color: "var(--on-surface-variant)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Jira Issues</div>
-                </div>
-                <div style={{ flex: "1 1 0", padding: "12px", borderRadius: 8, background: "var(--surface-container-low)", textAlign: "center", overflow: "hidden" }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ragStats.confluenceChunks + ragStats.jiraChunks}</div>
-                  <div style={{ fontSize: 11, color: "var(--on-surface-variant)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Embeddings</div>
-                </div>
-              </div>
-              {(ragStats.lastConfluenceSync || ragStats.lastJiraSync) && (
-                <div style={{ fontSize: 11, color: "var(--on-surface-variant)" }}>
-                  {ragStats.lastConfluenceSync && <div>Confluence: {new Date(ragStats.lastConfluenceSync).toLocaleString("id-ID")}</div>}
-                  {ragStats.lastJiraSync && <div>Jira: {new Date(ragStats.lastJiraSync).toLocaleString("id-ID")}</div>}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ textAlign: "center", padding: "20px 0" }}>
-              <span className="material-symbols" style={{ fontSize: 32, color: "var(--on-surface-variant)", display: "block", marginBottom: 8 }}>storage</span>
-              <p style={{ fontSize: 13, color: "var(--on-surface-variant)", fontStyle: "italic" }}>Belum ada data. Index di Settings {">"} Knowledge Base.</p>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* ── Dashboard Project Config Modal ── */}

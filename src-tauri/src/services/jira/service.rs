@@ -155,6 +155,10 @@ impl JiraService {
                 .as_str()
                 .unwrap_or("Unassigned")
                 .to_string(),
+            reporter: fields["reporter"]["displayName"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
             r#type: fields["issuetype"]["name"].as_str().unwrap_or("-").to_string(),
             url: format!("{}/browse/{}", normalize_url(base_url), key),
         }
@@ -221,8 +225,39 @@ impl JiraService {
         } else {
             (base_jql.clone(), String::new())
         };
-        let jql = format!("{filter_part} {label_filter} {status_filter}{order_part}");
+        let jql = format!("{filter_part} AND statusCategory != Done {label_filter} {status_filter}{order_part}");
         self.search_issues(config, &jql, 1000).await
+    }
+
+    /// Fetch Ready-for-QA issues for multiple projects in a single JQL call.
+    /// Returns a map of project_key → Vec<JiraIssueSummary>.
+    pub async fn get_ready_for_qa_issues_multi(
+        &self,
+        config: &JiraConfig,
+        project_keys: &[&str],
+        issue_type: &str,
+    ) -> Result<std::collections::HashMap<String, Vec<JiraIssueSummary>>> {
+        if project_keys.is_empty() || issue_type.is_empty() {
+            return Ok(Default::default());
+        }
+        let keys_jql = project_keys
+            .iter()
+            .map(|k| format!("\"{}\"", k))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let jql = format!(
+            "project IN ({keys_jql}) AND issuetype = \"{issue_type}\" AND statusCategory != Done ORDER BY priority DESC, updated DESC"
+        );
+        let all = self.search_issues(config, &jql, 2000).await.unwrap_or_default();
+        let mut map: std::collections::HashMap<String, Vec<JiraIssueSummary>> = Default::default();
+        for issue in all {
+            // project key is the prefix of issue.key before the last '-'
+            let pk = issue.key.rfind('-')
+                .map(|i| issue.key[..i].to_string())
+                .unwrap_or_default();
+            map.entry(pk).or_default().push(issue);
+        }
+        Ok(map)
     }
 
     // ── Metrics & reports ───────────────────────────────────────────────

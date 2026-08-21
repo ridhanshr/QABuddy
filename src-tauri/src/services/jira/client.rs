@@ -322,7 +322,7 @@ impl JiraClient {
     pub async fn execute_transition(&self, issue_key: &str, transition_id: &str) -> Result<()> {
         let path = format!("/issue/{issue_key}/transitions");
         let body = serde_json::json!({ "transition": { "id": transition_id } });
-        self.api.put_json_void(&path, &body).await
+        self.api.post_json_void(&path, &body).await
     }
 
     /// Fully replace an issue's description with the given wiki-markup string.

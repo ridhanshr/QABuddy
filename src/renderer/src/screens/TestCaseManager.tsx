@@ -225,7 +225,7 @@ function TestCaseCard({
 const CACHE_TTL = 15_000;
 
 export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
-  const { testRepositoryProjects } = useApp();
+  const { testRepositoryProjects, config, jiraDisplayName } = useApp();
 
   // ── Tab State ──
   const [activeTab, setActiveTab] = useState<Tab>(initialTab || "search");
@@ -244,47 +244,99 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   // ── Reuse Test Case ──
   const [selectedResultKeys, setSelectedResultKeys] = useState<Set<string>>(new Set());
   const [showReuseModal, setShowReuseModal] = useState(false);
-  const [reuseProject, setReuseProject] = useState("");
-  const [reuseFolders, setReuseFolders] = useState<{ label: string; value: string }[]>([]);
-  const [reuseFoldersLoading, setReuseFoldersLoading] = useState(false);
-  const [reuseFolder, setReuseFolder] = useState("");
+
+  // UQA projects from DB (filtered by logged-in user)
+  const [reuseUqaProjects, setReuseUqaProjects] = useState<{ value: string; label: string; projectCode: string }[]>([]);
+  const [reuseUqaLoading, setReuseUqaLoading] = useState(false);
+  const [reuseUqaKey, setReuseUqaKey] = useState(""); // selected uqa_key
+  const [reuseProjectCode, setReuseProjectCode] = useState(""); // e.g. "OCEPBCMLS"
+
+  // TEs from DB filtered by project code prefix
+  const [reuseTeList, setReuseTeList] = useState<{ value: string; label: string }[]>([]);
+  const [reuseTeLoading, setReuseTeLoading] = useState(false);
+  const [reuseTeKey, setReuseTeKey] = useState("");
+
   const [reuseLoading, setReuseLoading] = useState(false);
   const [reuseResult, setReuseResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  const fetchReuseFolders = useCallback(async (projectKey: string) => {
-    if (!projectKey) { setReuseFolders([]); setReuseFolder(""); return; }
-    setReuseFoldersLoading(true);
-    setReuseFolders([]);
-    setReuseFolder("");
-    try {
-      const tree = await window.qaBuddy.getXrayFolders(projectKey);
-      setReuseFolders(flattenFolders(tree));
-    } catch {
-      setReuseFolders([]);
-    } finally {
-      setReuseFoldersLoading(false);
-    }
-  }, []);
+  const EXCLUDED_PROJECT_KEYWORDS = ["ncm ops", "ecm", "support"];
 
-  const handleReuseProjectChange = useCallback((key: string) => {
-    setReuseProject(key);
-    void fetchReuseFolders(key);
-  }, [fetchReuseFolders]);
+  const fetchReuseUqaProjects = useCallback(async () => {
+    setReuseUqaLoading(true);
+    setReuseUqaProjects([]);
+    try {
+      const all = await window.qaBuddy.getMyUqaProjects(config.jira.username, jiraDisplayName);
+      const filtered = all.filter((p) => {
+        const name = (p.project_name || "").toLowerCase();
+        return !EXCLUDED_PROJECT_KEYWORDS.some((kw) => name.includes(kw));
+      });
+      // Parse: uqa_key = "UQA26-1234", project_name = "QCM - POTDYDSPRD - Priority 2 ..."
+      // project_code = part after first " - " (e.g. "POTDYDSPRD")
+      // display label = part after second " - " (e.g. "Priority 2 ...")
+      const options = filtered.map((p) => {
+        const parts = (p.project_name || "").split(" - ");
+        const projectCode = parts[1]?.trim() || "";
+        const projectDesc = parts.slice(2).join(" - ").trim() || parts[1]?.trim() || p.project_name || "";
+        return {
+          value: p.uqa_key,
+          label: `${p.uqa_key} · ${projectCode} — ${projectDesc}`,
+          projectCode,
+        };
+      });
+      setReuseUqaProjects(options);
+    } catch {
+      setReuseUqaProjects([]);
+    } finally {
+      setReuseUqaLoading(false);
+    }
+  }, [config.jira.username, jiraDisplayName]);
+
+  const handleReuseUqaChange = useCallback(async (uqaKey: string) => {
+    setReuseUqaKey(uqaKey);
+    setReuseTeKey("");
+    setReuseTeList([]);
+    const found = reuseUqaProjects.find((p) => p.value === uqaKey);
+    const code = found?.projectCode || "";
+    setReuseProjectCode(code);
+    if (!code) return;
+    setReuseTeLoading(true);
+    try {
+      const tes = await window.qaBuddy.getTeByProjectPrefix(code);
+      setReuseTeList(tes.map((te) => ({
+        value: te.te_jira_key,
+        label: `${te.te_jira_key}${te.title ? ` — ${te.title}` : ""}`,
+      })));
+    } catch {
+      setReuseTeList([]);
+    } finally {
+      setReuseTeLoading(false);
+    }
+  }, [reuseUqaProjects]);
 
   const handleReuseSubmit = useCallback(async () => {
-    if (!reuseProject || !reuseFolder || selectedResultKeys.size === 0) return;
+    if (!reuseUqaKey || !reuseTeKey || selectedResultKeys.size === 0) return;
     setReuseLoading(true);
     setReuseResult(null);
     try {
       const keys = Array.from(selectedResultKeys);
-      await window.qaBuddy.bulkMoveToXrayFolder(keys, reuseFolder);
-      setReuseResult({ ok: true, msg: `${keys.length} test case berhasil dipindahkan ke folder "${reuseFolder}"` });
+      // 1. Add TCs to TE in Jira (Xray API)
+      await window.qaBuddy.addTestsToExecution(reuseTeKey, keys);
+      // 2. Fetch TC titles from Jira for DB enrichment
+      const titleMap = await window.qaBuddy.getTestCaseTitles(keys).catch(() => ({} as Record<string, string>));
+      // 3. Save to DB with title and id_jira_repo (prefix before last '-')
+      await window.qaBuddy.saveTestCases(keys.map((k) => ({
+        tc_key: k,
+        te_jira_key: reuseTeKey,
+        title: titleMap[k] || undefined,
+        id_jira_repo: k.includes("-") ? k.substring(0, k.lastIndexOf("-")) : undefined,
+      })));
+      setReuseResult({ ok: true, msg: `${keys.length} test case berhasil ditambahkan ke ${reuseTeKey}` });
     } catch (e: any) {
       setReuseResult({ ok: false, msg: e?.message || String(e) });
     } finally {
       setReuseLoading(false);
     }
-  }, [reuseProject, reuseFolder, selectedResultKeys]);
+  }, [reuseUqaKey, reuseTeKey, selectedResultKeys]);
 
   const toggleResultKey = useCallback((key: string) => {
     setSelectedResultKeys(prev => {
@@ -611,7 +663,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                     <button
                       type="button"
                       className="button primary"
-                      onClick={() => { setReuseResult(null); setReuseProject(""); setReuseFolder(""); setReuseFolders([]); setShowReuseModal(true); }}
+                      onClick={() => { setReuseResult(null); setReuseUqaKey(""); setReuseTeKey(""); setReuseTeList([]); setShowReuseModal(true); void fetchReuseUqaProjects(); }}
                       style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", fontSize: 13 }}
                     >
                       <span className="material-symbols" style={{ fontSize: 16 }}>recycling</span>
@@ -1292,7 +1344,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
         >
           <div
             className="card"
-            style={{ maxWidth: 480, width: "90%", padding: 32 }}
+            style={{ maxWidth: 520, width: "90%", padding: 32 }}
             onClick={e => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -1310,8 +1362,8 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
               </button>
             </div>
 
-            <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--on-surface-variant)", lineHeight: 1.6 }}>
-              <strong>{selectedResultKeys.size}</strong> test case akan dipindahkan ke Test Repository folder yang Anda pilih.
+            <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--on-surface-variant)", lineHeight: 1.6 }}>
+              <strong>{selectedResultKeys.size}</strong> test case akan ditambahkan ke Test Execution yang Anda pilih.
             </p>
 
             {/* Selected keys preview */}
@@ -1319,38 +1371,43 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
               fontSize: 12, fontFamily: "monospace", color: "var(--primary)",
               background: "color-mix(in srgb, var(--primary) 6%, transparent)",
               borderRadius: 6, padding: "8px 12px", marginBottom: 20,
-              maxHeight: 80, overflowY: "auto", lineHeight: 1.8,
+              maxHeight: 72, overflowY: "auto", lineHeight: 1.8,
             }}>
               {Array.from(selectedResultKeys).join(", ")}
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* UQA Project dropdown */}
               <div className="field-group">
                 <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
-                  Target Project <span style={{ color: "var(--error)" }}>*</span>
-                </label>
-                <SearchableSelect
-                  options={testRepositoryProjects.map(p => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
-                  value={reuseProject}
-                  onChange={handleReuseProjectChange}
-                  placeholder="-- Pilih Jira Project --"
-                  disabled={reuseLoading}
-                />
-              </div>
-
-              <div className="field-group">
-                <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
-                  Test Repository Folder <span style={{ color: "var(--error)" }}>*</span>
-                  {reuseFoldersLoading && (
-                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "var(--on-surface-variant)" }}>Loading...</span>
+                  UQA Project <span style={{ color: "var(--error)" }}>*</span>
+                  {reuseUqaLoading && (
+                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "var(--on-surface-variant)" }}>Memuat...</span>
                   )}
                 </label>
                 <SearchableSelect
-                  options={reuseFolders}
-                  value={reuseFolder}
-                  onChange={setReuseFolder}
-                  placeholder={!reuseProject ? "-- Pilih project dulu --" : reuseFoldersLoading ? "Memuat folder..." : reuseFolders.length === 0 ? "Tidak ada folder" : "-- Pilih Folder --"}
-                  disabled={reuseLoading || !reuseProject || reuseFoldersLoading || reuseFolders.length === 0}
+                  options={reuseUqaProjects}
+                  value={reuseUqaKey}
+                  onChange={handleReuseUqaChange}
+                  placeholder={reuseUqaLoading ? "Memuat project..." : reuseUqaProjects.length === 0 ? "Tidak ada project" : "-- Pilih UQA Project --"}
+                  disabled={reuseLoading || reuseUqaLoading}
+                />
+              </div>
+
+              {/* TE dropdown */}
+              <div className="field-group">
+                <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
+                  Test Execution <span style={{ color: "var(--error)" }}>*</span>
+                  {reuseTeLoading && (
+                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "var(--on-surface-variant)" }}>Memuat...</span>
+                  )}
+                </label>
+                <SearchableSelect
+                  options={reuseTeList}
+                  value={reuseTeKey}
+                  onChange={setReuseTeKey}
+                  placeholder={!reuseUqaKey ? "-- Pilih UQA Project dulu --" : reuseTeLoading ? "Memuat TE..." : reuseTeList.length === 0 ? "Tidak ada Test Execution" : "-- Pilih Test Execution --"}
+                  disabled={reuseLoading || !reuseUqaKey || reuseTeLoading || reuseTeList.length === 0}
                 />
               </div>
             </div>
@@ -1384,12 +1441,12 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   type="button"
                   className="button primary"
                   onClick={handleReuseSubmit}
-                  disabled={reuseLoading || !reuseProject || !reuseFolder}
+                  disabled={reuseLoading || !reuseUqaKey || !reuseTeKey}
                   style={{ padding: "8px 20px", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}
                 >
                   {reuseLoading
                     ? <><span className="material-symbols" style={{ fontSize: 16, animation: "spin 1s linear infinite" }}>sync</span>Memproses...</>
-                    : <><span className="material-symbols" style={{ fontSize: 16 }}>move_item</span>Submit</>
+                    : <><span className="material-symbols" style={{ fontSize: 16 }}>add_task</span>Reuse</>
                   }
                 </button>
               )}

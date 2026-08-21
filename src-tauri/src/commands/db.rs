@@ -298,6 +298,25 @@ pub async fn resync_uqa_project(
     Ok(())
 }
 
+/// Update only the status column of uqa_project after a Jira transition.
+#[tauri::command]
+pub async fn update_uqa_project_status(
+    state: State<'_, AppState>,
+    uqa_key: String,
+    status: String,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    sqlx::query(
+        r#"UPDATE uqa_project SET status = ?, last_sync = NOW() WHERE uqa_key = ?"#,
+    )
+    .bind(&status)
+    .bind(&uqa_key)
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal update status uqa_project {uqa_key}: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn check_uqa_projects_in_db(
     state: State<'_, AppState>,
@@ -408,13 +427,8 @@ pub async fn get_test_repositories_in_db(
 pub struct SaveTestCaseInput {
     pub tc_key: String,
     pub te_jira_key: String,
-    pub scenario: Option<String>,
-    pub category: Option<String>,
-    pub steps: Option<String>,
-    pub expected_result: Option<String>,
-    pub input_data: Option<String>,
-    pub function_name: Option<String>,
-    pub test_case_no: Option<String>,
+    pub title: Option<String>,
+    pub id_jira_repo: Option<String>,
 }
 
 #[tauri::command]
@@ -425,31 +439,25 @@ pub async fn save_test_cases(
     let pool = get_pool!(state);
 
     for tc in &cases {
+        // Derive id_jira_repo from tc_key prefix if not provided (e.g. "TRAW-1027" → "TRAW")
+        let id_jira_repo = tc.id_jira_repo.clone().or_else(|| {
+            tc.tc_key.rfind('-').map(|i| tc.tc_key[..i].to_string())
+        });
+
         sqlx::query(
             r#"
-            INSERT INTO test_case
-                (tc_key, te_jira_key, scenario, category, steps, expected_result, input_data, function_name, test_case_no, last_sync)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            INSERT INTO test_case (tc_key, te_jira_key, title, id_jira_repo, last_sync)
+            VALUES (?, ?, ?, ?, NOW())
             ON DUPLICATE KEY UPDATE
-                scenario      = COALESCE(VALUES(scenario), scenario),
-                category      = COALESCE(VALUES(category), category),
-                steps         = COALESCE(VALUES(steps), steps),
-                expected_result = COALESCE(VALUES(expected_result), expected_result),
-                input_data    = COALESCE(VALUES(input_data), input_data),
-                function_name = COALESCE(VALUES(function_name), function_name),
-                test_case_no  = COALESCE(VALUES(test_case_no), test_case_no),
-                last_sync     = NOW()
+                title        = COALESCE(VALUES(title), title),
+                id_jira_repo = COALESCE(VALUES(id_jira_repo), id_jira_repo),
+                last_sync    = NOW()
             "#,
         )
         .bind(&tc.tc_key)
         .bind(&tc.te_jira_key)
-        .bind(tc.scenario.as_deref())
-        .bind(tc.category.as_deref())
-        .bind(tc.steps.as_deref())
-        .bind(tc.expected_result.as_deref())
-        .bind(tc.input_data.as_deref())
-        .bind(tc.function_name.as_deref())
-        .bind(tc.test_case_no.as_deref())
+        .bind(tc.title.as_deref())
+        .bind(id_jira_repo.as_deref())
         .execute(&pool)
         .await
         .map_err(|e| format!("Gagal upsert test_case {}/{}: {e}", tc.tc_key, tc.te_jira_key))?;
@@ -863,6 +871,35 @@ pub async fn get_my_test_executions(
     .fetch_all(&pool)
     .await
     .map_err(|e| format!("Gagal fetch test executions: {e}"))?;
+    Ok(rows)
+}
+
+/// Fetch test executions from DB whose te_jira_key starts with the given project prefix.
+#[tauri::command]
+pub async fn get_te_by_project_prefix(
+    state: State<'_, AppState>,
+    project_prefix: String,
+) -> Result<Vec<MonitoringTestExecution>, String> {
+    let pool = get_pool!(state);
+    let pattern = format!("{}-%", project_prefix);
+    let rows = sqlx::query_as::<_, MonitoringTestExecution>(
+        r#"
+        SELECT
+            te_jira_key,
+            title,
+            tp_jira_key,
+            assignee,
+            execution_status,
+            DATE_FORMAT(last_sync, '%Y-%m-%d %H:%i:%s') AS last_sync
+        FROM test_execution
+        WHERE te_jira_key LIKE ?
+        ORDER BY last_sync DESC
+        "#,
+    )
+    .bind(&pattern)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal fetch test executions by prefix: {e}"))?;
     Ok(rows)
 }
 

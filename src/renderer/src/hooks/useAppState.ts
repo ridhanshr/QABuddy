@@ -1145,6 +1145,62 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     loadUqaIssuesFromStore();
   }, [loadUqaIssuesFromStore]);
 
+  // Auto-sync dashboard projects from UQA DB whenever jiraDisplayName becomes available
+  useEffect(() => {
+    if (!loggedInUser || !jiraDisplayName) return;
+
+    const EXCLUDED = ["support", "ecm", "ncm ops"];
+
+    function extractProjectKey(projectName: string): string | null {
+      const afterFirst = projectName.split(" - ").slice(1).join(" - ").trim();
+      const segment = afterFirst.split(" - ")[0]?.trim() || "";
+      if (EXCLUDED.includes(segment.toLowerCase())) return null;
+      if (/^[A-Z0-9]+$/.test(segment) && /[A-Z]/.test(segment)) return segment;
+      return null;
+    }
+
+    void (async () => {
+      try {
+        const uqaRows = await window.qaBuddy.getMyUqaProjects(loggedInUser, jiraDisplayName).catch(() => []);
+        if (uqaRows.length === 0) return;
+
+        const seen = new Set<string>();
+        const projects: DashboardProjectConfig[] = [];
+        for (const row of uqaRows) {
+          const key = extractProjectKey(row.project_name || "");
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          projects.push({
+            projectKey: key,
+            issueType: "Bug",
+            excludeLabels: [],
+            includeLabels: [],
+            excludeStatuses: [],
+            includeStatuses: [],
+            enabled: true,
+          });
+        }
+        if (projects.length === 0) return;
+
+        const newConfig = { ...config, dashboard: { projects } };
+        const saved = await window.qaBuddy.saveConfig(newConfig);
+        setConfig(saved);
+        setDashboardProjects(projects);
+
+        // Fetch dashboard data silently
+        setDashboardLoading(true);
+        window.qaBuddy.getDashboard({ skipInsight: true })
+          .then((nextDashboard) => { setDashboard(nextDashboard); })
+          .catch(() => {})
+          .finally(() => { setDashboardLoading(false); });
+      } catch {
+        // Non-critical — dashboard will still show with existing config
+      }
+    })();
+  // Run once when jiraDisplayName first becomes available
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jiraDisplayName]);
+
   // Listen for update progress events
   useEffect(() => {
     const cleanup = window.qaBuddy.onUpdateProgress((progress) => {
@@ -1440,11 +1496,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         const dbPayload = result.created.map((created, idx) => ({
           tc_key: created.key,
           te_jira_key: (manualCases[idx]?.testExecutionKey || "").trim(),
-          scenario: created.key,
-          category: manualCases[idx]?.labels || undefined,
-          steps: manualCases[idx]?.steps || undefined,
-          expected_result: manualCases[idx]?.expectedResult || undefined,
-          function_name: manualCases[idx]?.xrayFolder || undefined,
+          title: manualCases[idx]?.title || created.key,
         }));
         await window.qaBuddy.saveTestCases(dbPayload);
       } catch {
@@ -1852,7 +1904,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         const seen = new Set<string>();
         const rawIssues = rawIssuesList.flat().filter(i => { const dup = seen.has(i.key); seen.add(i.key); return !dup; });
         const issues: JiraIssueSummary[] = rawIssues.map(i => ({
-          id: "", key: i.key, summary: i.summary, status: "", priority: "", assignee: "", type: "", url: "",
+          id: "", key: i.key, summary: i.summary, status: "", priority: "", assignee: "", reporter: "", type: "", url: "",
         }));
         const matchedIds = new Set<string>();
         const cleanScenario = (s: string) =>
@@ -2549,13 +2601,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         await window.qaBuddy.saveTestCases([{
           tc_key: entry.issueKey,
           te_jira_key: "",
-          scenario: entry.scenario || entry.issueKey,
-          category: entry.category || undefined,
-          steps: entry.steps || undefined,
-          expected_result: entry.expectedResult || undefined,
-          input_data: entry.inputData || undefined,
-          function_name: entry.functionName || undefined,
-          test_case_no: entry.testCaseNo || undefined,
+          title: entry.scenario || entry.issueKey,
         }]);
       } catch {
         // DB update failure is non-critical
