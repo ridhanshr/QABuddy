@@ -23,16 +23,6 @@ pub struct SyncToConfluenceResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfluencePreviewResult {
-    pub current_title: String,
-    pub current_version: u32,
-    pub generated_tables: String,
-    pub entry_count: u32,
-    pub existing_entry_count: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ParseConfluenceEntriesOptions {
     #[serde(default)]
     pub debug: bool,

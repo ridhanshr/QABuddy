@@ -914,7 +914,7 @@ export default function ManualTestCaseScreen() {
       )}
 
       {manualTab === "monitoring" && (
-        <MonitoringScreen username={config.jira.username} displayName={jiraDisplayName} />
+        <MonitoringScreen username={config.jira.username} displayName={jiraDisplayName} jiraBaseUrl={config.jira.baseUrl?.replace(/\/+$/, "") ?? ""} />
       )}
 
       {/* Update progress modal (hideable) */}

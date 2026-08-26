@@ -77,6 +77,38 @@ impl JiraClient {
             .unwrap_or_default())
     }
 
+    /// Search issues, following `startAt`/`total` to collect every page.
+    /// Unlike `search_issues`, this does not truncate at a single page —
+    /// used for JQL queries that may return more than Jira's per-request cap
+    /// (e.g. `issueFunction in testExecutionTests(...)` for large Test
+    /// Executions where the Xray Raven `/testexec/{key}/test` endpoint
+    /// hard-caps at 200 with no working pagination of its own).
+    pub async fn search_issues_paginated(&self, jql: &str, fields: &str) -> Result<Vec<Value>> {
+        const PAGE_SIZE: u32 = 200;
+        let mut out = Vec::new();
+        let mut start_at: u32 = 0;
+        loop {
+            let v: Value = self
+                .api
+                .get_json("/search", &[
+                    ("jql", jql.to_string()),
+                    ("startAt", start_at.to_string()),
+                    ("maxResults", PAGE_SIZE.to_string()),
+                    ("fields", fields.to_string()),
+                ])
+                .await?;
+            let issues = v.get("issues").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+            let page_len = issues.len() as u32;
+            out.extend(issues);
+            let total = v.get("total").and_then(|t| t.as_u64()).unwrap_or(out.len() as u64);
+            start_at += page_len;
+            if page_len == 0 || (start_at as u64) >= total {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     // ── Xray folders ────────────────────────────────────────────────────
 
     /// Fetch all Xray test-repository folders for a project as a nested tree.

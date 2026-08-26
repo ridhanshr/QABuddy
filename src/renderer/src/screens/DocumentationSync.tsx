@@ -9,8 +9,6 @@ export default function DocumentationSync() {
     loading,
     confParseStatus,
     confParseProgress,
-    confTab,
-    setConfTab,
     syncConfluence,
     confLoading,
     confEntries,
@@ -34,13 +32,8 @@ export default function DocumentationSync() {
     setConfig,
     parseConfPageEntries,
     loadConfPageAttachments,
-    loadConfPagePreview,
-    previewConfluenceSync,
     confPageLoading,
     confAttachmentHydrating,
-    confPreviewLoading,
-    confPagePreview,
-    confSyncPreview,
     saveSettings,
     fetchConfSteps,
     confFetchingSteps,
@@ -148,8 +141,6 @@ export default function DocumentationSync() {
     ]).catch((e) => console.error("[handleSetResult] update test run failed:", e));
   };
 
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
-  const [newSectionName, setNewSectionName] = useState("");
   const [draftSections, setDraftSections] = useState<Record<string, string>>({});
 
   // Track which entry card the mouse is currently hovering over so the global
@@ -161,7 +152,6 @@ export default function DocumentationSync() {
   useEffect(() => { handleImagePasteRef.current = handleImagePaste; }, [handleImagePaste]);
 
   useEffect(() => {
-    if (confTab !== "form") return;
     const handler = (e: ClipboardEvent) => {
       // Let text inputs/textareas handle their own paste normally.
       const target = e.target as HTMLElement;
@@ -185,7 +175,7 @@ export default function DocumentationSync() {
 
     document.addEventListener("paste", handler);
     return () => document.removeEventListener("paste", handler);
-  }, [confTab]);
+  }, []);
 
   if (loading || activeView !== "documentation-sync") {
     return null;
@@ -201,39 +191,6 @@ export default function DocumentationSync() {
       order: index + 1,
     }));
   }
-
-  const groupedEntries = useMemo(() => {
-    const groups: { section: string; entries: any[] }[] = [];
-    const sectionMap = new Map<string, any[]>();
-    for (const entry of confEntries) {
-      const section = entry.section || "";
-      if (!sectionMap.has(section)) sectionMap.set(section, []);
-      sectionMap.get(section)!.push(entry);
-    }
-    for (const [section, entries] of sectionMap) {
-      groups.push({ section, entries });
-    }
-    return groups;
-  }, [confEntries]);
-
-  const toggleSection = (section: string) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(section)) next.delete(section);
-      else next.add(section);
-      return next;
-    });
-  };
-
-  const handleAddSection = () => {
-    const name = newSectionName.trim();
-    if (name) {
-      addConfEntry(name);
-      setNewSectionName("");
-    } else {
-      addConfEntry();
-    }
-  };
 
   const renderEntryCard = (item: any, globalIndex: number) => {
     const hasDeferredEntryImages = (item.screenCaptureFilenames?.length || 0) > 0 && (item.images?.length || 0) === 0;
@@ -432,21 +389,32 @@ export default function DocumentationSync() {
             )}
           </div>
         )}
-        <div className="doc-sync-tabs">
-          <button onClick={() => setConfTab("form")} className={`doc-sync-tab ${confTab === "form" ? "active" : ""}`}>
-            <span className="material-symbols" style={{ fontSize: 20 }}>edit_note</span>
-            Data Entry
-          </button>
-          <button onClick={() => setConfTab("settings")} className={`doc-sync-tab ${confTab === "settings" ? "active" : ""}`}>
-            <span className="material-symbols" style={{ fontSize: 20 }}>settings_applications</span>
-            Sync Settings
+      </div>
+
+      <div className="card" style={{ padding: 32, marginBottom: 40 }}>
+        <h3 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24 }}>Confluence Sync Configuration</h3>
+        <div className="field-group" style={{ maxWidth: 500 }}>
+          <label>Target Page ID</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input placeholder="e.g. 123456789" value={config.confluence.targetPageId} onChange={(e) => setConfig({ ...config, confluence: { ...config.confluence, targetPageId: e.target.value } })} style={{ flex: 1 }} />
+            <button className="secondary-button" onClick={() => void parseConfPageEntries()} disabled={confPageLoading || !config.confluence.targetPageId.trim()} type="button" style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14, whiteSpace: 'nowrap' }}>
+              <span className="material-symbols" style={{ fontSize: 18, marginRight: 4 }}>table_rows</span>
+              {confPageLoading ? "Loading..." : "Parse Entries from Page"}
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 8 }}>Masukkan ID halaman Confluence tempat template tabel berada. Klik "Parse Entries from Page" untuk mengambil dan menyunting tabel yang ada secara instan.</p>
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          <button className="primary-button" onClick={() => void saveSettings()} style={{ padding: '8px 24px', borderRadius: 8, fontSize: 14 }} type="button">
+            <span className="material-symbols" style={{ fontSize: 18, marginRight: 6 }}>save</span>
+            Save Sync Settings
           </button>
         </div>
       </div>
 
-      {confTab === "form" && (
-        <>
-          <div className="page-header" style={{ marginBottom: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <>
+        <div className="page-header" style={{ marginBottom: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <div>
               <h4 style={{ margin: 0, color: 'var(--on-surface-variant)' }}>Enter Test Documentation</h4>
             </div>
@@ -481,133 +449,22 @@ export default function DocumentationSync() {
                 <span className="material-symbols" style={{ fontSize: 18 }}>delete_sweep</span>
                 Clear All
               </button>
-              <button className="primary-button" onClick={() => void syncConfluence()} disabled={confLoading} style={{ padding: '4px 16px', height: '32px', borderRadius: 6, fontSize: 13 }}>
-                <span className="material-symbols" style={{ fontSize: 18 }}>{confLoading ? 'progress_activity' : 'cloud_upload'}</span>
-                {confLoading ? 'Syncing...' : 'Sync to Confluence'}
-              </button>
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-            {groupedEntries.map(({ section, entries }) => {
-              const isCollapsed = collapsedSections.has(section);
-              return (
-                <div key={section || '__uncategorized__'} className="card" style={{ border: '1px solid var(--outline-variant)', borderRadius: 16, background: 'var(--surface)', overflow: 'hidden' }}>
-                  <div onClick={() => toggleSection(section)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', cursor: 'pointer', background: 'var(--surface-container-low)', borderBottom: isCollapsed ? 'none' : '1px solid var(--outline-variant)', transition: 'background 0.2s' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span className="material-symbols" style={{ fontSize: 20, color: 'var(--primary)', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>expand_more</span>
-                      <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--on-surface)' }}>{section || 'Uncategorized'}</span>
-                      <span style={{ fontSize: 12, color: 'var(--on-surface-variant)', background: 'var(--surface-container-highest)', padding: '2px 8px', borderRadius: 10 }}>{entries.length} {entries.length === 1 ? 'entry' : 'entries'}</span>
-                    </div>
-                  </div>
-                  {!isCollapsed && (
-                    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
-                      {entries.map((item) => {
-                        const globalIndex = confEntries.findIndex((e) => e.id === item.id);
-                        return renderEntryCard(item, globalIndex);
-                      })}
-                      <button onClick={() => addConfEntry(section)} style={{ border: '1px dashed var(--outline-variant)', background: 'var(--surface-container-lowest)', height: 44, borderRadius: 8, fontSize: 13 }} className="secondary-button">
-                        <span className="material-symbols" style={{ fontSize: 18 }}>add_circle</span>
-                        Add Entry to {section || 'Uncategorized'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            {confEntries.map((item, index) => renderEntryCard(item, index))}
+            <button onClick={() => addConfEntry()} style={{ border: '1px dashed var(--outline-variant)', background: 'var(--surface-container-lowest)', height: 44, borderRadius: 8, fontSize: 13 }} className="secondary-button">
+              <span className="material-symbols" style={{ fontSize: 18 }}>add_circle</span>
+              Add Entry
+            </button>
 
-            <div className="card" style={{ padding: 20, border: '1px dashed var(--outline-variant)', background: 'var(--surface-container-low)', borderRadius: 12 }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span className="material-symbols" style={{ fontSize: 20, color: 'var(--primary)' }}>create_new_folder</span>
-                <input placeholder="New section name (optional)" value={newSectionName} onChange={(e) => setNewSectionName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddSection(); }} style={{ flex: 1, height: 40, boxSizing: 'border-box', fontSize: 13 }} />
-                <button className="primary-button" onClick={handleAddSection} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, height: 40 }}>
-                  <span className="material-symbols" style={{ fontSize: 18 }}>add</span>
-                  Add Section
-                </button>
-              </div>
-              <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 8, marginBottom: 0 }}>Kosongkan nama section untuk menambah entry tanpa grouping.</p>
-            </div>
+            <button className="primary-button" onClick={() => void syncConfluence()} disabled={confLoading} style={{ padding: '10px 20px', borderRadius: 8, fontSize: 14, alignSelf: 'flex-end', marginTop: 8 }}>
+              <span className="material-symbols" style={{ fontSize: 20 }}>{confLoading ? 'progress_activity' : 'cloud_upload'}</span>
+              {confLoading ? 'Syncing...' : 'Sync to Confluence'}
+            </button>
           </div>
         </>
-      )}
-
-      {confTab === "settings" && (
-        <div className="card" style={{ padding: 40 }}>
-          <h3 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24 }}>Confluence Sync Configuration</h3>
-          <div className="field-group" style={{ maxWidth: 500 }}>
-            <label>Target Page ID</label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input placeholder="e.g. 123456789" value={config.confluence.targetPageId} onChange={(e) => setConfig({ ...config, confluence: { ...config.confluence, targetPageId: e.target.value } })} style={{ flex: 1 }} />
-              <button className="secondary-button" onClick={() => void parseConfPageEntries()} disabled={confPageLoading || !config.confluence.targetPageId.trim()} type="button" style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14, whiteSpace: 'nowrap' }}>
-                <span className="material-symbols" style={{ fontSize: 18, marginRight: 4 }}>table_rows</span>
-                {confPageLoading ? "Loading..." : "Parse Entries from Page"}
-              </button>
-            </div>
-            <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 8 }}>Masukkan ID halaman Confluence tempat template tabel berada. Klik "Parse Entries from Page" untuk mengambil dan menyunting tabel yang ada secara instan.</p>
-          </div>
-
-          <div className="field-group" style={{ maxWidth: 500, marginTop: 20 }}>
-            <label>Jira Server ID <span style={{ color: 'var(--on-surface-variant)', fontWeight: 400 }}>(opsional, untuk Jira macro)</span></label>
-            <input placeholder="Auto-detected saat Parse Entries" value={config.confluence.jiraServerId || ""} onChange={(e) => setConfig({ ...config, confluence: { ...config.confluence, jiraServerId: e.target.value } })} />
-            <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 8 }}>Diperlukan untuk mengirim Jira macro ke Confluence. Biasanya terdeteksi otomatis saat "Parse Entries from Page".</p>
-          </div>
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 24 }}>
-            <button className="secondary-button" onClick={() => void loadConfPagePreview()} disabled={confPageLoading || !config.confluence.targetPageId.trim()} type="button" style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14 }}>
-              <span className="material-symbols" style={{ fontSize: 18, marginRight: 6 }}>preview</span>
-              {confPageLoading ? "Loading..." : "Preview Page"}
-            </button>
-            <button className="secondary-button" onClick={() => void previewConfluenceSync()} disabled={confPreviewLoading || !config.confluence.targetPageId.trim()} type="button" style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14 }}>
-              <span className="material-symbols" style={{ fontSize: 18, marginRight: 6 }}>fact_check</span>
-              {confPreviewLoading ? "Preparing..." : "Preview Sync"}
-            </button>
-          </div>
-
-          {confPagePreview && (
-            <div style={{ marginTop: 20, padding: 16, borderRadius: 12, border: "1px solid var(--outline-variant)", background: "var(--surface-container-low)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-                <div>
-                  <h4 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>{confPagePreview.title}</h4>
-                  <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--on-surface-variant)" }}>Version {confPagePreview.version}</p>
-                </div>
-                <span style={{ fontSize: 12, color: "var(--primary)" }}>{confPagePreview.content.length} chars loaded</span>
-              </div>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto", fontSize: 12, lineHeight: 1.6 }}>{confPagePreview.content.slice(0, 1200)}</pre>
-            </div>
-          )}
-
-          {confSyncPreview && (
-            <div style={{ marginTop: 20, padding: 16, borderRadius: 12, border: "1px solid var(--outline-variant)", background: "rgba(37, 99, 235, 0.06)" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Current Title</div>
-                  <div style={{ fontWeight: 600 }}>{confSyncPreview.currentTitle}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Entry Count</div>
-                  <div style={{ fontWeight: 600 }}>{confSyncPreview.entryCount}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Existing Entries</div>
-                  <div style={{ fontWeight: 600 }}>{confSyncPreview.existingEntryCount}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Version</div>
-                  <div style={{ fontWeight: 600 }}>{confSyncPreview.currentVersion}</div>
-                </div>
-              </div>
-              <pre style={{ marginTop: 12, whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto", fontSize: 12, lineHeight: 1.6 }}>{confSyncPreview.generatedTables}</pre>
-            </div>
-          )}
-
-          <div style={{ marginTop: 24 }}>
-            <button className="primary-button" onClick={() => void saveSettings()} style={{ padding: '8px 24px', borderRadius: 8, fontSize: 14 }} type="button">
-              <span className="material-symbols" style={{ fontSize: 18, marginRight: 6 }}>save</span>
-              Save Sync Settings
-            </button>
-          </div>
-        </div>
-      )}
     </section>
 
       {/* ── Import Test Execution Modal ─────────────────────────────── */}

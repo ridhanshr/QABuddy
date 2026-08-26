@@ -1933,79 +1933,6 @@ select {
   background: var(--surface-container-low);
 }
 
-/* Toggle switch */
-.uqa-toggle {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-  flex-shrink: 0;
-}
-
-.uqa-toggle input {
-  display: none;
-}
-
-.uqa-toggle-slider {
-  position: absolute;
-  inset: 0;
-  background: var(--surface-container-high);
-  border-radius: 11px;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.uqa-toggle-slider::before {
-  content: "";
-  position: absolute;
-  width: 18px;
-  height: 18px;
-  left: 2px;
-  bottom: 2px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform 0.2s ease;
-}
-
-.uqa-toggle input:checked + .uqa-toggle-slider {
-  background: var(--tertiary);
-}
-
-.uqa-toggle input:checked + .uqa-toggle-slider::before {
-  transform: translateX(18px);
-}
-
-/* Day pills */
-.uqa-day-pills {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.uqa-day-pill {
-  padding: 5px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--outline-variant);
-  background: var(--surface-container-low);
-  color: var(--font-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  user-select: none;
-}
-
-.uqa-day-pill:hover {
-  background: var(--surface-container-high);
-  border-color: var(--font-disabled);
-}
-
-.uqa-day-pill.active {
-  background: var(--tertiary);
-  color: #fff;
-  border-color: var(--tertiary);
-}
-
 /* Field group */
 .uqa-field-group {
   display: flex;
@@ -2297,13 +2224,6 @@ select {
   gap: 2px;
   font-family: "Fira Code", var(--font-mono, monospace);
   letter-spacing: -0.02em;
-}
-
-.uqa-issue-reminder-bell {
-  font-size: 14px;
-  color: var(--warning);
-  display: inline-flex;
-  align-items: center;
 }
 
 .uqa-issue-summary {
@@ -2679,13 +2599,6 @@ select {
   overflow-y: auto;
 }
 
-.uqa-empty-text {
-  margin: 0;
-  font-size: 13px;
-  color: var(--font-secondary);
-  font-style: italic;
-}
-
 /* Transition row */
 .uqa-transition-row {
   display: flex;
@@ -2694,30 +2607,6 @@ select {
 }
 
 .uqa-transition-row select {
-  flex: 1;
-}
-
-/* Entry rows in recent activity */
-.uqa-entry-row {
-  display: flex;
-  gap: 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--surface-container-high);
-  font-size: 13px;
-}
-
-.uqa-entry-row:last-child {
-  border-bottom: none;
-}
-
-.uqa-entry-date {
-  font-weight: 600;
-  white-space: nowrap;
-  min-width: 80px;
-}
-
-.uqa-entry-activity {
-  color: var(--font-secondary);
   flex: 1;
 }
 
@@ -2746,61 +2635,6 @@ select {
 .uqa-message.error {
   background: rgba(244, 67, 54, 0.12);
   color: var(--error);
-}
-
-/* ─── Per-UQA Reminder ────────────────────────────────── */
-
-.uqa-reminder-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 4px 0;
-}
-
-.uqa-reminder-toggle-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.uqa-reminder-toggle-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--font-primary);
-}
-
-.uqa-reminder-toggle-desc {
-  font-size: 11px;
-  color: var(--font-secondary);
-}
-
-.uqa-reminder-details {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--surface-container-high);
-}
-
-.uqa-reminder-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.uqa-reminder-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--font-primary);
-  min-width: 50px;
-}
-
-.uqa-reminder-loading {
-  font-size: 13px;
-  color: var(--font-secondary);
-  padding: 8px 0;
 }
 
 /* ─── Auto Generate (inside section card) ─────────────── */
@@ -2969,26 +2803,16 @@ select {
   margin-top: 12px;
 }
 
-.uqa-auto-notes-textarea {
-  resize: vertical;
-  min-height: 140px;
-  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
+.uqa-auto-generated-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(var(--primary-rgb), 0.08);
   border-radius: 8px;
-  border: 1px solid var(--border);
-  padding: 12px;
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--surface-primary);
-  transition: border-color 0.2s;
-}
-
-.uqa-auto-notes-textarea:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.1);
+  font-size: 12px;
+  color: var(--primary);
 }
 
 .uqa-auto-actions {

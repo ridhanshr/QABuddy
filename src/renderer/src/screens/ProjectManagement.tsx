@@ -81,6 +81,15 @@ function isNonJiraProject(projectKey: string): boolean {
   return NON_JIRA_PROJECT_KEYS.has(projectKey.toUpperCase());
 }
 
+function normalizeTeStatus(status: string | null | undefined): string | undefined {
+  if (!status) return undefined;
+  const s = status.toLowerCase().replace(/[\s_-]+/g, "");
+  if (s === "todo" || s === "open" || s === "new") return "TODO";
+  if (s === "inprogress" || s === "ongoing" || s === "executing") return "IN PROGRESS";
+  if (s === "done" || s === "closed" || s === "resolved" || s === "pass") return "DONE";
+  return status; // keep original if not recognized
+}
+
 function extractProjectKey(summary: string): string {
   // Format: "QCM - ENGBRICC - ..."  → second segment after splitting by " - "
   const parts = summary.split(" - ");
@@ -469,7 +478,7 @@ export default function ProjectManagement() {
         title: exec.summary,
         tp_jira_key: breadcrumb.planKey!,
         assignee: exec.assignee || undefined,
-        execution_status: exec.status || undefined,
+        execution_status: normalizeTeStatus(exec.status),
       }]);
       setExecsInDb((prev) => new Set(prev).add(exec.key));
       setExecSyncedRows((prev) => new Set(prev).add(exec.key));
@@ -494,7 +503,7 @@ export default function ProjectManagement() {
           title: exec.summary,
           tp_jira_key: breadcrumb.planKey!,
           assignee: exec.assignee || undefined,
-          execution_status: exec.status || undefined,
+          execution_status: normalizeTeStatus(exec.status),
         };
         return [item];
       });
@@ -527,8 +536,11 @@ export default function ProjectManagement() {
     setSyncingTcForExec((prev) => new Set(prev).add(execKey));
     setTcSyncResultForExec((prev) => ({ ...prev, [execKey]: undefined as any }));
     try {
-      const count = await window.qaBuddy.syncExecutionTestsToDb(execKey);
-      setTcSyncResultForExec((prev) => ({ ...prev, [execKey]: { ok: true, msg: `${count} TC tersimpan` } }));
+      const { count, truncated } = await window.qaBuddy.syncExecutionTestsToDb(execKey);
+      const msg = truncated
+        ? `${count} TC tersimpan (TE >200 TC, sebagian mungkin tidak tersync)`
+        : `${count} TC tersimpan`;
+      setTcSyncResultForExec((prev) => ({ ...prev, [execKey]: { ok: !truncated, msg } }));
     } catch (e: any) {
       setTcSyncResultForExec((prev) => ({ ...prev, [execKey]: { ok: false, msg: e?.message || String(e) } }));
     } finally {

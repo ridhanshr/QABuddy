@@ -22,7 +22,6 @@ import type {
   ChatHistoryMessage,
   ChatResponse,
   ConfluenceParseProgress,
-  ConfluencePreviewResult,
   ConfluenceTestImportEntry,
   ConnectionStatus,
   DashboardDigest,
@@ -54,7 +53,6 @@ import type {
   OcrResult,
   ParseConfluenceEntriesOptions,
   ParseConfluenceEntriesResult,
-  PerIssueReminder,
   ProjectInsightRequest,
   RagIndexProgress,
   RagStats,
@@ -169,10 +167,6 @@ const api = {
   // Confluence sync
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) =>
     cmd<SyncToConfluenceResult>("sync_to_confluence", { pageId, payload }),
-  previewConfluenceSync: (pageId: string, payload: { entries: unknown[] }) =>
-    cmd<ConfluencePreviewResult>("preview_confluence_sync", { pageId, payload }),
-  getConfluencePage: (pageId: string) =>
-    cmd<{ title: string; content: string; version: number }>("get_confluence_page", { pageId }),
   parseConfluenceEntries: (pageId: string, options?: ParseConfluenceEntriesOptions) =>
     cmd<ParseConfluenceEntriesResult>("parse_confluence_entries", {
       pageId,
@@ -333,10 +327,6 @@ const api = {
   syncUqaIssues: () => cmd<UqaIssue[]>("sync_uqa_issues"),
   onUqaSyncProgress: (callback: (progress: UqaSyncProgress) => void) =>
     on<UqaSyncProgress>("uqa-sync-progress", callback),
-  getPerUqaReminder: (issueKey: string) =>
-    cmd<PerIssueReminder | null>("get_per_uqa_reminder", { issueKey }),
-  updatePerUqaReminder: (issueKey: string, reminder: PerIssueReminder) =>
-    cmd<void>("update_per_uqa_reminder", { issueKey, reminder }),
 
   // ── Defect Repository ────────────────────────────────────────────────
   getDefectSources: (username: string, displayName: string) => cmd<JiraProjectSource[]>("get_defect_sources", { username, displayName }),
@@ -403,7 +393,7 @@ const api = {
   saveTestCases: (cases: SaveTestCaseInput[]) =>
     cmd<void>("save_test_cases", { cases }),
   syncExecutionTestsToDb: (execKey: string) =>
-    cmd<number>("sync_execution_tests_to_db", { execKey }),
+    cmd<{ count: number; truncated: boolean }>("sync_execution_tests_to_db", { execKey }),
 
   // ── Bitbucket Self-Hosted API ───────────────────────────────────────
   getBitbucketPrDetails: (prUrlOrId: string) =>

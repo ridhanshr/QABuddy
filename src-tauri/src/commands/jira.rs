@@ -496,13 +496,13 @@ pub async fn auto_generate_uqa_notes(state: State<'_, AppState>, issue_key: Stri
                     COALESCE(te.execution_status, '')                 AS execution_status,
                     DATE_FORMAT(te.last_sync, '%Y-%m-%d %H:%i:%s')   AS last_sync,
                     COUNT(tc.tc_key)                                  AS total,
-                    SUM(tc.test_run_status IN ('PASS','DONE','Done','Pass')) AS done_count,
-                    SUM(tc.test_run_status IN ('FAIL','FAILED','Failed','Fail')) AS failed_count,
-                    SUM(tc.test_run_status IN ('ABORTED','Aborted'))  AS aborted_count,
-                    SUM(tc.test_run_status IN ('EXECUTING','IN_PROGRESS','In Progress','In progress','Executing'))
-                                                                      AS in_progress_count,
-                    SUM(tc.test_run_status IN ('TODO','To Do','To do','todo'))
-                                                                      AS todo_count
+                    CAST(SUM(tc.test_run_status IN ('PASS','DONE','Done','Pass')) AS SIGNED) AS done_count,
+                    CAST(SUM(tc.test_run_status IN ('FAIL','FAILED','Failed','Fail')) AS SIGNED) AS failed_count,
+                    CAST(SUM(tc.test_run_status IN ('ABORTED','Aborted')) AS SIGNED) AS aborted_count,
+                    CAST(SUM(tc.test_run_status IN ('EXECUTING','IN_PROGRESS','In Progress','In progress','Executing'))
+                                                                      AS SIGNED) AS in_progress_count,
+                    CAST(SUM(tc.test_run_status IN ('TODO','To Do','To do','todo'))
+                                                                      AS SIGNED) AS todo_count
                 FROM test_plan tp
                 JOIN test_execution te ON te.tp_jira_key = tp.tp_jira_key
                 LEFT JOIN test_case tc ON tc.te_jira_key = te.te_jira_key
@@ -605,28 +605,6 @@ pub async fn get_uqa_issues_from_store(state: State<'_, AppState>) -> Result<Vec
 #[tauri::command]
 pub async fn sync_uqa_issues(state: State<'_, AppState>) -> Result<Vec<UqaIssue>, String> {
     get_uqa_issues(state).await
-}
-
-#[tauri::command]
-pub async fn get_per_uqa_reminder(
-    state: State<'_, AppState>,
-    issue_key: String,
-) -> Result<Option<crate::models::uqa::PerIssueReminder>, String> {
-    let config = load_config(state.clone()).await?;
-    Ok(config.uqa.per_issue_reminders.get(&issue_key).cloned())
-}
-
-#[tauri::command]
-pub async fn update_per_uqa_reminder(
-    state: State<'_, AppState>,
-    issue_key: String,
-    reminder: crate::models::uqa::PerIssueReminder,
-) -> Result<(), String> {
-    let mut app_config = load_config(state.clone()).await?;
-    app_config.uqa.per_issue_reminders.insert(issue_key, reminder);
-    let mut store = state.config.lock().await;
-    store.save(&app_config).await.map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 /// Struct representing a UQA issue with date custom fields, for syncing to DB.

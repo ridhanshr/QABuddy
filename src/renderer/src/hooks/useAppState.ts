@@ -8,7 +8,6 @@ import type {
   ConfluenceTestImportEntry,
   ConnectionStatus,
   ConnectionStatusItem,
-  ConfluencePreviewResult,
   DashboardProjectConfig,
   ParseConfluenceParseDebugReport,
   ParseConfluenceEntriesResult,
@@ -394,15 +393,11 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   const [ragSyncSpace, setRagSyncSpace] = useState("");
   const [ragSyncProject, setRagSyncProject] = useState("");
 
-  const [confTab, setConfTab] = useState<"form" | "settings">("form");
   const [confLoading, setConfLoading] = useState(false);
   const [confProgressHidden, setConfProgressHidden] = useState(false);
-  const [confPagePreview, setConfPagePreview] = useState<{ title: string; content: string; version: number } | null>(null);
   const confImageWidth = 450;
   const [confPageLoading, setConfPageLoading] = useState(false);
   const [confAttachmentHydrating, setConfAttachmentHydrating] = useState(false);
-  const [confSyncPreview, setConfSyncPreview] = useState<ConfluencePreviewResult | null>(null);
-  const [confPreviewLoading, setConfPreviewLoading] = useState(false);
   const [confParseStatus, setConfParseStatus] = useState<ParseConfluenceEntriesResult | null>(null);
   const [confParseProgress, setConfParseProgress] = useState<ConfluenceParseProgress | null>(null);
   const [confEntries, setConfEntries] = useState<any[]>([createEmptyConfEntry()]);
@@ -2074,47 +2069,6 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     }
   };
 
-  async function loadConfPagePreview() {
-    const pageId = config.confluence.targetPageId.trim();
-    if (!pageId) {
-      setBanner({ tone: "error", text: "Masukkan Target Page ID terlebih dahulu." });
-      return;
-    }
-    setConfPageLoading(true);
-    setConfPagePreview(null);
-    try {
-      const preview = await window.qaBuddy.getConfluencePage(pageId);
-      setConfPagePreview(preview);
-      setBanner({ tone: "success", text: `Page "${preview.title}" berhasil dimuat.` });
-    } catch (error) {
-      setBanner({ tone: "error", text: toErrorMessage(error, "Gagal memuat page Confluence.") });
-    } finally {
-      setConfPageLoading(false);
-    }
-  }
-
-  async function previewConfluenceSync() {
-    const pageId = config.confluence.targetPageId.trim();
-    if (!pageId) {
-      setBanner({ tone: "error", text: "Masukkan Target Page ID terlebih dahulu." });
-      return;
-    }
-    const previewEntries = confEntries.filter((entry) => entry.isDirty);
-    setConfPreviewLoading(true);
-    setConfSyncPreview(null);
-    try {
-      const result = await window.qaBuddy.previewConfluenceSync(pageId, {
-        entries: previewEntries.length > 0 ? previewEntries : confEntries,
-      });
-      setConfSyncPreview(result);
-      setBanner({ tone: "success", text: `Preview sync siap: ${result.entryCount} entry akan dikirim.` });
-    } catch (error) {
-      setBanner({ tone: "error", text: toErrorMessage(error, "Gagal menyiapkan preview sync Confluence.") });
-    } finally {
-      setConfPreviewLoading(false);
-    }
-  }
-
   async function parseConfPageEntries() {
     const pageId = config.confluence.targetPageId.trim();
     if (!pageId) {
@@ -2170,7 +2124,6 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
           confluence: { ...current.confluence, jiraServerId: effectiveResult.jiraServerId },
         }));
       }
-      setConfTab("form");
       setBanner({
         tone: "success",
         text: `Berhasil memuat ${entriesList.length} entry dari halaman "${effectiveResult.pageTitle || effectiveResult.pageId}".`,
@@ -3194,17 +3147,11 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     setRagSyncSpace,
     ragSyncProject,
     setRagSyncProject,
-    confTab,
-    setConfTab,
     confLoading,
     confProgressHidden,
     setConfProgressHidden,
-    confPagePreview,
-    setConfPagePreview,
     confPageLoading,
     confAttachmentHydrating,
-    confSyncPreview,
-    confPreviewLoading,
     confParseStatus,
     confParseProgress,
     confEntries,
@@ -3254,8 +3201,6 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     updateProgress,
     showUpdateProgress,
     setShowUpdateProgress,
-    loadConfPagePreview,
-    previewConfluenceSync,
     parseConfPageEntries,
     loadConfPageAttachments,
     syncConfluence,
