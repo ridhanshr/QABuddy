@@ -604,7 +604,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
                 updates.model = models[0];
               }
               // Also fix specialized models if they reference a non-existent model
-              for (const key of ["jqlModel", "chatModel", "extractionModel", "insightModel", "defectEmbeddingModel", "defectExplanationModel"] as const) {
+              for (const key of ["jqlModel", "chatModel", "extractionModel", "insightModel", "defectEmbeddingModel"] as const) {
                 const val = config.ollama[key];
                 if (val && !models.includes(val)) {
                   updates[key] = "";
@@ -1264,6 +1264,19 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       void loadRagStats();
     } catch (error) {
       setBanner({ tone: "error", text: toErrorMessage(error, "Gagal menghapus index.") });
+    }
+  }
+
+  async function handleRagClearBitbucket() {
+    try {
+      const result = await window.qaBuddy.ragClearBitbucket();
+      setBanner({
+        tone: "success",
+        text: `Cache Bitbucket dihapus (${result.removed} chunks dihapus, ${result.pruned} expired dibersihkan).`,
+      });
+      void loadRagStats();
+    } catch (error) {
+      setBanner({ tone: "error", text: toErrorMessage(error, "Gagal menghapus cache Bitbucket.") });
     }
   }
 
@@ -3180,6 +3193,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     handleRagIndexConfluence,
     handleRagIndexJira,
     handleRagClear,
+    handleRagClearBitbucket,
     refreshDashboard,
     runConnectionTest,
     runHealthcheck,

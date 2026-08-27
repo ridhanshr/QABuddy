@@ -2,16 +2,16 @@ mod commands;
 mod config;
 #[allow(dead_code)]
 mod models;
-#[allow(dead_code)]
-mod services;
 #[cfg(test)]
 mod runtime_smoke;
+#[allow(dead_code)]
+mod services;
 
 use config::store::ConfigStore;
 use services::brd_service::BRDService;
+use services::confluence::ConfluenceService;
 use services::db::DbPool;
 use services::defect_repository::DefectRepositoryService;
-use services::confluence::ConfluenceService;
 use services::jira::JiraService;
 use services::logs::LogsService;
 use services::ocr::OcrService;
@@ -19,9 +19,9 @@ use services::ollama::OllamaService;
 use services::qa::QaService;
 use services::rag::RagService;
 use services::update::UpdateService;
-use tokio::sync::Mutex;
 use std::sync::Arc;
 use tauri::Manager;
+use tokio::sync::Mutex;
 
 /// Shared application state, managed by Tauri and injected into commands via
 /// `State<'_, AppState>`. The stores/mutexes are created once at startup.
@@ -131,6 +131,7 @@ pub fn run() {
             commands::confluence::preview_confluence_sync,
             commands::confluence::sync_to_confluence,
             commands::confluence::extract_test_cases,
+            commands::document_review::review_document,
             commands::files::read_local_file,
             commands::files::get_directory_name,
             commands::logs::get_logs,
@@ -147,6 +148,7 @@ pub fn run() {
             commands::rag::rag_search,
             commands::rag::rag_get_stats,
             commands::rag::rag_clear_index,
+            commands::rag::rag_clear_bitbucket,
             commands::defect::get_defect_sources,
             commands::defect::save_defect_source,
             commands::defect::delete_defect_source,
@@ -231,6 +233,7 @@ pub fn run() {
             commands::bitbucket_commands::get_bitbucket_pr_details,
             commands::bitbucket_commands::fetch_bitbucket_diff,
             commands::bitbucket_commands::generate_test_scenarios_from_bitbucket,
+            commands::bitbucket_commands::explain_bitbucket_code,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

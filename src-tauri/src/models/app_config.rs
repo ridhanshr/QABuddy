@@ -54,8 +54,6 @@ pub struct OllamaConfig {
     pub insight_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defect_embedding_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defect_explanation_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,7 +70,8 @@ pub struct UqaConfig {
     pub last_notified_date: std::collections::BTreeMap<String, String>,
     /// Map of issueKey → per-issue reminder overrides.
     #[serde(default)]
-    pub per_issue_reminders: std::collections::BTreeMap<String, crate::models::uqa::PerIssueReminder>,
+    pub per_issue_reminders:
+        std::collections::BTreeMap<String, crate::models::uqa::PerIssueReminder>,
     /// "productTester" | "assignee" | "both"
     pub search_mode: String,
     #[serde(default)]
@@ -185,7 +184,6 @@ impl Default for AppConfig {
                 extraction_model: None,
                 insight_model: None,
                 defect_embedding_model: Some("embeddinggemma".to_string()),
-                defect_explanation_model: None,
             },
             preferences: Preferences {
                 theme: ThemePreference::Light,

@@ -59,7 +59,11 @@ mod tests {
                 status.confluence.message
             ));
         }
-        assert!(status.ollama.ok, "ollama connectivity failed: {}", status.ollama.message);
+        assert!(
+            status.ollama.ok,
+            "ollama connectivity failed: {}",
+            status.ollama.message
+        );
 
         let jira = JiraService::new();
         match jira.get_projects(&config.jira).await {
@@ -158,7 +162,9 @@ mod tests {
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or(config.ollama.model.as_str());
-            let client = ollama.client_for(&config.ollama.endpoint, embed_model).await;
+            let client = ollama
+                .client_for(&config.ollama.endpoint, embed_model)
+                .await;
             match client.embed(&chunk_text, Some(embed_model)).await {
                 Ok(embedding) => {
                     println!("ollama embedding dims: {}", embedding.len());
@@ -183,6 +189,9 @@ mod tests {
                             content: chunk_text.clone(),
                             embedding: embedding.clone(),
                             indexed_at: Utc::now().to_rfc3339(),
+                            code: None,
+                            expires_at: None,
+                            last_used_at: None,
                         }) {
                             blockers.push(format!("rag upsert failed: {e}"));
                         } else {

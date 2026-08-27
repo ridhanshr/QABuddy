@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import ReactDOM from "react-dom";
 import { useApp } from "../context/AppContext";
 import SearchableSelect from "../components/SearchableSelect";
@@ -18,6 +18,25 @@ const scenarioTypeStyle: Record<string, { bg: string; color: string }> = {
   Negative: { bg: "var(--error-container)", color: "var(--on-error-container)" },
   Regression: { bg: "#e8d5f5", color: "#5c2a7a" },
 };
+
+/** Best-effort: attribute a generated scenario to the file it cites in its
+ *  reasoning text. Matches the full path or its basename (case-insensitive). */
+function attributeScenarioToFile(
+  scenario: import("@shared/types").BitbucketTestScenario,
+  files: string[],
+  fallbackFile?: string,
+): string | null {
+  if (!files.length) return null;
+  const sorted = [...files].sort((a, b) => b.length - a.length);
+  const findMatch = (value: string) => sorted.find(f => {
+    const base = (f.split("/").pop() || f).toLowerCase();
+    const candidate = value.toLowerCase();
+    return candidate === f.toLowerCase() || candidate === base || candidate.includes(f.toLowerCase()) || candidate.includes(base);
+  });
+  return (scenario.filePath && findMatch(scenario.filePath))
+    || findMatch(scenario.reason || "")
+    || (fallbackFile && files.includes(fallbackFile) ? fallbackFile : null);
+}
 
 /** Flatten an Xray folder tree into a list of { path, id } */
 function flattenFolders(folders: XrayFolder[], prefix = ""): { label: string; value: string }[] {
@@ -49,6 +68,62 @@ function Badge({ label, style }: { label: string; style?: React.CSSProperties })
     }}>
       {label}
     </span>
+  );
+}
+
+function ScenarioCard({ sc, num }: { sc: import("@shared/types").BitbucketTestScenario; num: number }) {
+  const riskStyle =
+    sc.riskLevel === "High" ? { bg: "var(--error-container)", color: "var(--on-error-container)" }
+    : sc.riskLevel === "Medium" ? { bg: "rgba(234, 179, 8, 0.15)", color: "#d97706", border: "1px solid currentColor" }
+    : { bg: "var(--success-container, rgba(16, 185, 129, 0.15))", color: "#059669", border: "1px solid currentColor" };
+
+  return (
+    <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 14, background: "var(--surface)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontWeight: 700, fontSize: 13, color: "var(--on-surface-variant)" }}>#{num}</span>
+          <h5 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{sc.scenario}</h5>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{
+            padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 800,
+            background: sc.confidence >= 85 ? "rgba(16, 185, 129, 0.15)" : "rgba(234, 179, 8, 0.15)",
+            color: sc.confidence >= 85 ? "#059669" : "#d97706",
+            border: "1px solid currentColor"
+          }}>
+            Confidence: {sc.confidence}%
+          </span>
+          <span className="badge" style={{ background: "var(--surface-container-high)", fontSize: 11 }}>{sc.scenarioType}</span>
+          <span className="badge" style={{ ...riskStyle }}>{sc.riskLevel}</span>
+        </div>
+      </div>
+
+      <div style={{ background: "var(--surface-container-low)", padding: "8px 12px", borderRadius: 6, fontSize: 12, color: "var(--on-surface-variant)", marginBottom: 10, borderLeft: "3px solid var(--primary)" }}>
+        <strong>Reasoning:</strong> {sc.reason}
+      </div>
+
+      {sc.preconditions.length > 0 && (
+        <div style={{ fontSize: 12, marginBottom: 8, color: "var(--on-surface-variant)" }}>
+          <strong>Preconditions:</strong> {sc.preconditions.join("; ")}
+        </div>
+      )}
+
+       {sc.steps.length > 0 && (
+        <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginTop: 4 }}>
+          <strong>Steps &amp; Expected Result:</strong>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+            {sc.steps.map((st, sIdx) => (
+              <li key={sIdx}>
+                <strong>Step {st.step || sIdx + 1}:</strong> {st.action || "(aksi tidak diberikan)"}
+                <span style={{ display: "block", paddingLeft: 8 }}>
+                  Expected: {st.expected || "(hasil yang diharapkan tidak diberikan)"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -323,6 +398,8 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [bitbucketSummary, setBitbucketSummary] = useState<import("@shared/types").BitbucketDiffSummary | null>(null);
   const [bitbucketGenerateResult, setBitbucketGenerateResult] = useState<import("@shared/types").BitbucketGenerateResponse | null>(null);
   const [bitbucketError, setBitbucketError] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const [fileFilter, setFileFilter] = useState<string>("All");
   const [minConfidence, setMinConfidence] = useState<number>(0);
   const [filterRisk, setFilterRisk] = useState<string>("All");
 
@@ -335,6 +412,8 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     try {
       const summary = await window.qaBuddy.getBitbucketPrDetails(bitbucketPrUrl);
       setBitbucketSummary(summary);
+      setSelectedFiles((summary.files || []).filter(f => f.explainable !== false).map(f => f.path));
+      setFileFilter("All");
     } catch (e: any) {
       setBitbucketError(e?.message || String(e));
     } finally {
@@ -349,7 +428,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     try {
       const res = await window.qaBuddy.generateTestScenariosFromBitbucket({
         prUrlOrId: bitbucketPrUrl,
-        selectedFiles: bitbucketSummary ? bitbucketSummary.files.map(f => f.path) : [],
+        selectedFiles,
         forceRefreshCache: forceRefresh,
       });
       setBitbucketGenerateResult(res);
@@ -358,7 +437,43 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     } finally {
       setBitbucketGenerating(false);
     }
-  }, [bitbucketPrUrl, bitbucketSummary]);
+  }, [bitbucketPrUrl, selectedFiles]);
+
+  // ── AI Code Explainer ──
+  const [explainFile, setExplainFile] = useState("");
+  const [explainMode, setExplainMode] = useState<"simple" | "technical" | "impact">("simple");
+  const [explainStartLine, setExplainStartLine] = useState("");
+  const [explainEndLine, setExplainEndLine] = useState("");
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainResult, setExplainResult] = useState<import("@shared/types").BitbucketExplainResponse | null>(null);
+
+  const handleExplainBitbucketCode = useCallback(async (forceRefresh = false) => {
+    if (!bitbucketPrUrl.trim() || !explainFile) return;
+    setExplainLoading(true);
+    setBitbucketError("");
+    try {
+      const startLine = explainStartLine ? Number(explainStartLine) : undefined;
+      const endLine = explainEndLine ? Number(explainEndLine) : undefined;
+      const res = await window.qaBuddy.explainBitbucketCode({
+        prUrlOrId: bitbucketPrUrl,
+        filePath: explainFile,
+        mode: explainMode,
+        startLine,
+        endLine,
+        forceRefresh,
+      });
+      setExplainResult(res);
+    } catch (e: any) {
+      setBitbucketError(e?.message || String(e));
+    } finally {
+      setExplainLoading(false);
+    }
+  }, [bitbucketPrUrl, explainFile, explainMode, explainStartLine, explainEndLine]);
+
+  const explainableFiles = useMemo(
+    () => (bitbucketSummary?.files || []).filter(f => f.explainable !== false),
+    [bitbucketSummary]
+  );
 
   // ── Xray Folder Selection ──
   const [xrayFolders, setXrayFolders] = useState<{ label: string; value: string }[]>([]);
@@ -751,21 +866,21 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
             <button
               type="button"
-              className={`button ${creationMode === "brd" ? "primary" : "secondary"}`}
+              className={creationMode === "brd" ? "primary-button" : "secondary-button"}
               onClick={() => setCreationMode("brd")}
               style={{ fontSize: 13, padding: "8px 16px", borderRadius: 20 }}
             >
               <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>description</span>
-              Confluence BRD Generator
+              Generate Scenario From Confluence BRD
             </button>
             <button
               type="button"
-              className={`button ${creationMode === "bitbucket" ? "primary" : "secondary"}`}
+              className={creationMode === "bitbucket" ? "primary-button" : "secondary-button"}
               onClick={() => setCreationMode("bitbucket")}
               style={{ fontSize: 13, padding: "8px 16px", borderRadius: 20 }}
             >
               <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>code</span>
-              Bitbucket Code Diff Generator (AI SLM)
+              Generate Scenario From Bitbucket Code Diff
             </button>
           </div>
 
@@ -785,38 +900,34 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                 Masukkan URL PR Bitbucket Server / Data Center internal. QA Buddy akan menganalisis <strong>Change Impact</strong>, mengekstrak <strong>Jira Acceptance Criteria</strong>, memfilter <strong>Existing Tests (Gap Analysis)</strong>, dan menghasilkan skenario lengkap dengan <strong>Confidence Score</strong>.
               </p>
 
-              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--on-surface-variant)" }}>
-                    Bitbucket Pull Request URL / ID
-                  </label>
-                  <input
-                    className="input"
-                    value={bitbucketPrUrl}
-                    onChange={e => setBitbucketPrUrl(e.target.value)}
-                    placeholder="https://bitbucket.internal.company.com/projects/PROJ/repos/repo/pull-requests/42"
-                    style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)" }}
-                  />
+              {/* Step 1: PR input */}
+              <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 16, background: "var(--surface-container-lowest)", marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: "50%", background: "var(--primary)", color: "var(--on-primary)", fontSize: 12, fontWeight: 700 }}>1</span>
+                  <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Masukkan Pull Request</h4>
                 </div>
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
-                  <button
-                    className="button secondary"
-                    onClick={handleFetchBitbucketPr}
-                    disabled={bitbucketLoading || !bitbucketPrUrl.trim()}
-                    type="button"
-                    style={{ height: 40 }}
-                  >
-                    {bitbucketLoading ? "Fetching PR..." : "Fetch PR & Diff"}
-                  </button>
-                  <button
-                    className="button primary"
-                    onClick={() => handleGenerateBitbucketScenarios(false)}
-                    disabled={bitbucketGenerating || !bitbucketPrUrl.trim()}
-                    type="button"
-                    style={{ height: 40 }}
-                  >
-                    {bitbucketGenerating ? "AI Processing..." : "Generate Scenarios"}
-                  </button>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <input
+                      className="input"
+                      value={bitbucketPrUrl}
+                      onChange={e => setBitbucketPrUrl(e.target.value)}
+                      placeholder="https://bitbucket.internal.company.com/projects/PROJ/repos/repo/pull-requests/42"
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)" }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <button
+                      className="secondary-button"
+                      onClick={handleFetchBitbucketPr}
+                      disabled={bitbucketLoading || !bitbucketPrUrl.trim()}
+                      type="button"
+                      style={{ height: 40 }}
+                    >
+                      <span className="material-symbols" style={{ fontSize: 17 }}>cloud_download</span>
+                      {bitbucketLoading ? "Fetching PR..." : "Fetch PR & Diff"}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -827,31 +938,136 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                 </div>
               )}
 
-              {/* PR Summary Card */}
+              {/* Step 2 (shown after fetch): PR Summary + File selection + Generate */}
               {bitbucketSummary && (
-                <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 16, background: "var(--surface-container-low)", marginBottom: 16 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                    <div>
-                      <h4 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>
-                        {bitbucketSummary.title}
-                      </h4>
-                      <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
-                        PR #{bitbucketSummary.prId} | Author: <strong>{bitbucketSummary.authorName}</strong> | Branch: <code>{bitbucketSummary.branchFrom}</code> → <code>{bitbucketSummary.branchTo}</code>
-                      </span>
+                <>
+                  <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 16, background: "var(--surface-container-low)", marginBottom: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                      <div>
+                        <h4 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>
+                          {bitbucketSummary.title}
+                        </h4>
+                        <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
+                          PR #{bitbucketSummary.prId} | Author: <strong>{bitbucketSummary.authorName}</strong> | Branch: <code>{bitbucketSummary.branchFrom}</code> → <code>{bitbucketSummary.branchTo}</code>
+                        </span>
+                      </div>
+                      {bitbucketSummary.jiraTicketKey && (
+                        <span className="badge" style={{ background: "var(--primary-container)", color: "var(--on-primary-container)", padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600 }}>
+                          {bitbucketSummary.jiraTicketKey}
+                        </span>
+                      )}
                     </div>
-                    {bitbucketSummary.jiraTicketKey && (
-                      <span className="badge" style={{ background: "var(--primary-container)", color: "var(--on-primary-container)", padding: "4px 10px", borderRadius: 12, fontSize: 12, fontWeight: 700 }}>
-                        Ticket: {bitbucketSummary.jiraTicketKey}
-                      </span>
-                    )}
+
+                    <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--on-surface-variant)" }}>
+                      <div>📁 Modified Files: <strong>{bitbucketSummary.files.length}</strong></div>
+                      <div>🔑 Commit: <code>{bitbucketSummary.latestCommitHash.substring(0, 8)}</code></div>
+                      {bitbucketSummary.cached && <div>⚡ Cache Key: Matched (PR_ID + CommitHash)</div>}
+                    </div>
                   </div>
 
-                  <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--on-surface-variant)" }}>
-                    <div>📁 Modified Files: <strong>{bitbucketSummary.files.length}</strong></div>
-                    <div>🔑 Commit: <code>{bitbucketSummary.latestCommitHash.substring(0, 8)}</code></div>
-                    {bitbucketSummary.cached && <div>⚡ Cache Key: Matched (PR_ID + CommitHash)</div>}
-                  </div>
-                </div>
+                  {/* File selection for scenario generation */}
+                  {(() => {
+                    const analyzable = (bitbucketSummary.files || []).filter(f => f.explainable !== false);
+                    const allSelected = analyzable.length > 0 && selectedFiles.length === analyzable.length;
+                    const pct = analyzable.length ? Math.round((selectedFiles.length / analyzable.length) * 100) : 0;
+                    const chipStyle: Record<string, { label: string; bg: string; color: string }> = {
+                      ADD: { label: "ADD", bg: "rgba(16,185,129,0.12)", color: "#059669" },
+                      MODIFY: { label: "MOD", bg: "rgba(234,179,8,0.14)", color: "#b45309" },
+                      DELETE: { label: "DEL", bg: "rgba(220,38,38,0.12)", color: "#dc2626" },
+                    };
+                    return (
+                      <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 12, overflow: "hidden", background: "var(--surface-container-lowest)", marginBottom: 16 }}>
+                        {/* Header */}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 16px", borderBottom: "1px solid var(--outline-variant)" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%", background: "var(--primary)", color: "var(--on-primary)", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>2</span>
+                            <div>
+                              <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Pilih file untuk di-generate scenario</h4>
+                              <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Scenario hanya dibuat dari file yang dipilih. Boleh lebih dari satu.</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => setSelectedFiles(allSelected ? [] : analyzable.map(f => f.path))}
+                            style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)", whiteSpace: "nowrap", flexShrink: 0 }}
+                          >
+                            <span className="material-symbols" style={{ fontSize: 15, verticalAlign: "middle", marginRight: 4 }}>{allSelected ? "deselect" : "select_all"}</span>
+                            {allSelected ? "Batal Semua" : "Pilih Semua"}
+                          </button>
+                        </div>
+
+                        {/* Summary bar */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "var(--surface-container-low)" }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+                            <strong style={{ color: "var(--primary)" }}>{selectedFiles.length}</strong> / {analyzable.length} file dipilih
+                          </span>
+                          <div style={{ flex: 1, height: 6, borderRadius: 999, background: "var(--surface-container-high)", overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${pct}%`, background: "var(--primary)", transition: "width 0.2s ease" }} />
+                          </div>
+                          <span style={{ fontSize: 11, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>{pct}%</span>
+                        </div>
+
+                        {/* List */}
+                        <div style={{ display: "flex", flexDirection: "column", maxHeight: 260, overflowY: "auto", padding: 8 }}>
+                          {analyzable.map(f => {
+                            const checked = selectedFiles.includes(f.path);
+                            const chip = chipStyle[f.changeType] || { label: f.changeType, bg: "var(--surface-container-high)", color: "var(--on-surface-variant)" };
+                            return (
+                              <label
+                                key={f.path}
+                                style={{
+                                  display: "flex", flexDirection: "row", alignItems: "center", flexWrap: "nowrap", gap: 10, padding: "9px 10px",
+                                  borderRadius: 8, cursor: "pointer", marginBottom: 2,
+                                  background: checked ? "rgba(8,87,195,0.07)" : "transparent",
+                                  border: "1px solid transparent", borderColor: checked ? "var(--primary)" : "transparent",
+                                  transition: "all 0.15s",
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    setSelectedFiles(prev => checked ? prev.filter(p => p !== f.path) : [...prev, f.path]);
+                                    setFileFilter("All");
+                                  }}
+                                  style={{ width: 16, height: 16, cursor: "pointer", accentColor: "var(--primary)", flexShrink: 0 }}
+                                />
+                                <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", textTransform: "none", background: chip.bg, color: chip.color, flexShrink: 0 }}>{chip.label}</span>
+                                <span
+                                  style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, textTransform: "none", letterSpacing: 0, color: "var(--on-surface)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                                  title={f.path}
+                                >{f.path}</span>
+                                <span style={{ fontSize: 12, fontFamily: "monospace", flexShrink: 0, textTransform: "none", letterSpacing: 0 }}>
+                                  <span style={{ color: "#059669", fontWeight: 600 }}>+{f.linesAdded}</span>
+                                  <span style={{ color: "#dc2626", marginLeft: 8, fontWeight: 600 }}>−{f.linesDeleted}</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                          {analyzable.length === 0 && (
+                            <div style={{ fontSize: 13, color: "var(--on-surface-variant)", padding: "14px 12px" }}>Tidak ada file yang bisa dianalisis pada PR ini.</div>
+                          )}
+                        </div>
+
+                        {/* Footer with generate */}
+                        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--outline-variant)", background: "var(--surface-container-low)" }}>
+                          <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>Skenario dibuat berdasarkan {selectedFiles.length} file</span>
+                          <button
+                            className="primary-button"
+                            onClick={() => handleGenerateBitbucketScenarios(false)}
+                            disabled={bitbucketGenerating || selectedFiles.length === 0}
+                            type="button"
+                            style={{ height: 38 }}
+                          >
+                            <span className="material-symbols" style={{ fontSize: 17 }}>auto_awesome</span>
+                            {bitbucketGenerating ? "AI Processing..." : `Generate Scenarios`}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
               )}
 
               {/* Impact & Gap Analysis Section */}
@@ -903,7 +1119,21 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                       Generated Scenarios ({bitbucketGenerateResult.scenarios.length})
                     </h4>
 
-                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                      <label style={{ fontSize: 12, color: "var(--on-surface-variant)", display: "flex", alignItems: "center", gap: 6 }}>
+                        Filter File:
+                        <select
+                          value={fileFilter}
+                          onChange={e => setFileFilter(e.target.value)}
+                          style={{ padding: "4px 8px", borderRadius: 6, fontSize: 12 }}
+                        >
+                          <option value="All">Semua file</option>
+                          {(bitbucketSummary?.files || []).filter(f => f.explainable !== false).map(f => (
+                            <option key={f.path} value={f.path}>{f.path}</option>
+                          ))}
+                        </select>
+                      </label>
+
                       <label style={{ fontSize: 12, color: "var(--on-surface-variant)", display: "flex", alignItems: "center", gap: 6 }}>
                         Min Confidence:
                         <select
@@ -919,9 +1149,9 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
 
                       <button
                         type="button"
-                        className="button secondary"
+                        className="secondary-button"
                         onClick={() => handleGenerateBitbucketScenarios(true)}
-                        style={{ fontSize: 12, padding: "4px 10px" }}
+                        style={{ fontSize: 12, padding: "6px 10px", height: 30 }}
                         title="Force re-run AI generation without cache"
                       >
                         <span className="material-symbols" style={{ fontSize: 14, marginRight: 4, verticalAlign: "middle" }}>refresh</span>
@@ -930,65 +1160,221 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                     </div>
                   </div>
 
-                  {/* Scenario Cards */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {bitbucketGenerateResult.scenarios
-                      .filter(s => s.confidence >= minConfidence)
-                      .map((sc, idx) => (
-                        <div key={idx} style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 14, background: "var(--surface)" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              <span style={{ fontWeight: 700, fontSize: 13, color: "var(--on-surface-variant)" }}>#{idx + 1}</span>
-                              <h5 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{sc.scenario}</h5>
+                  {(() => {
+                    const filtered = bitbucketGenerateResult.scenarios.filter(
+                      s => s.confidence >= minConfidence && (fileFilter === "All" || (attributeScenarioToFile(s, [fileFilter], selectedFiles.length === 1 ? selectedFiles[0] : undefined) === fileFilter))
+                    );
+                    if (filtered.length === 0) {
+                      return <div className="empty-state" style={{ fontSize: 13 }}>Tidak ada scenario yang cocok dengan filter.</div>;
+                    }
+                    const groupFiles = fileFilter === "All" ? (bitbucketSummary?.files || []).filter(f => f.explainable !== false).map(f => f.path) : [fileFilter];
+                     const groups = groupFiles.map(path => ({ path, scenarios: filtered.filter(s => attributeScenarioToFile(s, [path], selectedFiles.length === 1 ? selectedFiles[0] : undefined) === path) }))
+                      .filter(g => g.scenarios.length > 0);
+                     const ungrouped = filtered.filter(s => !groupFiles.some(path => attributeScenarioToFile(s, [path], selectedFiles.length === 1 ? selectedFiles[0] : undefined) === path));
+
+                    return (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                        {groups.map((group) => (
+                          <div key={group.path}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid var(--outline-variant)" }}>
+                              <span className="material-symbols" style={{ fontSize: 15, color: "var(--primary)" }}>description</span>
+                              <code style={{ fontSize: 12, color: "var(--on-surface)", fontWeight: 600 }}>{group.path}</code>
+                              <span className="badge" style={{ background: "var(--primary-container)", color: "var(--on-primary-container)" }}>{group.scenarios.length}</span>
                             </div>
-                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                              {/* Confidence Score Badge */}
-                              <span style={{
-                                padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 800,
-                                background: sc.confidence >= 85 ? "rgba(16, 185, 129, 0.15)" : "rgba(234, 179, 8, 0.15)",
-                                color: sc.confidence >= 85 ? "#059669" : "#d97706",
-                                border: "1px solid currentColor"
-                              }}>
-                                Confidence: {sc.confidence}%
-                              </span>
-                              <span className="badge" style={{ background: "var(--surface-container-high)", fontSize: 11 }}>
-                                {sc.scenarioType}
-                              </span>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                              {group.scenarios.map((sc, idx) => (
+                                <ScenarioCard key={idx} sc={sc} num={idx + 1} />
+                              ))}
                             </div>
                           </div>
+                        ))}
 
-                          <div style={{ background: "var(--surface-container-low)", padding: "8px 12px", borderRadius: 6, fontSize: 12, color: "var(--on-surface-variant)", marginBottom: 10, borderLeft: "3px solid var(--primary)" }}>
-                            <strong>Reasoning:</strong> {sc.reason}
+                        {ungrouped.length > 0 && (
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid var(--outline-variant)" }}>
+                              <span className="material-symbols" style={{ fontSize: 15, color: "var(--secondary)" }}>source_notes</span>
+                              <span style={{ fontSize: 12, fontWeight: 600 }}>Lainnya (tidak terpetakan ke file)</span>
+                              <span className="badge" style={{ background: "var(--surface-container-high)" }}>{ungrouped.length}</span>
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                              {ungrouped.map((sc, idx) => (
+                                <ScenarioCard key={idx} sc={sc} num={idx + 1} />
+                              ))}
+                            </div>
                           </div>
-
-                          {sc.preconditions.length > 0 && (
-                            <div style={{ fontSize: 12, marginBottom: 8, color: "var(--on-surface-variant)" }}>
-                              <strong>Preconditions:</strong> {sc.preconditions.join("; ")}
-                            </div>
-                          )}
-
-                          {sc.steps.length > 0 && (
-                            <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginTop: 4 }}>
-                              <strong>Expected Result:</strong>
-                              <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
-                                {sc.steps.map((st, sIdx) => (
-                                  <li key={sIdx}>{st.expected}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                  </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
+
+              {/* ── AI Code Explainer ── */}
+              <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 16, background: "var(--surface-container-low)", marginTop: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span className="material-symbols" style={{ fontSize: 18, color: "var(--primary)" }}>psychology</span>
+                    AI Code Explainer
+                  </h4>
+                </div>
+
+                {!bitbucketSummary ? (
+                  <div style={{ fontSize: 13, color: "var(--on-surface-variant)", padding: "12px 0" }}>
+                    <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>info</span>
+                    Fetch PR &amp; Diff terlebih dahulu untuk memilih file yang akan dijelaskan.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12, flexWrap: "wrap" }}>
+                      <div style={{ flex: 1, minWidth: 180 }}>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--on-surface-variant)" }}>
+                          File
+                        </label>
+                        <select
+                          value={explainFile}
+                          onChange={e => { setExplainFile(e.target.value); setExplainResult(null); }}
+                          style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 13 }}
+                        >
+                          <option value="">-- Pilih file --</option>
+                          {explainableFiles.map(f => (
+                            <option key={f.path} value={f.path}>{f.path}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div style={{ flexShrink: 0 }}>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--on-surface-variant)" }}>
+                          Mode
+                        </label>
+                        <select
+                          value={explainMode}
+                          onChange={e => setExplainMode(e.target.value as "simple" | "technical" | "impact")}
+                          style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 13 }}
+                        >
+                          <option value="simple">Sederhana (non-IT)</option>
+                          <option value="technical">Teknis (developer)</option>
+                          <option value="impact">Dampak Perubahan PR</option>
+                        </select>
+                      </div>
+                      <div style={{ flexShrink: 0 }}>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--on-surface-variant)" }}>
+                          Baris (opsional)
+                        </label>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <input
+                            type="number" min={1} placeholder="mulai"
+                            value={explainStartLine}
+                            onChange={e => { setExplainStartLine(e.target.value); setExplainResult(null); }}
+                            style={{ width: 70, padding: "8px 8px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 13 }}
+                          />
+                          <input
+                            type="number" min={1} placeholder="akhir"
+                            value={explainEndLine}
+                            onChange={e => { setExplainEndLine(e.target.value); setExplainResult(null); }}
+                            style={{ width: 70, padding: "8px 8px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 13 }}
+                          />
+                        </div>
+                      </div>
+                      <button
+                        className="primary-button"
+                        onClick={() => handleExplainBitbucketCode(false)}
+                        disabled={explainLoading || !explainFile}
+                        type="button"
+                        style={{ height: 38, whiteSpace: "nowrap" }}
+                      >
+                        {explainLoading ? "Menjelaskan..." : "Explain"}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => handleExplainBitbucketCode(true)}
+                        disabled={explainLoading || !explainFile}
+                        type="button"
+                        title="Lewati cache dan jelaskan ulang"
+                        style={{ height: 38, whiteSpace: "nowrap" }}
+                      >
+                        <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 4 }}>refresh</span>
+                        Refresh
+                      </button>
+                    </div>
+
+                    {explainLoading && !explainResult && (
+                      <div style={{ fontSize: 12, color: "var(--on-surface-variant)", padding: "10px 0" }}>
+                        <span className={`material-symbols spin`} style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>progress_activity</span>
+                        AI sedang membaca dan menjelaskan kode...
+                      </div>
+                    )}
+                  </>
+                )}
+
+                  {explainResult && (
+                    <div style={{ background: "var(--surface)", border: "1px solid var(--outline-variant)", borderRadius: 8, padding: 14, fontSize: 13, color: "var(--on-surface)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <strong style={{ fontSize: 14 }}>{explainResult.title || explainFile}</strong>
+                        <span style={{ fontSize: 11, opacity: 0.7 }}>Confidence: {explainResult.confidence}%</span>
+                      </div>
+                      {explainResult.summary && <p style={{ margin: "0 0 8px" }}>{explainResult.summary}</p>}
+                      {explainResult.purpose && (
+                        <p style={{ margin: "0 0 8px", opacity: 0.85 }}><strong>Fungsi:</strong> {explainResult.purpose}</p>
+                      )}
+                      {explainResult.simpleFlow.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <strong>Alur sederhana:</strong>
+                          <ol style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                            {explainResult.simpleFlow.map((s, i) => <li key={i}>{s}</li>)}
+                          </ol>
+                        </div>
+                      )}
+                      {explainResult.inputs.length > 0 && (
+                        <div style={{ marginBottom: 4 }}><strong>Input:</strong> {explainResult.inputs.join(", ")}</div>
+                      )}
+                      {explainResult.outputs.length > 0 && (
+                        <div style={{ marginBottom: 4 }}><strong>Output:</strong> {explainResult.outputs.join(", ")}</div>
+                      )}
+                      {explainResult.businessImpact && (
+                        <p style={{ margin: "4px 0", opacity: 0.85 }}><strong>Dampak:</strong> {explainResult.businessImpact}</p>
+                      )}
+                      {explainResult.risks.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <strong>Risiko:</strong>
+                          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                            {explainResult.risks.map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      {explainResult.technicalTerms.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <strong>Istilah teknis:</strong>
+                          {explainResult.technicalTerms.map((t, i) => (
+                            <div key={i} style={{ margin: "2px 0" }}>
+                              <code>{t.term}</code>: {t.explanation}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {explainResult.evidence.length > 0 && (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--outline-variant)", fontSize: 12, opacity: 0.8 }}>
+                          <strong>Evidence:</strong>
+                          {explainResult.evidence.map((ev, i) => (
+                            <div key={i} style={{ margin: "2px 0" }}>
+                              <code>{ev.file}:{ev.lines}</code> — {ev.reason}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {explainResult.unknowns.length > 0 && (
+                        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+                          <strong>Belum bisa dipastikan:</strong> {explainResult.unknowns.join("; ")}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
             </div>
           ) : (
             <>
               <div className="card" style={{ padding: 20, marginBottom: 16 }}>
                 <h3 style={{ margin: "0 0 16px" }}>
                   <span className="material-symbols" style={{ fontSize: 18, verticalAlign: "middle", marginRight: 6 }}>auto_awesome</span>
-                  Generate Test Cases from BRD
+                  Generate Test Scenarios from BRD
                 </h3>
 
             <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
@@ -1017,7 +1403,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
               </div>
               <div style={{ display: "flex", alignItems: "flex-end" }}>
                 <button
-                  className="button primary"
+                  className="primary-button"
                   onClick={handleGenerate}
                   disabled={generating || !confluencePageId || !generationProject}
                   type="button"

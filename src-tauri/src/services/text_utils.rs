@@ -235,14 +235,73 @@ pub fn slugify(text: &str, max_len: usize) -> String {
 pub fn strip_html(html: &str) -> String {
     let style = Regex::new(r"(?is)<style[\s\S]*?</style>").unwrap();
     let script = Regex::new(r"(?is)<script[\s\S]*?</script>").unwrap();
-    let tags = Regex::new(r"<[^>]+>").unwrap();
+    let jira_macro = Regex::new(
+        r#"(?is)<ac:structured-macro\b[^>]*\bac:name\s*=\s*["']jira["'][^>]*>(.*?)</ac:structured-macro>"#,
+    )
+    .unwrap();
+    let jira_key = Regex::new(
+        r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*["']key["'][^>]*>([\s\S]*?)</ac:parameter>"#,
+    )
+    .unwrap();
+    let jira_jql = Regex::new(
+        r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*["']jql["'][^>]*>([\s\S]*?)</ac:parameter>"#,
+    )
+    .unwrap();
+    let inline_link = Regex::new(
+        r#"(?is)<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)</a>"#,
+    )
+    .unwrap();
+    let tag_strip = Regex::new(r"<[^>]+>").unwrap();
     let whitespace = Regex::new(r"\s+").unwrap();
 
     let mut s = style.replace_all(html, " ").to_string();
     s = script.replace_all(&s, " ").to_string();
-    s = tags.replace_all(&s, " ").to_string();
+    s = jira_macro
+        .replace_all(&s, |caps: &regex::Captures| {
+            let inner = &caps[1];
+            let keys: Vec<String> = jira_key
+                .captures_iter(inner)
+                .map(|c| strip_inner_tags(&c[1]).trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !keys.is_empty() {
+                return format!("[Jira: {}]", keys.join(", "));
+            }
+            if let Some(jql) = jira_key_cap(&jira_jql, inner) {
+                return format!("[Jira JQL: {}]", jql);
+            }
+            String::new()
+        })
+        .to_string();
+    s = inline_link
+        .replace_all(&s, |caps: &regex::Captures| {
+            let href = caps[1].trim();
+            let text = strip_inner_tags(&caps[2]).trim().to_string();
+            if text.is_empty() {
+                format!("[link: {href}]")
+            } else {
+                format!("{} [link: {href}]", text)
+            }
+        })
+        .to_string();
+    s = tag_strip.replace_all(&s, " ").to_string();
     s = decode_entities(&s);
     whitespace.replace_all(s.trim(), " ").to_string()
+}
+
+fn jira_key_cap(re: &Regex, inner: &str) -> Option<String> {
+    re.captures(inner)
+        .and_then(|c| {
+            let v = strip_inner_tags(&c[1]).trim().to_string();
+            if v.is_empty() { None } else { Some(v) }
+        })
+}
+
+fn strip_inner_tags(s: &str) -> String {
+    let tags = Regex::new(r"<[^>]+>").unwrap();
+    let ws = Regex::new(r"\s+").unwrap();
+    let s = tags.replace_all(s, " ").to_string();
+    ws.replace_all(s.trim(), " ").to_string()
 }
 
 fn decode_entities(s: &str) -> String {

@@ -103,7 +103,10 @@ impl OllamaClient {
             .json()
             .await
             .map_err(ServiceError::from)?;
-        Ok(format!("Ollama ready, {} model(s) available", resp.models.len()))
+        Ok(format!(
+            "Ollama ready, {} model(s) available",
+            resp.models.len()
+        ))
     }
 
     pub async fn get_available_models(&self) -> Vec<String> {
@@ -111,7 +114,11 @@ impl OllamaClient {
             Ok(c) => c,
             Err(_) => return vec![],
         };
-        let resp = match client.get(format!("{}/api/tags", self.endpoint)).send().await {
+        let resp = match client
+            .get(format!("{}/api/tags", self.endpoint))
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(_) => return vec![],
         };
@@ -129,7 +136,8 @@ impl OllamaClient {
         temperature: Option<f64>,
         model_override: Option<&str>,
     ) -> Option<String> {
-        self.generate_text_with_ctx(prompt, json_format, temperature, model_override, None).await
+        self.generate_text_with_ctx(prompt, json_format, temperature, model_override, None)
+            .await
     }
 
     pub async fn generate_text_with_ctx(
@@ -184,10 +192,16 @@ impl OllamaClient {
         match serde_json::from_str::<GenerateResponse>(&body_text) {
             Ok(parsed) => {
                 let text = parsed.response.trim().to_string();
-                if text.is_empty() { None } else { Some(text) }
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
             }
             Err(e) => {
-                let msg = format!("[OllamaClient] Failed to parse /api/generate response: {e}. Body: {body_text}");
+                let msg = format!(
+                    "[OllamaClient] Failed to parse /api/generate response: {e}. Body: {body_text}"
+                );
                 log::warn!("{msg}");
                 eprintln!("{msg}");
                 None
@@ -203,20 +217,98 @@ impl OllamaClient {
         temperature: Option<f64>,
         model_override: Option<&str>,
     ) -> Option<String> {
+        self.chat_inner(
+            system_prompt,
+            user_message,
+            history,
+            temperature,
+            model_override,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`chat`](Self::chat) but sends Ollama's `"format": "json"` option so
+    /// the model is constrained to emit a valid JSON object, which avoids
+    /// "Model response was not valid JSON" errors in structured tasks.
+    pub async fn chat_json(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        history: &[ChatHistoryMessage],
+        temperature: Option<f64>,
+        model_override: Option<&str>,
+    ) -> Option<String> {
+        self.chat_inner(
+            system_prompt,
+            user_message,
+            history,
+            temperature,
+            model_override,
+            Some(serde_json::json!("json")),
+            None,
+        )
+        .await
+    }
+
+    /// Like [`chat_json`](Self::chat_json) but sends a full JSON Schema (instead
+    /// of the generic `"json"` marker) so Ollama constrains the model to the
+    /// exact object shape — e.g. a top-level `scenarios` array. This is far more
+    /// reliable than `"format": "json"` for small instruction-following models.
+    /// `num_ctx` (if provided) is sent under the generation `options`.
+    pub async fn chat_json_schema(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        history: &[ChatHistoryMessage],
+        temperature: Option<f64>,
+        model_override: Option<&str>,
+        schema: &serde_json::Value,
+        num_ctx: Option<u32>,
+    ) -> Option<String> {
+        self.chat_inner(
+            system_prompt,
+            user_message,
+            history,
+            temperature,
+            model_override,
+            Some(schema.clone()),
+            num_ctx,
+        )
+        .await
+    }
+
+    async fn chat_inner(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        history: &[ChatHistoryMessage],
+        temperature: Option<f64>,
+        model_override: Option<&str>,
+        format: Option<serde_json::Value>,
+        num_ctx: Option<u32>,
+    ) -> Option<String> {
         let modeled = model_override.unwrap_or(&self.model);
         let url = format!("{}/api/chat", self.endpoint);
         let client = match self.long_client() {
             Ok(c) => c,
             Err(e) => {
                 let msg = format!("[OllamaClient] chat: failed to create HTTP client: {e}");
-                eprintln!("{msg}"); log::warn!("{msg}"); return None;
+                eprintln!("{msg}");
+                log::warn!("{msg}");
+                return None;
             }
         };
         let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
             "role": "system",
             "content": system_prompt,
         })];
-        let recent = if history.len() > 10 { &history[history.len() - 10..] } else { history };
+        let recent = if history.len() > 10 {
+            &history[history.len() - 10..]
+        } else {
+            history
+        };
         for msg in recent {
             messages.push(serde_json::json!({ "role": msg.role, "content": msg.content }));
         }
@@ -226,32 +318,52 @@ impl OllamaClient {
             "messages": messages,
             "stream": false,
         });
+        if let Some(f) = format {
+            body["format"] = f;
+        }
+        // Generation options must live under "options" for Ollama to honour them.
+        let mut options = serde_json::json!({});
         if let Some(t) = temperature {
-            body["temperature"] = serde_json::json!(t);
+            options["temperature"] = serde_json::json!(t);
+        }
+        if let Some(n) = num_ctx {
+            options["num_ctx"] = serde_json::json!(n);
+        }
+        if options.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
+            body["options"] = options;
         }
         let resp = match client.post(&url).json(&body).send().await {
             Ok(r) => r,
             Err(e) => {
                 let msg = format!("[OllamaClient] chat: HTTP request failed: {e}");
-                eprintln!("{msg}"); log::warn!("{msg}"); return None;
+                eprintln!("{msg}");
+                log::warn!("{msg}");
+                return None;
             }
         };
         let status = resp.status();
         let body_text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            let msg = format!("[OllamaClient] chat: HTTP {status} for model={modeled}: {body_text}");
-            eprintln!("{msg}"); log::warn!("{msg}"); return None;
+            let msg =
+                format!("[OllamaClient] chat: HTTP {status} for model={modeled}: {body_text}");
+            eprintln!("{msg}");
+            log::warn!("{msg}");
+            return None;
         }
         match serde_json::from_str::<ChatResponse>(&body_text) {
-            Ok(parsed) => {
-                parsed.message.and_then(|m| {
-                    let t = m.content.trim().to_string();
-                    if t.is_empty() { None } else { Some(t) }
-                })
-            }
+            Ok(parsed) => parsed.message.and_then(|m| {
+                let t = m.content.trim().to_string();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t)
+                }
+            }),
             Err(e) => {
                 let msg = format!("[OllamaClient] chat: failed to parse response for model={modeled}: {e}. Body: {body_text}");
-                eprintln!("{msg}"); log::warn!("{msg}"); None
+                eprintln!("{msg}");
+                log::warn!("{msg}");
+                None
             }
         }
     }
@@ -354,7 +466,11 @@ impl OllamaService {
             priority: value["priority"].as_str().unwrap_or("Medium").to_string(),
             labels: value["labels"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
         })
     }
@@ -368,7 +484,9 @@ impl OllamaService {
         let client = self.client_for(&config.endpoint, &config.model).await;
         let model = Self::model_or(config, None, "jql");
         let full_prompt = prompts::jql_prompt(prompt, project_key);
-        let raw = client.generate_text(&full_prompt, true, None, Some(&model)).await;
+        let raw = client
+            .generate_text(&full_prompt, true, None, Some(&model))
+            .await;
         let raw = match raw {
             Some(r) => r,
             None => return Ok(None),
@@ -417,7 +535,13 @@ impl OllamaService {
         let client = self.client_for(&config.endpoint, &config.model).await;
         let model = Self::model_or(config, None, "chat");
         client
-            .chat(system_prompt, user_message, history, temperature, Some(&model))
+            .chat(
+                system_prompt,
+                user_message,
+                history,
+                temperature,
+                Some(&model),
+            )
             .await
     }
 
@@ -497,7 +621,9 @@ impl OllamaService {
     }
 }
 
-fn parse_extracted_test_cases(raw: &str) -> Option<Vec<crate::models::test_case::ExtractedTestCase>> {
+fn parse_extracted_test_cases(
+    raw: &str,
+) -> Option<Vec<crate::models::test_case::ExtractedTestCase>> {
     let value = crate::services::text_utils::extract_json_block(raw)?;
     Some(parse_extracted_test_cases_value(&value))
 }
@@ -538,11 +664,14 @@ fn parse_extracted_test_cases_value(
         if let Some((_, arr)) = obj.iter().find(|(_, v)| {
             v.as_array()
                 .map(|items| {
-                    items.first().map(|first| {
-                        first.get("title").is_some()
-                            || first.get("objective").is_some()
-                            || first.get("test_case_name").is_some()
-                    }).unwrap_or(false)
+                    items
+                        .first()
+                        .map(|first| {
+                            first.get("title").is_some()
+                                || first.get("objective").is_some()
+                                || first.get("test_case_name").is_some()
+                        })
+                        .unwrap_or(false)
                 })
                 .unwrap_or(false)
         }) {
@@ -686,12 +815,38 @@ fn fallback_test_cases(
     depth: &str,
 ) -> Vec<crate::models::test_case::ExtractedTestCase> {
     let high = [
-        "harus", "dapat", "validasi", "error", "gagal", "berhasil", "must", "should", "validate",
-        "fail", "invalid", "verify", "successful",
+        "harus",
+        "dapat",
+        "validasi",
+        "error",
+        "gagal",
+        "berhasil",
+        "must",
+        "should",
+        "validate",
+        "fail",
+        "invalid",
+        "verify",
+        "successful",
     ];
     let low = [
-        "klik", "sistem", "menampilkan", "bisa", "tekan", "masukkan", "pengguna", "admin",
-        "salah", "click", "system", "display", "user", "input", "enter", "select", "allow",
+        "klik",
+        "sistem",
+        "menampilkan",
+        "bisa",
+        "tekan",
+        "masukkan",
+        "pengguna",
+        "admin",
+        "salah",
+        "click",
+        "system",
+        "display",
+        "user",
+        "input",
+        "enter",
+        "select",
+        "allow",
     ];
 
     let mut scored: Vec<(String, f64)> = Vec::new();
@@ -729,7 +884,8 @@ fn fallback_test_cases(
             id: "TC-001".into(),
             title: "Review requirement manually".into(),
             objective:
-                "No structured requirement text was found. Review the linked Confluence page.".into(),
+                "No structured requirement text was found. Review the linked Confluence page."
+                    .into(),
             priority: "P2".into(),
             category: "Manual Review".into(),
             selected: true,
@@ -752,7 +908,11 @@ fn fallback_test_cases(
                 title,
                 objective: sentence.clone(),
                 priority: if i < 2 { "P1" } else { "P2" }.into(),
-                category: if depth == "edge-case" { "Edge Case".into() } else { "Functional".into() },
+                category: if depth == "edge-case" {
+                    "Edge Case".into()
+                } else {
+                    "Functional".into()
+                },
                 selected: true,
                 source_evidence: Some(sentence.clone()),
                 confidence: None,
@@ -813,7 +973,8 @@ mod tests {
     fn filters_cases_without_source_evidence() {
         let raw = r#"{"testCases":[{"title":"Verify login","objective":"User can login"}]}"#;
         let parsed = parse_extracted_test_cases(raw).unwrap();
-        let supported = filter_supported_test_cases(parsed, "User can login with a valid password.");
+        let supported =
+            filter_supported_test_cases(parsed, "User can login with a valid password.");
         assert!(supported.is_empty());
     }
 }

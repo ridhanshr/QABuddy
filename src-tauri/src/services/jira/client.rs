@@ -7,9 +7,11 @@ use serde_json::Value;
 use crate::models::app_config::JiraConfig;
 use crate::models::jira::{XrayFolder, XrayTestRun};
 use crate::services::error::{Result, ServiceError};
-use crate::services::http::{jira_agile_client, jira_api_client, jira_xray_client, AtlassianClient};
-use crate::services::text_utils::adf_to_plain_text;
 use crate::services::http::normalize_url;
+use crate::services::http::{
+    jira_agile_client, jira_api_client, jira_xray_client, AtlassianClient,
+};
+use crate::services::text_utils::adf_to_plain_text;
 
 /// Strip Markdown-style bullet prefixes (`- `, `* `, `• `, `1. `, `1) `) from
 /// each line. Xray can store imported lines with these prefixes; the
@@ -52,29 +54,54 @@ impl JiraClient {
     pub async fn count_by_jql(&self, jql: &str) -> Result<u64> {
         let v: Value = self
             .api
-            .get_json("/search", &[
-                ("jql", jql.to_string()),
-                ("maxResults", "0".to_string()),
-                ("fields", "id".to_string()),
-            ])
+            .get_json(
+                "/search",
+                &[
+                    ("jql", jql.to_string()),
+                    ("maxResults", "0".to_string()),
+                    ("fields", "id".to_string()),
+                ],
+            )
             .await?;
         Ok(v.get("total").and_then(|t| t.as_u64()).unwrap_or(0))
     }
 
     /// Search issues returning a raw JSON array of issue objects.
-    pub async fn search_issues(&self, jql: &str, max_results: u32, fields: &str) -> Result<Vec<Value>> {
+    pub async fn search_issues(
+        &self,
+        jql: &str,
+        max_results: u32,
+        fields: &str,
+    ) -> Result<Vec<Value>> {
         let v: Value = self
             .api
-            .get_json("/search", &[
-                ("jql", jql.to_string()),
-                ("maxResults", max_results.to_string()),
-                ("fields", fields.to_string()),
-            ])
+            .get_json(
+                "/search",
+                &[
+                    ("jql", jql.to_string()),
+                    ("maxResults", max_results.to_string()),
+                    ("fields", fields.to_string()),
+                ],
+            )
             .await?;
         Ok(v.get("issues")
             .and_then(|i| i.as_array())
             .cloned()
             .unwrap_or_default())
+    }
+
+    /// Fetch the complete Jira issue payload needed by read-only document review.
+    pub async fn get_issue_raw(&self, issue_key: &str) -> Result<Value> {
+        let path = format!("/issue/{issue_key}");
+        self.api
+            .get_json(
+                &path,
+                &[(
+                    "fields",
+                    "summary,project,status,issuetype,issuelinks".to_string(),
+                )],
+            )
+            .await
     }
 
     // ── Xray folders ────────────────────────────────────────────────────
@@ -87,10 +114,13 @@ impl JiraClient {
         let mut folders = map_folders(&raw);
 
         // If flat list with parent ids, build a tree.
-        let flat = raw.iter().any(|f| f.get("parentId").and_then(|v| v.as_u64()).is_some());
-        let no_nested = raw
+        let flat = raw
             .iter()
-            .all(|f| !(f.get("children").is_some_and(|c| c.is_array()) || f.get("folders").is_some_and(|c| c.is_array())));
+            .any(|f| f.get("parentId").and_then(|v| v.as_u64()).is_some());
+        let no_nested = raw.iter().all(|f| {
+            !(f.get("children").is_some_and(|c| c.is_array())
+                || f.get("folders").is_some_and(|c| c.is_array()))
+        });
         if flat && no_nested {
             folders = build_folder_tree(folders);
         }
@@ -136,7 +166,11 @@ impl JiraClient {
 
         let labels: Vec<String> = fields["labels"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Resolve folder: try named field first, then scan customfields
@@ -160,7 +194,17 @@ impl JiraClient {
         (summary, labels, folder)
     }
 
-    pub async fn fetch_test_steps(&self, issue_key: &str) -> Option<(Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Option<String>)> {
+    pub async fn fetch_test_steps(
+        &self,
+        issue_key: &str,
+    ) -> Option<(
+        Vec<String>,
+        Vec<String>,
+        Vec<String>,
+        Vec<String>,
+        Vec<String>,
+        Option<String>,
+    )> {
         let path = format!("/test/{issue_key}/step");
         let (step_data, (summary, labels, folder)) = tokio::join!(
             self.xray.get_json_or_none(&path, &[]),
@@ -172,7 +216,10 @@ impl JiraClient {
             if let Some(s) = v.as_str() {
                 return s.to_string();
             }
-            v.get("raw").and_then(|r| r.as_str()).unwrap_or("").to_string()
+            v.get("raw")
+                .and_then(|r| r.as_str())
+                .unwrap_or("")
+                .to_string()
         };
         let steps: Vec<String> = arr
             .iter()
@@ -198,7 +245,11 @@ impl JiraClient {
     /// Fetch labels field from a Jira issue. Returns empty vec on any error.
     pub async fn fetch_issue_labels(&self, issue_key: &str) -> Vec<String> {
         let path = format!("/issue/{issue_key}");
-        let Ok(data) = self.api.get_json(&path, &[("fields", "labels".to_string())]).await else {
+        let Ok(data) = self
+            .api
+            .get_json(&path, &[("fields", "labels".to_string())])
+            .await
+        else {
             return vec![];
         };
         data["fields"]["labels"]
@@ -212,13 +263,22 @@ impl JiraClient {
     }
 
     /// Fetch the deepest Xray Test Repository folder name for a test issue.
-    pub async fn fetch_test_repository_folder(&self, _project_key: &str, issue_key: &str) -> Option<String> {
+    pub async fn fetch_test_repository_folder(
+        &self,
+        _project_key: &str,
+        issue_key: &str,
+    ) -> Option<String> {
         let (_, _, folder) = self.fetch_issue_meta(issue_key).await;
         folder
     }
 
     /// Add tests to an Xray folder, trying several payload shapes for compat.
-    pub async fn add_tests_to_folder(&self, project_key: &str, folder_id: u32, issue_keys: &[String]) -> Result<()> {
+    pub async fn add_tests_to_folder(
+        &self,
+        project_key: &str,
+        folder_id: u32,
+        issue_keys: &[String],
+    ) -> Result<()> {
         let payloads = [
             serde_json::json!({ "testIssueKeys": issue_keys }),
             serde_json::json!({ "keys": issue_keys }),
@@ -246,12 +306,19 @@ impl JiraClient {
     }
 
     /// Move tests into an Xray folder located by path.
-    pub async fn move_tests_to_folder(&self, project_key: &str, folder_path: &str, issue_keys: &[String]) -> Result<()> {
+    pub async fn move_tests_to_folder(
+        &self,
+        project_key: &str,
+        folder_path: &str,
+        issue_keys: &[String],
+    ) -> Result<()> {
         let all = self.get_xray_folders(project_key).await?;
         let parts = Self::split_folder_path(folder_path);
-        let folder_id = Self::find_folder_id(&all, &parts)
-            .ok_or_else(|| ServiceError::NotFound(format!("Folder tidak ditemukan: {folder_path}")))?;
-        self.add_tests_to_folder(project_key, folder_id, issue_keys).await
+        let folder_id = Self::find_folder_id(&all, &parts).ok_or_else(|| {
+            ServiceError::NotFound(format!("Folder tidak ditemukan: {folder_path}"))
+        })?;
+        self.add_tests_to_folder(project_key, folder_id, issue_keys)
+            .await
     }
 
     // ── UQA / issue detail ──────────────────────────────────────────────
@@ -278,7 +345,13 @@ impl JiraClient {
         let path = format!("/issue/{issue_key}");
         match self
             .api
-            .get_json(&path, &[("fields", "summary,description,status,updated,updateAuthor,issuetype".to_string())])
+            .get_json(
+                &path,
+                &[(
+                    "fields",
+                    "summary,description,status,updated,updateAuthor,issuetype".to_string(),
+                )],
+            )
             .await
         {
             Ok(d) => {
@@ -286,10 +359,7 @@ impl JiraClient {
                 out.insert("key".into(), d["key"].clone());
                 out.insert("summary".into(), d["fields"]["summary"].clone());
                 out.insert("description".into(), d["fields"]["description"].clone());
-                out.insert(
-                    "status".into(),
-                    d["fields"]["status"]["name"].clone(),
-                );
+                out.insert("status".into(), d["fields"]["status"]["name"].clone());
                 out.insert(
                     "statusCategory".into(),
                     d["fields"]["status"]["statusCategory"]["name"].clone(),
@@ -382,9 +452,15 @@ impl JiraClient {
     /// Fetch issue links, filtering for Test Execution type.
     pub async fn get_issue_links(&self, issue_key: &str) -> Result<Vec<Value>> {
         let path = format!("/issue/{issue_key}");
-        let v: Value = self.api.get_json(&path, &[("fields", "issuelinks".to_string())]).await?;
+        let v: Value = self
+            .api
+            .get_json(&path, &[("fields", "issuelinks".to_string())])
+            .await?;
         let mut out = Vec::new();
-        let links = v["fields"]["issuelinks"].as_array().cloned().unwrap_or_default();
+        let links = v["fields"]["issuelinks"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         for link in links {
             for dir in ["inwardIssue", "outwardIssue"] {
                 if link[dir]["fields"]["issuetype"]["name"].as_str() == Some("Test Execution") {
@@ -407,9 +483,16 @@ impl JiraClient {
         self.xray.post_json(&path, &payload).await.map(|_| ())
     }
 
-    pub async fn get_xray_test_execution_tests(&self, test_exec_key: &str) -> Result<Vec<XrayTestRun>> {
+    pub async fn get_xray_test_execution_tests(
+        &self,
+        test_exec_key: &str,
+    ) -> Result<Vec<XrayTestRun>> {
         let path = format!("/testexec/{test_exec_key}/test?detailed=true");
-        let data = self.xray.get_json_or_none(&path, &[]).await.unwrap_or(Value::Null);
+        let data = self
+            .xray
+            .get_json_or_none(&path, &[])
+            .await
+            .unwrap_or(Value::Null);
         let arr = data.as_array().cloned().unwrap_or_default();
         let runs = arr
             .iter()
@@ -417,17 +500,14 @@ impl JiraClient {
                 id: t["id"].as_u64().unwrap_or(0) as u32,
                 key: t["key"].as_str().unwrap_or("").to_string(),
                 status: t["status"].as_str().unwrap_or("").to_string(),
-                defects: t
-                    .get("defects")
-                    .and_then(|d| d.as_array())
-                    .map(|d| {
-                        d.iter()
-                            .map(|x| crate::models::jira::XrayTestDefect {
-                                key: x["key"].as_str().unwrap_or("").to_string(),
-                                summary: x["summary"].as_str().unwrap_or("").to_string(),
-                            })
-                            .collect()
-                    }),
+                defects: t.get("defects").and_then(|d| d.as_array()).map(|d| {
+                    d.iter()
+                        .map(|x| crate::models::jira::XrayTestDefect {
+                            key: x["key"].as_str().unwrap_or("").to_string(),
+                            summary: x["summary"].as_str().unwrap_or("").to_string(),
+                        })
+                        .collect()
+                }),
             })
             .collect();
         Ok(runs)
@@ -465,20 +545,23 @@ fn extract_folder_array(data: &Value) -> Vec<Value> {
 }
 
 fn map_folders(items: &[Value]) -> Vec<XrayFolder> {
-    items.iter().map(|f| XrayFolder {
-        id: f["id"].as_u64().unwrap_or(0) as u32,
-        name: f["name"].as_str().unwrap_or("").to_string(),
-        parent_id: f.get("parentId").and_then(|v| v.as_u64()).map(|n| n as u32),
-        children: {
-            if let Some(c) = f.get("children").and_then(|c| c.as_array()) {
-                Some(map_folders(c))
-            } else if let Some(c) = f.get("folders").and_then(|c| c.as_array()) {
-                Some(map_folders(c))
-            } else {
-                None
-            }
-        },
-    }).collect()
+    items
+        .iter()
+        .map(|f| XrayFolder {
+            id: f["id"].as_u64().unwrap_or(0) as u32,
+            name: f["name"].as_str().unwrap_or("").to_string(),
+            parent_id: f.get("parentId").and_then(|v| v.as_u64()).map(|n| n as u32),
+            children: {
+                if let Some(c) = f.get("children").and_then(|c| c.as_array()) {
+                    Some(map_folders(c))
+                } else if let Some(c) = f.get("folders").and_then(|c| c.as_array()) {
+                    Some(map_folders(c))
+                } else {
+                    None
+                }
+            },
+        })
+        .collect()
 }
 
 fn build_folder_tree(flat: Vec<XrayFolder>) -> Vec<XrayFolder> {
@@ -509,7 +592,11 @@ fn build_folder_tree(flat: Vec<XrayFolder>) -> Vec<XrayFolder> {
     }
     let _ = flat_exists;
 
-    fn build(id: u32, id_to_node: &mut HashMap<u32, XrayFolder>, children_map: &HashMap<u32, Vec<u32>>) -> XrayFolder {
+    fn build(
+        id: u32,
+        id_to_node: &mut HashMap<u32, XrayFolder>,
+        children_map: &HashMap<u32, Vec<u32>>,
+    ) -> XrayFolder {
         let mut node = id_to_node.remove(&id).unwrap_or(XrayFolder {
             id,
             name: String::new(),

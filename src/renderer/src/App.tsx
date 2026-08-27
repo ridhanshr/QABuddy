@@ -13,6 +13,7 @@ import DailyUQA from "./screens/DailyUQA";
 import Logs from "./screens/Logs";
 import Settings from "./screens/Settings";
 import Documentation from "./screens/Documentation";
+import DocumentationReview from "./screens/DocumentationReview";
 import DefectRepository from "./screens/DefectRepository";
 import TestCycleManager from "./screens/TestCycleManager";
 import ProjectManagement from "./screens/ProjectManagement";
@@ -22,6 +23,7 @@ const primaryNavigation: NavItem[] = [
   { key: "project-management", label: "Project Management", icon: "folder_open", filledIcon: "folder_open" },
   { key: "manual-test-case", label: "Test Cases Management", icon: "assignment", filledIcon: "assignment" },
   { key: "documentation-sync", label: "Test Evidence Management", icon: "description", filledIcon: "description" },
+  { key: "document-review", label: "QA Documentation Review", icon: "fact_check", filledIcon: "fact_check" },
   { key: "defect-repository", label: "Test Defect Management", icon: "inventory_2", filledIcon: "inventory_2" },
   { key: "daily-uqa", label: "Daily Activities", icon: "edit_note", filledIcon: "edit_note" },
 ];
@@ -268,6 +270,7 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
               {activeView === "logs" && <Logs />}
               {activeView === "settings" && <Settings />}
               {activeView === "documentation" && <Documentation />}
+              {activeView === "document-review" && <DocumentationReview />}
             </>
           )}
         </main>
@@ -317,13 +320,18 @@ export default function App() {
     setConfToken("");
   };
 
-  if (!loggedInUser) {
+  // Login form only applies to production (built) builds. In development the
+  // app opens directly with a placeholder user so you can iterate faster.
+  const isDev = import.meta.env.DEV;
+  const activeUser = loggedInUser ?? (isDev ? "dev" : null);
+
+  if (!activeUser) {
     return <Login onLogin={handleLogin} />;
   }
 
   return (
-    <AppProvider loggedInUser={loggedInUser} jiraToken={jiraToken} confToken={confToken}>
-      <AppContent onLogout={handleLogout} loggedInUser={loggedInUser} loggedInRole={loggedInRole} />
+    <AppProvider loggedInUser={activeUser} jiraToken={jiraToken} confToken={confToken}>
+      <AppContent onLogout={handleLogout} loggedInUser={activeUser} loggedInRole={loggedInRole} />
     </AppProvider>
   );
 }

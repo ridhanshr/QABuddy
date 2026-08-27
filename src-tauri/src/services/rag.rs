@@ -1,25 +1,33 @@
 //! RAG (Retrieval-Augmented Generation) service — sled-backed vector store with
-//! cosine-similarity search. Ports `rag-service.ts`. Chunks Confluence pages
-//! and Jira issues, embeds them via Ollama, and retrieves the most similar
-//! chunks for a query.
+//! cosine-similarity search. Ports `rag-service.ts`. Chunks Confluence pages,
+//! Jira issues, and (scoped) Bitbucket PR source code, embeds them via Ollama,
+//! and retrieves the most similar chunks for a query.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::rag::{RagSearchResult, RagStats};
+use crate::models::rag::{CodeChunkMeta, RagSearchResult, RagStats};
 use crate::services::error::{Result, ServiceError};
 
 const STORE_VERSION: u32 = 1;
 const MAX_CHUNK_SIZE: usize = 800;
 const CHUNK_OVERLAP: usize = 100;
 
+/// Bitbucket code chunks expire after this long since their last use (sliding
+/// TTL), so stale PR code is cleaned up automatically.
+pub const BITBUCKET_TTL_SECS: u64 = 30 * 60;
+/// Line-based chunk size used when indexing Bitbucket source files.
+pub const CODE_CHUNK_LINES: usize = 80;
+/// Overlap between neighbouring line-based code chunks.
+pub const CODE_CHUNK_OVERLAP: usize = 20;
+
 /// A single embedded text chunk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VectorChunk {
     pub id: String,
-    /// "confluence" | "jira"
+    /// "confluence" | "jira" | "bitbucket"
     pub source: String,
     pub source_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -29,6 +37,14 @@ pub struct VectorChunk {
     pub content: String,
     pub embedding: Vec<f64>,
     pub indexed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<CodeChunkMeta>,
+    /// RFC3339 instant after which the chunk may be pruned (Bitbucket TTL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    /// RFC3339 instant of the last retrieval (used for the sliding TTL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
 }
 
 /// Persisted vector store metadata (sled stores the chunks as individual keys).
@@ -37,8 +53,49 @@ struct StoreMeta {
     version: u32,
     last_confluence_sync: Option<String>,
     last_jira_sync: Option<String>,
+    last_bitbucket_sync: Option<String>,
 }
 
+/// Split source code into overlapping line-based chunks, tagging the changed
+/// line numbers that fall inside each chunk.
+/// Returns `(start_line, end_line, content, changed_lines_in_chunk)`.
+pub fn code_chunks(
+    content: &str,
+    changed: &std::collections::HashSet<usize>,
+    chunk_lines: usize,
+    overlap: usize,
+) -> Vec<(usize, usize, String, Vec<usize>)> {
+    let lines: Vec<(usize, &str)> = content
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l))
+        .collect();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let step = chunk_lines.saturating_sub(overlap).max(1);
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    while start < lines.len() {
+        let end = std::cmp::min(start + chunk_lines, lines.len());
+        let (s_line, _) = lines[start];
+        let (e_line, _) = lines[end - 1];
+        let body = lines[start..end]
+            .iter()
+            .map(|(_, l)| *l)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let changed_in: Vec<usize> = (s_line..=e_line).filter(|n| changed.contains(n)).collect();
+        out.push((s_line, e_line, body, changed_in));
+        if end >= lines.len() {
+            break;
+        }
+        start += step;
+    }
+    out
+}
+
+#[derive(Clone)]
 pub struct RagService {
     db: sled::Db,
 }
@@ -78,15 +135,19 @@ impl RagService {
 
     fn load_meta(&self) -> StoreMeta {
         match self.db.get(Self::meta_key()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<StoreMeta>(&bytes).unwrap_or_else(|_| StoreMeta {
-                version: STORE_VERSION,
-                last_confluence_sync: None,
-                last_jira_sync: None,
-            }),
+            Ok(Some(bytes)) => {
+                serde_json::from_slice::<StoreMeta>(&bytes).unwrap_or_else(|_| StoreMeta {
+                    version: STORE_VERSION,
+                    last_confluence_sync: None,
+                    last_jira_sync: None,
+                    last_bitbucket_sync: None,
+                })
+            }
             _ => StoreMeta {
                 version: STORE_VERSION,
                 last_confluence_sync: None,
                 last_jira_sync: None,
+                last_bitbucket_sync: None,
             },
         }
     }
@@ -146,6 +207,89 @@ impl RagService {
             .collect()
     }
 
+    /// Remove all chunks for a given source type + source id namespace.
+    pub fn remove_namespace(&self, source: &str, source_id: &str) -> Result<()> {
+        let mut to_remove: Vec<Vec<u8>> = Vec::new();
+        for item in self.db.iter() {
+            let (key, val) = item?;
+            if let Ok(chunk) = serde_json::from_slice::<VectorChunk>(&val) {
+                if chunk.source == source && chunk.source_id == source_id {
+                    to_remove.push(key.to_vec());
+                }
+            }
+        }
+        for k in to_remove {
+            self.db.remove(k)?;
+        }
+        Ok(())
+    }
+
+    /// Refresh the sliding TTL (last_used_at / expires_at) for every Bitbucket
+    /// chunk belonging to a PR namespace.
+    pub fn touch_bitbucket(&self, source_id: &str) -> Result<()> {
+        let now = chrono::Utc::now();
+        let expires = now + chrono::Duration::seconds(BITBUCKET_TTL_SECS as i64);
+        let mut to_update: Vec<(Vec<u8>, VectorChunk)> = Vec::new();
+        for item in self.db.iter() {
+            let (key, val) = match item {
+                Ok((k, v)) => (k, v),
+                Err(_) => continue,
+            };
+            if let Ok(mut chunk) = serde_json::from_slice::<VectorChunk>(&val) {
+                if chunk.source == "bitbucket" && chunk.source_id == source_id {
+                    chunk.last_used_at = Some(now.to_rfc3339());
+                    chunk.expires_at = Some(expires.to_rfc3339());
+                    to_update.push((key.to_vec(), chunk));
+                }
+            }
+        }
+        for (key, chunk) in to_update {
+            self.db.insert(key, serde_json::to_vec(&chunk)?)?;
+        }
+        Ok(())
+    }
+
+    /// Remove expired Bitbucket code chunks (sliding TTL). Returns the number
+    /// of removed chunks.
+    pub fn prune_expired_bitbucket(&self) -> Result<u64> {
+        let now = chrono::Utc::now();
+        let mut to_remove: Vec<Vec<u8>> = Vec::new();
+        for item in self.db.iter() {
+            let (key, val) = match item {
+                Ok((k, v)) => (k, v),
+                Err(_) => continue,
+            };
+            if let Ok(chunk) = serde_json::from_slice::<VectorChunk>(&val) {
+                if chunk.source == "bitbucket" {
+                    if let Some(exp) = chunk.expires_at.as_deref() {
+                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(exp) {
+                            if dt.with_timezone(&chrono::Utc) < now {
+                                to_remove.push(key.to_vec());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let count = to_remove.len() as u64;
+        for k in to_remove {
+            self.db.remove(k)?;
+        }
+        Ok(count)
+    }
+
+    /// Count Bitbucket PR namespaces and their chunks.
+    pub fn bitbucket_stats(&self) -> (u64, u64) {
+        let chunks = self.all_chunks();
+        let bb: Vec<&VectorChunk> = chunks.iter().filter(|c| c.source == "bitbucket").collect();
+        let repos = bb
+            .iter()
+            .map(|c| c.source_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len() as u64;
+        (repos, bb.len() as u64)
+    }
+
     /// Compute cosine similarity between two vectors.
     pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
         let dot = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f64>();
@@ -161,7 +305,12 @@ impl RagService {
 
     /// Search the store for chunks most similar to `query_embedding`, returning
     /// the top `limit` results sorted by descending similarity.
-    pub fn search(&self, query_embedding: &[f64], limit: usize, source_filter: Option<&str>) -> Vec<RagSearchResult> {
+    pub fn search(
+        &self,
+        query_embedding: &[f64],
+        limit: usize,
+        source_filter: Option<&str>,
+    ) -> Vec<RagSearchResult> {
         let chunks = self.all_chunks();
         let mut scored: Vec<(f64, VectorChunk)> = chunks
             .into_iter()
@@ -181,14 +330,50 @@ impl RagService {
             .collect()
     }
 
+    /// Namespace-scoped semantic search: only chunks from a given source +
+    /// source_id are scored, and the full chunks (with code metadata) are
+    /// returned for rendering.
+    pub fn search_in_source(
+        &self,
+        query_embedding: &[f64],
+        limit: usize,
+        source: &str,
+        source_id: &str,
+    ) -> Vec<VectorChunk> {
+        let chunks = self.all_chunks();
+        let mut scored: Vec<(f64, VectorChunk)> = chunks
+            .into_iter()
+            .filter(|c| c.source == source && c.source_id == source_id)
+            .map(|c| (Self::cosine_similarity(query_embedding, &c.embedding), c))
+            .collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.into_iter().take(limit).map(|(_, c)| c).collect()
+    }
+
     /// Stats for the RAG dashboard.
     pub fn stats(&self) -> RagStats {
         let chunks = self.all_chunks();
         let total = chunks.len() as u64;
-        let confluence: Vec<&VectorChunk> = chunks.iter().filter(|c| c.source == "confluence").collect();
+        let confluence: Vec<&VectorChunk> =
+            chunks.iter().filter(|c| c.source == "confluence").collect();
         let jira: Vec<&VectorChunk> = chunks.iter().filter(|c| c.source == "jira").collect();
-        let confluence_pages = confluence.iter().map(|c| c.source_id.as_str()).collect::<std::collections::HashSet<_>>().len() as u64;
-        let jira_issues = jira.iter().map(|c| c.source_id.as_str()).collect::<std::collections::HashSet<_>>().len() as u64;
+        let bitbucket: Vec<&VectorChunk> =
+            chunks.iter().filter(|c| c.source == "bitbucket").collect();
+        let confluence_pages = confluence
+            .iter()
+            .map(|c| c.source_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len() as u64;
+        let jira_issues = jira
+            .iter()
+            .map(|c| c.source_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len() as u64;
+        let bitbucket_repos = bitbucket
+            .iter()
+            .map(|c| c.source_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len() as u64;
         let meta = self.load_meta();
         RagStats {
             total_chunks: total,
@@ -196,8 +381,11 @@ impl RagService {
             confluence_chunks: confluence.len() as u64,
             jira_issues,
             jira_chunks: jira.len() as u64,
+            bitbucket_repos,
+            bitbucket_chunks: bitbucket.len() as u64,
             last_confluence_sync: meta.last_confluence_sync,
             last_jira_sync: meta.last_jira_sync,
+            last_bitbucket_sync: meta.last_bitbucket_sync,
         }
     }
 
@@ -208,6 +396,8 @@ impl RagService {
             meta.last_confluence_sync = Some(timestamp.to_string());
         } else if source == "jira" {
             meta.last_jira_sync = Some(timestamp.to_string());
+        } else if source == "bitbucket" {
+            meta.last_bitbucket_sync = Some(timestamp.to_string());
         }
         self.save_meta(&meta)
     }
@@ -241,7 +431,11 @@ pub fn chunk_text(text: &str) -> Vec<String> {
     let ws = regex::Regex::new(r"\s+").unwrap();
     let cleaned = ws.replace_all(text.trim(), " ").to_string();
     if cleaned.len() <= MAX_CHUNK_SIZE {
-        return if cleaned.len() > 20 { vec![cleaned] } else { vec![] };
+        return if cleaned.len() > 20 {
+            vec![cleaned]
+        } else {
+            vec![]
+        };
     }
     let bytes: Vec<char> = cleaned.chars().collect();
     let mut chunks: Vec<String> = Vec::new();
@@ -275,7 +469,9 @@ pub fn chunk_text(text: &str) -> Vec<String> {
 // (kept the logic simple above so this helper is unused.)
 
 fn dirs_or_appdata() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(PathBuf::from).map(|p| p.join("qa-buddy"))
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|p| p.join("qa-buddy"))
 }
 
 impl Default for RagService {
@@ -312,6 +508,34 @@ mod tests {
     }
 
     #[test]
+    fn code_chunks_splits_by_lines_and_tags_changed() {
+        let mut content = String::new();
+        for i in 1..=200 {
+            content.push_str(&format!("line {i}\n"));
+        }
+        let changed = std::collections::HashSet::from([5, 150]);
+        let chunks = code_chunks(&content, &changed, 80, 20);
+        // ~200 lines, step 60 -> 3-4 chunks.
+        assert!(chunks.len() >= 3);
+        // First chunk starts at line 1 and contains changed line 5.
+        let first = &chunks[0];
+        assert_eq!(first.0, 1);
+        assert!(first.3.contains(&5));
+        // Some chunk contains changed line 150.
+        assert!(chunks.iter().any(|c| c.3.contains(&150)));
+        // All chunks are contiguous and non-overlapping-in-start.
+        for w in chunks.windows(2) {
+            assert!(w[1].0 > w[0].0);
+        }
+    }
+
+    #[test]
+    fn code_chunks_empty_content() {
+        let chunks = code_chunks("", &std::collections::HashSet::new(), 80, 20);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
     fn store_upsert_and_search() {
         let tmp = std::env::temp_dir().join(format!("qa-buddy-rag-test-{}", uuid::Uuid::new_v4()));
         let svc = RagService::open(tmp);
@@ -325,6 +549,9 @@ mod tests {
             content: "alpha beta".into(),
             embedding: vec![1.0, 0.0],
             indexed_at: "2026-06-18".into(),
+            code: None,
+            expires_at: None,
+            last_used_at: None,
         })
         .unwrap();
         svc.upsert_chunk(VectorChunk {
@@ -337,6 +564,9 @@ mod tests {
             content: "gamma delta".into(),
             embedding: vec![0.0, 1.0],
             indexed_at: "2026-06-18".into(),
+            code: None,
+            expires_at: None,
+            last_used_at: None,
         })
         .unwrap();
         let results = svc.search(&[1.0, 0.0], 2, None);

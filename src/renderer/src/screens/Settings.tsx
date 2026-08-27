@@ -37,6 +37,7 @@ export default function Settings() {
     handleRagIndexConfluence,
     handleRagIndexJira,
     handleRagClear,
+    handleRagClearBitbucket,
     updateInfo,
     updateChecking,
     handleCheckForUpdates,
@@ -545,21 +546,6 @@ export default function Settings() {
                       ))}
                     </select>
                   </label>
-                  <label>
-                    <span>Defect Repo Explanation Model</span>
-                    <select
-                      onChange={(event) =>
-                        setConfig({ ...config, ollama: { ...config.ollama, defectExplanationModel: event.target.value } })
-                      }
-                      value={config.ollama.defectExplanationModel || ""}
-                      disabled={modelsLoading}
-                    >
-                      <option value="">Disabled</option>
-                      {ollamaModels.map((model) => (
-                        <option key={model} value={model}>{model}</option>
-                      ))}
-                    </select>
-                  </label>
                 </div>
               </div>
             </div>
@@ -744,7 +730,7 @@ export default function Settings() {
           )}
 
           {/* Stats Cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
             <div className="surface-card" style={{ padding: 20, textAlign: "center" }}>
               <span className="material-symbols" style={{ fontSize: 32, color: "var(--md-primary)", marginBottom: 8 }}>database</span>
               <div className="text-display" style={{ fontSize: 28 }}>{ragStats?.totalChunks ?? 0}</div>
@@ -760,17 +746,25 @@ export default function Settings() {
               <div className="text-display" style={{ fontSize: 28 }}>{ragStats?.jiraIssues ?? 0}</div>
               <div className="text-body-sm" style={{ opacity: 0.7 }}>Jira Issues ({ragStats?.jiraChunks ?? 0} chunks)</div>
             </div>
+            <div className="surface-card" style={{ padding: 20, textAlign: "center" }}>
+              <span className="material-symbols" style={{ fontSize: 32, color: "var(--md-primary)", marginBottom: 8 }}>code_blocks</span>
+              <div className="text-display" style={{ fontSize: 28 }}>{ragStats?.bitbucketRepos ?? 0}</div>
+              <div className="text-body-sm" style={{ opacity: 0.7 }}>Bitbucket PR Cache ({ragStats?.bitbucketChunks ?? 0} chunks)</div>
+            </div>
           </div>
 
           {/* Last sync info */}
-          {ragStats && (ragStats.lastConfluenceSync || ragStats.lastJiraSync) && (
-            <div className="surface-card" style={{ padding: 16, marginBottom: 24, display: "flex", gap: 24, alignItems: "center" }}>
+          {ragStats && (ragStats.lastConfluenceSync || ragStats.lastJiraSync || ragStats.lastBitbucketSync) && (
+            <div className="surface-card" style={{ padding: 16, marginBottom: 24, display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
               <span className="material-symbols" style={{ fontSize: 20, opacity: 0.6 }}>schedule</span>
               {ragStats.lastConfluenceSync && (
                 <span className="text-body-sm">Confluence sync terakhir: <strong>{new Date(ragStats.lastConfluenceSync).toLocaleString("id-ID")}</strong></span>
               )}
               {ragStats.lastJiraSync && (
                 <span className="text-body-sm">Jira sync terakhir: <strong>{new Date(ragStats.lastJiraSync).toLocaleString("id-ID")}</strong></span>
+              )}
+              {ragStats.lastBitbucketSync && (
+                <span className="text-body-sm">Bitbucket cache terakhir: <strong>{new Date(ragStats.lastBitbucketSync).toLocaleString("id-ID")}</strong></span>
               )}
             </div>
           )}
@@ -912,6 +906,15 @@ export default function Settings() {
                   type="button"
                 >
                   Hapus Jira Index
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={() => void handleRagClearBitbucket()}
+                  disabled={ragLoading !== null || !ragStats?.bitbucketChunks}
+                  style={{ width: "100%", height: 36, fontSize: 13 }}
+                  type="button"
+                >
+                  Hapus Bitbucket Cache
                 </button>
                 <button
                   className="secondary-button"

@@ -47,7 +47,8 @@ impl ConfluenceClient {
 
     /// Probe `/rest/api/user/current`; returns a human-readable status string.
     pub async fn validate_connection(&self) -> Result<String> {
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .get(self.url("/rest/api/user/current"))
             .send()
             .await
@@ -68,16 +69,60 @@ impl ConfluenceClient {
     /// Fetch a page with storage+view body, version, and space.
     pub async fn get_page(&self, page_id: &str) -> Result<Value> {
         let path = format!(
-            "/rest/api/content/{page_id}?expand=body.storage,body.view,version,space"
+            "/rest/api/content/{page_id}?expand=body.storage,body.view,version,space,ancestors,history"
         );
-        let resp = self.http_client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+        let resp = self
+            .http_client
+            .get(self.url(&path))
+            .send()
+            .await
+            .map_err(ServiceError::from)?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            let snippet = if text.len() > 500 { &text[..500] } else { &text };
+            let snippet = if text.len() > 500 {
+                &text[..500]
+            } else {
+                &text
+            };
             return Err(ServiceError::Api(format!("HTTP {status}: {snippet}")));
         }
         serde_json::from_str::<Value>(&text).map_err(ServiceError::from)
+    }
+
+    /// Fetch all direct child pages for a page, including their bodies and hierarchy metadata.
+    pub async fn list_child_pages(&self, page_id: &str) -> Result<Vec<Value>> {
+        let mut start = 0usize;
+        let limit = 50usize;
+        let mut pages = Vec::new();
+        loop {
+            let path = format!(
+                "/rest/api/content/{page_id}/child/page?start={start}&limit={limit}&expand=body.storage,body.view,version,space,ancestors,history"
+            );
+            let resp = self
+                .http_client
+                .get(self.url(&path))
+                .send()
+                .await
+                .map_err(ServiceError::from)?;
+            let status = resp.status();
+            let body: Value = resp.json().await.unwrap_or(Value::Null);
+            if !status.is_success() {
+                return Err(ServiceError::Api(format!("HTTP {status}")));
+            }
+            let items = body
+                .get("results")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let count = items.len();
+            pages.extend(items);
+            if count < limit {
+                break;
+            }
+            start += limit;
+        }
+        Ok(pages)
     }
 
     /// Look up a page by space key + title.
@@ -86,7 +131,12 @@ impl ConfluenceClient {
         let path = format!(
             "/rest/api/content?spaceKey={space_key}&title={title_enc}&expand=body.storage,body.view,version,space"
         );
-        let resp = self.http_client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+        let resp = self
+            .http_client
+            .get(self.url(&path))
+            .send()
+            .await
+            .map_err(ServiceError::from)?;
         let status = resp.status();
         let body: Value = resp.json().await.unwrap_or(Value::Null);
         if !status.is_success() {
@@ -111,7 +161,29 @@ impl ConfluenceClient {
         if let Some((space_key, title)) = parse_confluence_display_url(url) {
             return self.get_page_by_title(&space_key, &title).await;
         }
-        Err(ServiceError::NotFound(format!("Unsupported Confluence URL: {url}")))
+        if url::Url::parse(url)
+            .ok()
+            .is_some_and(|parsed| parsed.path().starts_with("/x/"))
+        {
+            let response = self
+                .http_client
+                .get(url)
+                .send()
+                .await
+                .map_err(ServiceError::from)?;
+            let resolved_url = response.url().to_string();
+            if resolved_url != url {
+                if let Some(page_id) = parse_confluence_page_id(&resolved_url) {
+                    return self.get_page(&page_id).await;
+                }
+                if let Some((space_key, title)) = parse_confluence_display_url(&resolved_url) {
+                    return self.get_page_by_title(&space_key, &title).await;
+                }
+            }
+        }
+        Err(ServiceError::NotFound(format!(
+            "Unsupported Confluence URL: {url}"
+        )))
     }
 
     /// List pages for a space key or ancestor/page id.
@@ -122,9 +194,12 @@ impl ConfluenceClient {
         let mut out = Vec::new();
         loop {
             let path = if is_numeric {
-                let cql = format!("(id={} OR ancestor={}) AND type=page", space_or_page_id, space_or_page_id);
+                let cql = format!(
+                    "(id={} OR ancestor={}) AND type=page",
+                    space_or_page_id, space_or_page_id
+                );
                 format!(
-                    "/rest/api/content/search?cql={}&start={start}&limit={limit}&expand=body.storage,space",
+                    "/rest/api/content/search?cql={}&start={start}&limit={limit}&expand=body.storage,body.view,version,space,ancestors,history",
                     url::form_urlencoded::byte_serialize(cql.as_bytes()).collect::<String>()
                 )
             } else {
@@ -133,14 +208,26 @@ impl ConfluenceClient {
                     url::form_urlencoded::byte_serialize(space_or_page_id.as_bytes()).collect::<String>()
                 )
             };
-            let resp = self.http_client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+            let resp = self
+                .http_client
+                .get(self.url(&path))
+                .send()
+                .await
+                .map_err(ServiceError::from)?;
             let status = resp.status();
             let body: Value = resp.json().await.unwrap_or(Value::Null);
             if !status.is_success() {
                 return Err(ServiceError::Api(format!("HTTP {status}")));
             }
-            let items = body.get("results").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            let total = body.get("size").and_then(|v| v.as_u64()).unwrap_or(items.len() as u64) as usize;
+            let items = body
+                .get("results")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let total = body
+                .get("size")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(items.len() as u64) as usize;
             let count = items.len();
             out.extend(items);
             if out.len() >= total || count < limit as usize {
@@ -154,7 +241,13 @@ impl ConfluenceClient {
     /// Update a page's storage body, bumping the version number.
     /// On HTTP 409 (version conflict caused by concurrent edits), automatically
     /// re-fetches the latest version and retries up to 3 times.
-    pub async fn update_page(&self, page_id: &str, title: &str, content: &str, version: u32) -> Result<Value> {
+    pub async fn update_page(
+        &self,
+        page_id: &str,
+        title: &str,
+        content: &str,
+        version: u32,
+    ) -> Result<Value> {
         let mut current_version = version;
         let max_retries = 3;
         for attempt in 0..=max_retries {
@@ -170,7 +263,13 @@ impl ConfluenceClient {
                 }
             });
             let path = format!("/rest/api/content/{page_id}");
-            let resp = self.http_client.put(self.url(&path)).json(&body).send().await.map_err(ServiceError::from)?;
+            let resp = self
+                .http_client
+                .put(self.url(&path))
+                .json(&body)
+                .send()
+                .await
+                .map_err(ServiceError::from)?;
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
 
@@ -180,9 +279,14 @@ impl ConfluenceClient {
 
             // 409 = version conflict (someone else edited concurrently) — re-fetch and retry
             if status.as_u16() == 409 && attempt < max_retries {
-                eprintln!("[update_page] 409 conflict on attempt {attempt}, re-fetching page version...");
+                eprintln!(
+                    "[update_page] 409 conflict on attempt {attempt}, re-fetching page version..."
+                );
                 if let Ok(page) = self.get_page(page_id).await {
-                    current_version = page["version"]["number"].as_u64().unwrap_or(current_version as u64) as u32;
+                    current_version = page["version"]["number"]
+                        .as_u64()
+                        .unwrap_or(current_version as u64)
+                        as u32;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 continue;
@@ -190,14 +294,22 @@ impl ConfluenceClient {
 
             // 400 = bad request, usually malformed XHTML in the existing page content
             if status.as_u16() == 400 {
-                let snippet = if text.len() > 300 { &text[..300] } else { &text };
+                let snippet = if text.len() > 300 {
+                    &text[..300]
+                } else {
+                    &text
+                };
                 eprintln!("[update_page] 400 error: {snippet}");
                 // Extract column position and print context window for debugging
-                let col: usize = text.find("[1,")
-                    .and_then(|p| text[p+3..].split(']').next())
+                let col: usize = text
+                    .find("[1,")
+                    .and_then(|p| text[p + 3..].split(']').next())
                     .and_then(|s| s.trim().parse::<usize>().ok())
                     .unwrap_or(0);
-                eprintln!("[update_page] content first 500: {:?}", &content[..content.len().min(500)]);
+                eprintln!(
+                    "[update_page] content first 500: {:?}",
+                    &content[..content.len().min(500)]
+                );
                 let context_snippet = if col > 0 && col <= content.len() {
                     let start = col.saturating_sub(120);
                     let end = (col + 80).min(content.len());
@@ -212,7 +324,11 @@ impl ConfluenceClient {
                 )));
             }
 
-            let snippet = if text.len() > 500 { &text[..500] } else { &text };
+            let snippet = if text.len() > 500 {
+                &text[..500]
+            } else {
+                &text
+            };
             return Err(ServiceError::Api(format!("HTTP {status}: {snippet}")));
         }
         Err(ServiceError::Api("Gagal update halaman Confluence setelah beberapa percobaan — halaman sedang diedit orang lain, coba beberapa saat lagi.".into()))
@@ -227,7 +343,12 @@ impl ConfluenceClient {
             let path = format!(
                 "/rest/api/content/{page_id}/child/attachment?limit={limit}&start={start}&expand=version"
             );
-            let resp = self.http_client.get(self.url(&path)).send().await.map_err(ServiceError::from)?;
+            let resp = self
+                .http_client
+                .get(self.url(&path))
+                .send()
+                .await
+                .map_err(ServiceError::from)?;
             let body: Value = resp.json().await.unwrap_or(Value::Null);
             let results = body
                 .get("results")
@@ -247,7 +368,8 @@ impl ConfluenceClient {
 
     /// Download an attachment by its `/download/...` path and return raw bytes.
     pub async fn download_attachment(&self, download_path: &str) -> Result<Vec<u8>> {
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .get(self.url(download_path))
             .send()
             .await
@@ -277,7 +399,8 @@ impl ConfluenceClient {
             .part("file", part);
 
         let path = format!("/rest/api/content/{page_id}/child/attachment");
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(self.url(&path))
             .header("X-Atlassian-Token", "nocheck")
             .multipart(form)
@@ -305,7 +428,8 @@ impl ConfluenceClient {
             "/rest/applinks/1.0/listApplicationlinks",
         ];
         for path in candidates {
-            let resp = self.http_client
+            let resp = self
+                .http_client
                 .get(self.url(path))
                 .header("Accept", "application/json, application/xml, text/xml")
                 .send()
@@ -336,7 +460,9 @@ pub fn extract_jira_server_id(payload: &str) -> Option<String> {
     let app_re = regex::Regex::new(r"(?is)<application>[\s\S]*?</application>").unwrap();
     for block in app_re.find_iter(&decoded) {
         let block = block.as_str();
-        let is_jira = regex::Regex::new(r"(?i)<typeId>\s*jira\s*</typeId>").unwrap().is_match(block);
+        let is_jira = regex::Regex::new(r"(?i)<typeId>\s*jira\s*</typeId>")
+            .unwrap()
+            .is_match(block);
         if !is_jira {
             continue;
         }
@@ -374,7 +500,8 @@ fn find_jira_id_in_json(value: &Value) -> Option<String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_lowercase();
-            let id = obj.get("id")
+            let id = obj
+                .get("id")
                 .or_else(|| obj.get("application").and_then(|a| a.get("id")))
                 .or_else(|| obj.get("serverId"))
                 .or_else(|| obj.get("applicationId"))

@@ -15,6 +15,7 @@ export type ViewKey =
   | "logs"
   | "settings"
   | "documentation"
+  | "document-review"
   | "defect-repository"
   | "test-cycle-manager"
   | "project-management";
@@ -70,7 +71,6 @@ export interface OllamaConfig {
   extractionModel?: string;
   insightModel?: string;
   defectEmbeddingModel?: string;
-  defectExplanationModel?: string;
 }
 
 export interface BitbucketFileChange {
@@ -78,6 +78,8 @@ export interface BitbucketFileChange {
   changeType: string;
   linesAdded: number;
   linesDeleted: number;
+  /** Whether the file is analyzable by AI (non-binary, non-changelog). */
+  explainable?: boolean;
 }
 
 export interface BitbucketDiffSummary {
@@ -90,6 +92,7 @@ export interface BitbucketDiffSummary {
   branchFrom: string;
   branchTo: string;
   files: BitbucketFileChange[];
+  commitMessages?: string[];
   jiraTicketKey?: string;
   jiraSummary?: string;
   jiraDescription?: string;
@@ -118,6 +121,7 @@ export interface TestStepItem {
 
 export interface BitbucketTestScenario {
   scenario: string;
+  filePath?: string;
   confidence: number;
   reason: string;
   scenarioType: string;
@@ -139,6 +143,41 @@ export interface BitbucketGenerateResponse {
   impact: ImpactAnalysisResult;
   gap: GapAnalysisResult;
   scenarios: BitbucketTestScenario[];
+}
+
+export interface BitbucketExplainRequest {
+  prUrlOrId: string;
+  filePath: string;
+  startLine?: number;
+  endLine?: number;
+  mode?: "simple" | "technical" | "impact";
+  forceRefresh?: boolean;
+}
+
+export interface TechnicalTerm {
+  term: string;
+  explanation: string;
+}
+
+export interface CodeEvidence {
+  file: string;
+  lines: string;
+  reason: string;
+}
+
+export interface BitbucketExplainResponse {
+  title: string;
+  summary: string;
+  purpose: string;
+  simpleFlow: string[];
+  inputs: string[];
+  outputs: string[];
+  businessImpact: string;
+  risks: string[];
+  technicalTerms: TechnicalTerm[];
+  evidence: CodeEvidence[];
+  confidence: number;
+  unknowns: string[];
 }
 
 export interface UqaEntry {
@@ -420,8 +459,11 @@ export interface RagStats {
   confluenceChunks: number;
   jiraIssues: number;
   jiraChunks: number;
+  bitbucketRepos: number;
+  bitbucketChunks: number;
   lastConfluenceSync: string | null;
   lastJiraSync: string | null;
+  lastBitbucketSync: string | null;
 }
 
 export interface RagIndexProgress {
@@ -472,6 +514,89 @@ export interface ConfluenceParseProgress {
   current: number;
   total: number;
   detail?: string;
+}
+
+export interface ReviewFinding {
+  documentType: string;
+  section: string;
+  status: "PASS" | "WARNING" | "FAIL" | "NOT_APPLICABLE" | string;
+  severity: string;
+  title: string;
+  description: string;
+  recommendation: string;
+  sourceKey?: string;
+  expectedValue?: string;
+  actualValue?: string;
+  sourceUrl?: string;
+  confidence?: number;
+  evidence?: string;
+  validationSource?: "rule" | "ai" | "hierarchy" | string;
+}
+
+export interface JiraExecutionSummary {
+  key: string;
+  summary: string;
+  issueType: string;
+  projectKey: string;
+  status: string;
+  total: number;
+  executed: number;
+  pass: number;
+  fail: number;
+  blocked: number;
+  notExecuted: number;
+  included: boolean;
+}
+
+export interface TestMeasureReconciliation {
+  jiraExecutionKeys: string[];
+  confluenceTotal?: number;
+  jiraTotal: number;
+  confluenceExecuted?: number;
+  jiraExecuted: number;
+  confluencePass?: number;
+  jiraPass: number;
+  confluenceFail?: number;
+  jiraFail: number;
+  confluenceBlocked?: number;
+  jiraBlocked: number;
+  confluenceNotExecuted?: number;
+  jiraNotExecuted: number;
+  difference: number;
+  isMatch: boolean;
+}
+
+export interface ReviewPageSummary {
+  pageId: string;
+  title: string;
+  url: string;
+  documentType: string;
+  parentPageId?: string;
+}
+
+export interface DocumentReviewSummary {
+  score: number;
+  overallStatus: string;
+  documentType: string;
+  project: string;
+  rootPageId: string;
+  rootPageTitle: string;
+  pages: ReviewPageSummary[];
+  passCount: number;
+  warningCount: number;
+  failCount: number;
+  notApplicableCount: number;
+  findings: ReviewFinding[];
+  jiraExecutions: JiraExecutionSummary[];
+  reconciliation?: TestMeasureReconciliation;
+}
+
+export interface DocumentReviewProgress {
+  stage: string;
+  message: string;
+  current: number;
+  total: number;
+  finding?: ReviewFinding;
 }
 
 export interface ParseConfluenceParseDebugRow {
@@ -573,6 +698,7 @@ export interface DesktopApi {
   ragSearch: (query: string) => Promise<{ content: string; sourceTitle: string; sourceUrl: string; score: number }[]>;
   ragGetStats: () => Promise<RagStats>;
   ragClearIndex: (source?: "confluence" | "jira") => Promise<void>;
+  ragClearBitbucket: () => Promise<{ removed: number; pruned: number }>;
   onRagProgress: (callback: (progress: RagIndexProgress) => void) => () => void;
   onConfluenceParseProgress: (callback: (progress: ConfluenceParseProgress) => void) => () => void;
   getJiraProjects: () => Promise<JiraProject[]>;
@@ -585,6 +711,8 @@ export interface DesktopApi {
   getJiraCustomFields: () => Promise<{ id: string; name: string; type: string; isCustom: boolean }[]>;
   findIssuesByJql: (jql: string, maxResults: number) => Promise<JiraIssueSummary[]>;
   getConfluencePage: (pageId: string) => Promise<{ title: string; content: string; version: number }>;
+  reviewDocument: (pageId: string, jiraProjectKey: string) => Promise<DocumentReviewSummary>;
+  onDocumentReviewProgress: (callback: (progress: DocumentReviewProgress) => void) => () => void;
   parseConfluenceEntries: (pageId: string, options?: ParseConfluenceEntriesOptions) => Promise<ParseConfluenceEntriesResult>;
   bulkTransition: (issueKeys: string[], transitionId: string) => Promise<BulkOperationResult>;
   bulkAssign: (issueKeys: string[], assigneeAccountId: string) => Promise<BulkOperationResult>;
@@ -693,6 +821,7 @@ export interface DesktopApi {
   getBitbucketPrDetails: (prUrlOrId: string) => Promise<BitbucketDiffSummary>;
   fetchBitbucketDiff: (prUrlOrId: string) => Promise<string>;
   generateTestScenariosFromBitbucket: (request: BitbucketGenerateRequest) => Promise<BitbucketGenerateResponse>;
+  explainBitbucketCode: (request: BitbucketExplainRequest) => Promise<BitbucketExplainResponse>;
 }
 
 export interface UqaWithDates {
@@ -1258,7 +1387,6 @@ export const ollamaConfigSchema = z.object({
   extractionModel: z.string().optional(),
   insightModel: z.string().optional(),
   defectEmbeddingModel: z.string().optional(),
-  defectExplanationModel: z.string().optional(),
 });
 
 export const uqaConfigSchema = z.object({
@@ -1338,7 +1466,6 @@ export const defaultConfig: AppConfig = {
     extractionModel: "",
     insightModel: "",
     defectEmbeddingModel: "embeddinggemma",
-    defectExplanationModel: "",
   },
   preferences: {
     theme: "light",

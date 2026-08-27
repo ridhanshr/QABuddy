@@ -32,7 +32,9 @@ pub async fn rag_index_confluence(
         .await
         .map_err(|e| e.to_string())?;
     let total = pages.len() as u32;
-    let client = ollama_service.client_for(&config.ollama.endpoint, EMBEDDING_MODEL).await;
+    let client = ollama_service
+        .client_for(&config.ollama.endpoint, EMBEDDING_MODEL)
+        .await;
     let mut indexed = 0u32;
     let mut skipped = 0u32;
 
@@ -92,6 +94,9 @@ pub async fn rag_index_confluence(
                     content: chunk.clone(),
                     embedding,
                     indexed_at: Utc::now().to_rfc3339(),
+                    code: None,
+                    expires_at: None,
+                    last_used_at: None,
                 })
                 .map_err(|e| e.to_string())?;
         }
@@ -104,7 +109,10 @@ pub async fn rag_index_confluence(
         RagIndexProgress {
             source: "confluence".into(),
             status: "done".into(),
-            message: format!("Selesai! {} halaman diindeks, {} dilewati.", indexed, skipped),
+            message: format!(
+                "Selesai! {} halaman diindeks, {} dilewati.",
+                indexed, skipped
+            ),
             current: total,
             total,
         },
@@ -129,7 +137,9 @@ pub async fn rag_index_jira(
     let jira_service = state.jira_service.lock().await;
     let ollama_service = state.ollama_service.lock().await;
     let rag_service = state.rag_service.lock().await;
-    let client = jira_service.client(&config.jira).map_err(|e| e.to_string())?;
+    let client = jira_service
+        .client(&config.jira)
+        .map_err(|e| e.to_string())?;
     let total = 0u32;
     let _ = app_handle.emit(
         "rag-progress",
@@ -152,10 +162,17 @@ pub async fn rag_index_jira(
             .get_json(
                 "/search",
                 &[
-                    ("jql", format!("project = \"{}\" ORDER BY updated DESC", project_key)),
+                    (
+                        "jql",
+                        format!("project = \"{}\" ORDER BY updated DESC", project_key),
+                    ),
                     ("startAt", start_at.to_string()),
                     ("maxResults", "50".to_string()),
-                    ("fields", "summary,description,status,priority,assignee,issuetype,labels,comment".to_string()),
+                    (
+                        "fields",
+                        "summary,description,status,priority,assignee,issuetype,labels,comment"
+                            .to_string(),
+                    ),
                 ],
             )
             .await
@@ -170,7 +187,9 @@ pub async fn rag_index_jira(
         start_at += 50;
     }
 
-    let client = ollama_service.client_for(&config.ollama.endpoint, EMBEDDING_MODEL).await;
+    let client = ollama_service
+        .client_for(&config.ollama.endpoint, EMBEDDING_MODEL)
+        .await;
     let _ = app_handle.emit(
         "rag-progress",
         RagIndexProgress {
@@ -188,9 +207,18 @@ pub async fn rag_index_jira(
         let summary = fields["summary"].as_str().unwrap_or("").to_string();
         let mut text = vec![
             format!("[{}] {}", key, summary),
-            format!("Type: {}", fields["issuetype"]["name"].as_str().unwrap_or("-")),
-            format!("Status: {}", fields["status"]["name"].as_str().unwrap_or("-")),
-            format!("Priority: {}", fields["priority"]["name"].as_str().unwrap_or("-")),
+            format!(
+                "Type: {}",
+                fields["issuetype"]["name"].as_str().unwrap_or("-")
+            ),
+            format!(
+                "Status: {}",
+                fields["status"]["name"].as_str().unwrap_or("-")
+            ),
+            format!(
+                "Priority: {}",
+                fields["priority"]["name"].as_str().unwrap_or("-")
+            ),
         ];
         if let Some(desc) = fields["description"].as_str() {
             text.push(format!("Description: {desc}"));
@@ -201,7 +229,11 @@ pub async fn rag_index_jira(
             continue;
         }
         let chunks = chunk_text(&full_text);
-        let issue_url = format!("{}/browse/{}", config.jira.base_url.trim_end_matches('/'), key);
+        let issue_url = format!(
+            "{}/browse/{}",
+            config.jira.base_url.trim_end_matches('/'),
+            key
+        );
         let _ = app_handle.emit(
             "rag-progress",
             RagIndexProgress {
@@ -228,6 +260,9 @@ pub async fn rag_index_jira(
                     content: chunk.clone(),
                     embedding,
                     indexed_at: Utc::now().to_rfc3339(),
+                    code: None,
+                    expires_at: None,
+                    last_used_at: None,
                 })
                 .map_err(|e| e.to_string())?;
         }
@@ -240,7 +275,10 @@ pub async fn rag_index_jira(
         RagIndexProgress {
             source: "jira".into(),
             status: "done".into(),
-            message: format!("Selesai! {} issues diindeks, {} dilewati.", indexed, skipped),
+            message: format!(
+                "Selesai! {} issues diindeks, {} dilewati.",
+                indexed, skipped
+            ),
             current: issues.len() as u32,
             total: issues.len() as u32,
         },
@@ -249,15 +287,23 @@ pub async fn rag_index_jira(
 }
 
 #[tauri::command]
-pub async fn rag_search(state: State<'_, AppState>, query: String) -> Result<Vec<RagSearchResult>, String> {
+pub async fn rag_search(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<RagSearchResult>, String> {
     let config = load_config(state.clone()).await?;
     if config.ollama.endpoint.is_empty() {
         return Ok(vec![]);
     }
     let ollama_service = state.ollama_service.lock().await;
     let rag_service = state.rag_service.lock().await;
-    let client = ollama_service.client_for(&config.ollama.endpoint, EMBEDDING_MODEL).await;
-    let embedding = client.embed(&query, Some(EMBEDDING_MODEL)).await.map_err(|e| e.to_string())?;
+    let client = ollama_service
+        .client_for(&config.ollama.endpoint, EMBEDDING_MODEL)
+        .await;
+    let embedding = client
+        .embed(&query, Some(EMBEDDING_MODEL))
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(rag_service.search(&embedding, 5, None))
 }
 
@@ -268,7 +314,26 @@ pub async fn rag_get_stats(state: State<'_, AppState>) -> Result<RagStats, Strin
 }
 
 #[tauri::command]
-pub async fn rag_clear_index(state: State<'_, AppState>, source: Option<String>) -> Result<(), String> {
+pub async fn rag_clear_index(
+    state: State<'_, AppState>,
+    source: Option<String>,
+) -> Result<(), String> {
     let rag_service = state.rag_service.lock().await;
-    rag_service.clear(source.as_deref()).map_err(|e| e.to_string())
+    rag_service
+        .clear(source.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Remove all Bitbucket PR code chunks from the RAG store (and prune expired
+/// ones first). Returns `{ removed: N }`.
+#[tauri::command]
+pub async fn rag_clear_bitbucket(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let rag_service = state.rag_service.lock().await;
+    let pruned = rag_service
+        .prune_expired_bitbucket()
+        .map_err(|e| e.to_string())?;
+    let cleared = rag_service
+        .clear(Some("bitbucket"))
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "removed": cleared, "pruned": pruned }))
 }

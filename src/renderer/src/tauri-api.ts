@@ -26,6 +26,8 @@ import type {
   ConfluenceTestImportEntry,
   ConnectionStatus,
   DashboardDigest,
+  DocumentReviewSummary,
+  DocumentReviewProgress,
   DefectCreateDraft,
   DefectRecord,
   DefectRepositoryStats,
@@ -173,6 +175,10 @@ const api = {
     cmd<ConfluencePreviewResult>("preview_confluence_sync", { pageId, payload }),
   getConfluencePage: (pageId: string) =>
     cmd<{ title: string; content: string; version: number }>("get_confluence_page", { pageId }),
+  reviewDocument: (pageId: string, jiraProjectKey: string) =>
+    cmd<DocumentReviewSummary>("review_document", { pageId, jiraProjectKey }),
+  onDocumentReviewProgress: (callback: (progress: DocumentReviewProgress) => void) =>
+    on<DocumentReviewProgress>("document-review-progress", callback),
   parseConfluenceEntries: (pageId: string, options?: ParseConfluenceEntriesOptions) =>
     cmd<ParseConfluenceEntriesResult>("parse_confluence_entries", {
       pageId,
@@ -196,6 +202,8 @@ const api = {
   ragGetStats: () => cmd<RagStats>("rag_get_stats"),
   ragClearIndex: (source?: "confluence" | "jira") =>
     cmd<void>("rag_clear_index", { source: source ?? null }),
+  ragClearBitbucket: () =>
+    cmd<{ removed: number; pruned: number }>("rag_clear_bitbucket"),
   onRagProgress: (callback: (progress: RagIndexProgress) => void) =>
     on<RagIndexProgress>("rag-progress", callback),
   onConfluenceParseProgress: (callback: (progress: ConfluenceParseProgress) => void) =>
@@ -408,6 +416,8 @@ const api = {
     cmd<string>("fetch_bitbucket_diff", { prUrlOrId }),
   generateTestScenariosFromBitbucket: (request: import("@shared/types").BitbucketGenerateRequest) =>
     cmd<import("@shared/types").BitbucketGenerateResponse>("generate_test_scenarios_from_bitbucket", { request }),
+  explainBitbucketCode: (request: import("@shared/types").BitbucketExplainRequest) =>
+    cmd<import("@shared/types").BitbucketExplainResponse>("explain_bitbucket_code", { request }),
 };
 
 export type TauriApi = typeof api;
