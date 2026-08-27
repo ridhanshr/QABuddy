@@ -178,9 +178,9 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
                       <span style={{
                         fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
                         padding: "2px 7px", borderRadius: 4,
-                        background: autoData.source === "db" ? "#1d4ed820" : "#7c3aed20",
-                        color: autoData.source === "db" ? "#1d4ed8" : "#7c3aed",
-                        border: `1px solid ${autoData.source === "db" ? "#1d4ed840" : "#7c3aed40"}`,
+                        background: autoData.source === "db" ? "color-mix(in srgb, var(--success) 13%, transparent)" : "color-mix(in srgb, var(--success) 13%, transparent)",
+                        color: autoData.source === "db" ? "var(--primary)" : "var(--severity-epic)",
+                        border: `1px solid ${autoData.source === "db" ? "color-mix(in srgb, var(--success) 25%, transparent)" : "color-mix(in srgb, var(--success) 25%, transparent)"}`,
                       }}>
                         {autoData.source === "db" ? "DB (last sync hari ini)" : "Xray API (live)"}
                       </span>
@@ -458,6 +458,7 @@ export default function DailyUQA() {
     <div className="daily-uqa">
       <div className="page-header">
         <div className="page-header-left">
+          <h2 className="text-display">Daily Activities</h2>
         </div>
         <div className="page-header-right" style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {!uqaSyncing && (

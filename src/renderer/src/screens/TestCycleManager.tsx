@@ -273,29 +273,33 @@ export default function TestCycleManager() {
 
   return (
     <div>
-      <div className="tab-bar" style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "2px solid var(--surface-container-high)" }}>
+      <div className="page-header" style={{ marginBottom: 20 }}>
+        <div className="page-header-left">
+          <div className="screen-icon">
+            <span className="material-symbols filled" style={{ fontSize: 22 }}>fact_check</span>
+          </div>
+          <div>
+            <h2 className="text-display" style={{ margin: 0 }}>Test Cycle Manager</h2>
+            <p className="text-body-lg" style={{ marginTop: 2 }}>Kelola test plan dan monitoring eksekusi.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="doc-sync-tabs" style={{ marginBottom: 20 }}>
         <button
-          className={`tab-button ${activeTab === "plan" ? "active" : ""}`}
+          className={`doc-sync-tab ${activeTab === "plan" ? "active" : ""}`}
           onClick={() => setActiveTab("plan")}
           type="button"
-          style={{
-            flex: 1, padding: "10px 16px", border: "none", background: activeTab === "plan" ? "var(--secondary-container)" : "transparent",
-            color: activeTab === "plan" ? "var(--on-secondary-container)" : "var(--on-surface)", fontWeight: 600, cursor: "pointer",
-            borderRadius: "8px 8px 0 0", transition: "all 0.2s",
-          }}
+          
         >
           <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>fact_check</span>
           Plan & Execution
         </button>
         <button
-          className={`tab-button ${activeTab === "monitoring" ? "active" : ""}`}
+          className={`doc-sync-tab ${activeTab === "monitoring" ? "active" : ""}`}
           onClick={() => setActiveTab("monitoring")}
           type="button"
-          style={{
-            flex: 1, padding: "10px 16px", border: "none", background: activeTab === "monitoring" ? "var(--secondary-container)" : "transparent",
-            color: activeTab === "monitoring" ? "var(--on-secondary-container)" : "var(--on-surface)", fontWeight: 600, cursor: "pointer",
-            borderRadius: "8px 8px 0 0", transition: "all 0.2s",
-          }}
+          
         >
           <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>monitoring</span>
           Execution Monitoring
@@ -309,7 +313,7 @@ export default function TestCycleManager() {
               <span className="material-symbols" style={{ fontSize: 18, verticalAlign: "middle", marginRight: 6 }}>fact_check</span>
               Test Plans
             </h3>
-            <button className="button primary" onClick={() => setShowCreatePlan(true)} type="button">
+            <button className="primary-button" onClick={() => setShowCreatePlan(true)} type="button">
               <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 4 }}>add</span>
               New Plan
             </button>
@@ -348,7 +352,7 @@ export default function TestCycleManager() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <button className="button primary" onClick={handleCreatePlan} disabled={!newPlanName || !newPlanProject} type="button">Create</button>
+                <button className="primary-button" onClick={handleCreatePlan} disabled={!newPlanName || !newPlanProject} type="button">Create</button>
                 <button className="ghost-button" onClick={() => setShowCreatePlan(false)} type="button">Cancel</button>
               </div>
             </div>
@@ -404,7 +408,7 @@ export default function TestCycleManager() {
                   <div style={{ marginTop: 12, paddingLeft: 28 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                       <h5 style={{ margin: 0, fontSize: 14 }}>Test Executions</h5>
-                      <button className="button secondary" onClick={() => setShowCreateExec(true)} type="button" style={{ fontSize: 12, padding: "4px 12px" }}>
+                      <button className="secondary-button" onClick={() => setShowCreateExec(true)} type="button" style={{ fontSize: 12, padding: "4px 12px" }}>
                         <span className="material-symbols" style={{ fontSize: 14, verticalAlign: "middle", marginRight: 4 }}>add</span>
                         Add Execution
                       </button>
@@ -427,7 +431,7 @@ export default function TestCycleManager() {
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                          <button className="button primary" onClick={handleCreateExec} disabled={!newExecName} type="button" style={{ fontSize: 12, padding: "4px 12px" }}>Create</button>
+                          <button className="primary-button" onClick={handleCreateExec} disabled={!newExecName} type="button" style={{ fontSize: 12, padding: "4px 12px" }}>Create</button>
                           <button className="ghost-button" onClick={() => setShowCreateExec(false)} type="button" style={{ fontSize: 12 }}>Cancel</button>
                         </div>
                       </div>
@@ -496,7 +500,7 @@ export default function TestCycleManager() {
                 style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 14 }}
               />
               <button
-                className="button primary"
+                className="primary-button"
                 onClick={() => fetchExecDetails(execKeyInput)}
                 disabled={execDetailsLoading || !execKeyInput.trim()}
                 type="button"
@@ -544,7 +548,7 @@ export default function TestCycleManager() {
           {/* ── Results ── */}
           {execDetails && !execDetailsLoading && (() => {
             const d = execDetails;
-            const passRateColor = d.passRate >= 80 ? "var(--tertiary)" : d.passRate >= 50 ? "#f59e0b" : "var(--error)";
+            const passRateColor = d.passRate >= 80 ? "var(--tertiary)" : d.passRate >= 50 ? "var(--warning)" : "var(--error)";
 
             const formatSnapDate = (iso: string) => {
               try {
@@ -583,7 +587,7 @@ export default function TestCycleManager() {
                     <div style={{ height: 10, background: "var(--surface-container-high)", borderRadius: 6, overflow: "hidden", display: "flex" }}>
                       {d.passed > 0 && <div style={{ height: "100%", background: "var(--tertiary)", width: `${(d.passed / d.total) * 100}%` }} title={`Passed: ${d.passed}`} />}
                       {d.failed > 0 && <div style={{ height: "100%", background: "var(--error)", width: `${(d.failed / d.total) * 100}%` }} title={`Failed: ${d.failed}`} />}
-                      {d.blocked > 0 && <div style={{ height: "100%", background: "#f59e0b", width: `${(d.blocked / d.total) * 100}%` }} title={`Blocked: ${d.blocked}`} />}
+                      {d.blocked > 0 && <div style={{ height: "100%", background: "var(--warning)", width: `${(d.blocked / d.total) * 100}%` }} title={`Blocked: ${d.blocked}`} />}
                       {d.inProgress > 0 && <div style={{ height: "100%", background: "var(--secondary)", width: `${(d.inProgress / d.total) * 100}%` }} title={`In Progress: ${d.inProgress}`} />}
                       {d.unexecuted > 0 && <div style={{ height: "100%", background: "var(--outline-variant)", width: `${(d.unexecuted / d.total) * 100}%` }} title={`To Do: ${d.unexecuted}`} />}
                     </div>
@@ -596,7 +600,7 @@ export default function TestCycleManager() {
                       { label: "In Progress", count: d.inProgress, color: "var(--secondary)" },
                       { label: "Done", count: d.passed, color: "var(--tertiary)" },
                       { label: "Failed", count: d.failed, color: "var(--error)" },
-                      { label: "Blocked", count: d.blocked, color: "#f59e0b" },
+                      { label: "Blocked", count: d.blocked, color: "var(--warning)" },
                     ].map(item => (
                       <span key={item.label} style={{ color: "var(--on-surface-variant)" }}>
                         <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: item.color, marginRight: 4, verticalAlign: "middle" }} />
@@ -635,7 +639,7 @@ export default function TestCycleManager() {
                             style={{ flex: 1, padding: "7px 10px", borderRadius: 6, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 13 }}
                           />
                           <button
-                            className="button primary"
+                            className="primary-button"
                             onClick={handleInject}
                             disabled={injecting || !targetIssueKey.trim()}
                             type="button"
@@ -702,7 +706,7 @@ export default function TestCycleManager() {
                           <div style={{ height: 8, background: "var(--surface-container-high)", borderRadius: 4, overflow: "hidden", display: "flex" }}>
                             {snap.passed > 0 && <div style={{ height: "100%", background: "var(--tertiary)", width: `${(snap.passed / snap.total) * 100}%` }} />}
                             {snap.failed > 0 && <div style={{ height: "100%", background: "var(--error)", width: `${(snap.failed / snap.total) * 100}%` }} />}
-                            {snap.blocked > 0 && <div style={{ height: "100%", background: "#f59e0b", width: `${(snap.blocked / snap.total) * 100}%` }} />}
+                            {snap.blocked > 0 && <div style={{ height: "100%", background: "var(--warning)", width: `${(snap.blocked / snap.total) * 100}%` }} />}
                             {snap.inProgress > 0 && <div style={{ height: "100%", background: "var(--secondary)", width: `${(snap.inProgress / snap.total) * 100}%` }} />}
                           </div>
                           <div style={{ fontSize: 10, color: "var(--on-surface-variant)", marginTop: 2 }}>{pct.toFixed(0)}% done</div>
@@ -712,7 +716,7 @@ export default function TestCycleManager() {
                         {[
                           { val: snap.passed, color: "var(--tertiary)" },
                           { val: snap.failed, color: "var(--error)" },
-                          { val: snap.blocked, color: "#f59e0b" },
+                          { val: snap.blocked, color: "var(--warning)" },
                           { val: snap.inProgress, color: "var(--secondary)" },
                           { val: snap.unexecuted, color: "var(--on-surface-variant)" },
                         ].map((col, ci) => (

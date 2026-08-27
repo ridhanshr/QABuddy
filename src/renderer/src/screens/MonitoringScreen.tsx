@@ -20,10 +20,10 @@ const TC_STATUSES = ["TODO", "EXECUTING", "PASS", "FAIL", "ABORTED"] as const;
 function statusColor(status: string | null): string {
   if (!status) return "var(--on-surface-variant)";
   const s = status.toLowerCase();
-  if (s === "done" || s === "pass" || s === "closed") return "var(--green, #2e7d32)";
-  if (s === "in progress" || s === "executing") return "#3b82f6";
+  if (s === "done" || s === "pass" || s === "closed") return "var(--success)";
+  if (s === "in progress" || s === "executing") return "var(--info)";
   if (s === "fail" || s === "failed") return "var(--error)";
-  if (s === "aborted") return "var(--warning, #e65100)";
+  if (s === "aborted") return "var(--warning)";
   if (s === "open") return "var(--on-surface-variant)";
   return "var(--on-surface-variant)";
 }

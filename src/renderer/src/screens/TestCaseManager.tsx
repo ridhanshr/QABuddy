@@ -10,13 +10,13 @@ const SCENARIO_TYPES = ["TC_HAPPY", "TC_UNHAPPY", "TC_REGRESSION"] as const;
 const EXECUTION_STATUSES = ["Pass", "Fail", "Blocked", "Unexecuted"] as const;
 
 const scenarioTypeStyle: Record<string, { bg: string; color: string }> = {
-  TC_HAPPY: { bg: "#d4edda", color: "#1a5c2a" },
+  TC_HAPPY: { bg: "var(--success-container)", color: "var(--on-success-fixed, var(--success))" },
   TC_UNHAPPY: { bg: "var(--error-container)", color: "var(--on-error-container)" },
-  TC_REGRESSION: { bg: "#e8d5f5", color: "#5c2a7a" },
+  TC_REGRESSION: { bg: "color-mix(in srgb, var(--severity-epic) 12%, transparent)", color: "var(--severity-epic)" },
   // legacy fallbacks
-  Positive: { bg: "#d4edda", color: "#1a5c2a" },
+  Positive: { bg: "var(--success-container)", color: "var(--on-success-fixed, var(--success))" },
   Negative: { bg: "var(--error-container)", color: "var(--on-error-container)" },
-  Regression: { bg: "#e8d5f5", color: "#5c2a7a" },
+  Regression: { bg: "color-mix(in srgb, var(--severity-epic) 12%, transparent)", color: "var(--severity-epic)" },
 };
 
 /** Best-effort: attribute a generated scenario to the file it cites in its
@@ -48,9 +48,9 @@ function flattenFolders(folders: XrayFolder[], prefix = ""): { label: string; va
 }
 
 const executionStatusStyle: Record<string, { bg: string; color: string }> = {
-  Pass: { bg: "#d4edda", color: "#1a5c2a" },
+  Pass: { bg: "var(--success-container)", color: "var(--on-success-fixed, var(--success))" },
   Fail: { bg: "var(--error-container)", color: "var(--on-error-container)" },
-  Blocked: { bg: "#fff3cd", color: "#856404" },
+  Blocked: { bg: "var(--warning-container)", color: "var(--warning)" },
   Unexecuted: { bg: "var(--surface-container-high)", color: "var(--on-surface-variant)" },
 };
 
@@ -74,8 +74,8 @@ function Badge({ label, style }: { label: string; style?: React.CSSProperties })
 function ScenarioCard({ sc, num }: { sc: import("@shared/types").BitbucketTestScenario; num: number }) {
   const riskStyle =
     sc.riskLevel === "High" ? { bg: "var(--error-container)", color: "var(--on-error-container)" }
-    : sc.riskLevel === "Medium" ? { bg: "rgba(234, 179, 8, 0.15)", color: "#d97706", border: "1px solid currentColor" }
-    : { bg: "var(--success-container, rgba(16, 185, 129, 0.15))", color: "#059669", border: "1px solid currentColor" };
+    : sc.riskLevel === "Medium" ? { bg: "color-mix(in srgb, var(--warning) 15%, transparent)", color: "var(--warning)", border: "1px solid currentColor" }
+    : { bg: "var(--success-container, color-mix(in srgb, var(--success) 15%, transparent))", color: "var(--success)", border: "1px solid currentColor" };
 
   return (
     <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 14, background: "var(--surface)" }}>
@@ -87,8 +87,8 @@ function ScenarioCard({ sc, num }: { sc: import("@shared/types").BitbucketTestSc
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{
             padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 800,
-            background: sc.confidence >= 85 ? "rgba(16, 185, 129, 0.15)" : "rgba(234, 179, 8, 0.15)",
-            color: sc.confidence >= 85 ? "#059669" : "#d97706",
+            background: sc.confidence >= 85 ? "color-mix(in srgb, var(--success) 15%, transparent)" : "color-mix(in srgb, var(--warning) 15%, transparent)",
+            color: sc.confidence >= 85 ? "var(--success)" : "var(--warning)",
             border: "1px solid currentColor"
           }}>
             Confidence: {sc.confidence}%
@@ -262,7 +262,7 @@ function TestCaseCard({
               </div>
               <button
                 type="button"
-                className="button secondary"
+                className="secondary-button"
                 onClick={() => { onUpdate(tc); setEditing(false); }}
                 style={{ alignSelf: "flex-start", fontSize: 12, padding: "5px 14px" }}
               >
@@ -644,30 +644,32 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
 
   return (
     <div>
+      <div className="page-header" style={{ marginBottom: 20 }}>
+        <div className="page-header-left">
+          <div className="screen-icon">
+            <span className="material-symbols filled" style={{ fontSize: 22 }}>assignment</span>
+          </div>
+          <div>
+            <h2 className="text-display" style={{ margin: 0 }}>Test Cases Management</h2>
+            <p className="text-body-lg" style={{ marginTop: 2 }}>Cari test case dari Jira Xray atau generate dari BRD.</p>
+          </div>
+        </div>
+      </div>
+
       {!initialTab && (
-        <div className="tab-bar" style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "2px solid var(--surface-container-high)" }}>
+        <div className="doc-sync-tabs" style={{ marginBottom: 20 }}>
           <button
-            className={`tab-button ${activeTab === "search" ? "active" : ""}`}
+            className={`doc-sync-tab ${activeTab === "search" ? "active" : ""}`}
             onClick={() => setActiveTab("search")}
             type="button"
-            style={{
-              flex: 1, padding: "10px 16px", border: "none", background: activeTab === "search" ? "var(--secondary-container)" : "transparent",
-              color: activeTab === "search" ? "var(--on-secondary-container)" : "var(--on-surface)", fontWeight: 600, cursor: "pointer",
-              borderRadius: "8px 8px 0 0", transition: "all 0.2s",
-            }}
           >
             <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>search</span>
             Search
           </button>
           <button
-            className={`tab-button ${activeTab === "creation" ? "active" : ""}`}
+            className={`doc-sync-tab ${activeTab === "creation" ? "active" : ""}`}
             onClick={() => setActiveTab("creation")}
             type="button"
-            style={{
-              flex: 1, padding: "10px 16px", border: "none", background: activeTab === "creation" ? "var(--secondary-container)" : "transparent",
-              color: activeTab === "creation" ? "var(--on-secondary-container)" : "var(--on-surface)", fontWeight: 600, cursor: "pointer",
-              borderRadius: "8px 8px 0 0", transition: "all 0.2s",
-            }}
           >
             <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle", marginRight: 6 }}>add_circle</span>
             Creation from BRD
@@ -724,10 +726,10 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   placeholder="Enter keyword to search test cases by summary..."
                   style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)" }}
                 />
-                <button className="button primary" onClick={() => handleSearch()} disabled={searchLoading} type="button">
+                <button className="primary-button" onClick={() => handleSearch()} disabled={searchLoading} type="button">
                   {searchLoading ? "Searching..." : "Search"}
                 </button>
-                <button className="button secondary" onClick={() => handleSearch(true)} disabled={searchLoading} type="button" title="Force refresh from Jira">
+                <button className="secondary-button" onClick={() => handleSearch(true)} disabled={searchLoading} type="button" title="Force refresh from Jira">
                   <span className="material-symbols" style={{ fontSize: 16, verticalAlign: "middle" }}>refresh</span>
                 </button>
               </div>
@@ -748,7 +750,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   placeholder='e.g. "Find test cases about user login with invalid password"'
                   style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)" }}
                 />
-                <button className="button primary" onClick={() => handleSearch()} disabled={searchLoading || !semanticQuery.trim()} type="button">
+                <button className="primary-button" onClick={() => handleSearch()} disabled={searchLoading || !semanticQuery.trim()} type="button">
                   {searchLoading ? "Searching..." : "AI Search"}
                 </button>
               </div>
@@ -777,7 +779,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   {selectedResultKeys.size > 0 && (
                     <button
                       type="button"
-                      className="button primary"
+                      className="primary-button"
                       onClick={() => { setReuseResult(null); setReuseUqaKey(""); setReuseTeKey(""); setReuseTeList([]); setShowReuseModal(true); void fetchReuseUqaProjects(); }}
                       style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", fontSize: 13 }}
                     >
@@ -787,7 +789,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   )}
                   <button
                     type="button"
-                    className="button secondary"
+                    className="secondary-button"
                     onClick={() => setSelectedResultKeys(prev => prev.size === searchResults.length ? new Set() : new Set(searchResults.map((r: any) => r.key || r.issueKey)))}
                     style={{ fontSize: 12, padding: "5px 10px" }}
                   >
@@ -943,7 +945,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   <span className="material-symbols" style={{ fontSize: 20, color: "var(--primary)" }}>code_blocks</span>
                   Generate Test Scenarios from Bitbucket Code Diff
                 </h3>
-                <span className="badge" style={{ background: "rgba(37, 99, 235, 0.1)", color: "var(--primary)", border: "1px solid currentColor", padding: "4px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600 }}>
+                <span className="badge" style={{ background: "var(--tertiary-container)", color: "var(--primary)", border: "1px solid currentColor", padding: "4px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600 }}>
                   Lightweight SLM Pipeline
                 </span>
               </div>
@@ -1023,9 +1025,9 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                     const allSelected = analyzable.length > 0 && selectedFiles.length === analyzable.length;
                     const pct = analyzable.length ? Math.round((selectedFiles.length / analyzable.length) * 100) : 0;
                     const chipStyle: Record<string, { label: string; bg: string; color: string }> = {
-                      ADD: { label: "ADD", bg: "rgba(16,185,129,0.12)", color: "#059669" },
-                      MODIFY: { label: "MOD", bg: "rgba(234,179,8,0.14)", color: "#b45309" },
-                      DELETE: { label: "DEL", bg: "rgba(220,38,38,0.12)", color: "#dc2626" },
+                      ADD: { label: "ADD", bg: "color-mix(in srgb, var(--success) 14%, transparent)", color: "var(--success)" },
+                      MODIFY: { label: "MOD", bg: "color-mix(in srgb, var(--warning) 15%, transparent)", color: "var(--warning)" },
+                      DELETE: { label: "DEL", bg: "color-mix(in srgb, var(--error) 13%, transparent)", color: "var(--error)" },
                     };
                     return (
                       <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 12, overflow: "hidden", background: "var(--surface-container-lowest)", marginBottom: 16 }}>
@@ -1071,7 +1073,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                                 style={{
                                   display: "flex", flexDirection: "row", alignItems: "center", flexWrap: "nowrap", gap: 10, padding: "9px 10px",
                                   borderRadius: 8, cursor: "pointer", marginBottom: 2,
-                                  background: checked ? "rgba(8,87,195,0.07)" : "transparent",
+                                  background: checked ? "var(--tertiary-container)" : "transparent",
                                   border: "1px solid transparent", borderColor: checked ? "var(--primary)" : "transparent",
                                   transition: "all 0.15s",
                                 }}
@@ -1091,8 +1093,8 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                                   title={f.path}
                                 >{f.path}</span>
                                 <span style={{ fontSize: 12, fontFamily: "monospace", flexShrink: 0, textTransform: "none", letterSpacing: 0 }}>
-                                  <span style={{ color: "#059669", fontWeight: 600 }}>+{f.linesAdded}</span>
-                                  <span style={{ color: "#dc2626", marginLeft: 8, fontWeight: 600 }}>−{f.linesDeleted}</span>
+                                  <span style={{ color: "var(--success)", fontWeight: 600 }}>+{f.linesAdded}</span>
+                                  <span style={{ color: "var(--error)", marginLeft: 8, fontWeight: 600 }}>−{f.linesDeleted}</span>
                                 </span>
                               </label>
                             );
@@ -1590,7 +1592,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                 </div>
                 <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
                   <button
-                    className="button secondary"
+                    className="secondary-button"
                     onClick={handleSyncToJira}
                     disabled={syncing || testCases.length === 0 || !generatedTestExecId}
                     type="button"
@@ -1639,8 +1641,8 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   <div style={{
                     display: "flex", alignItems: "center", gap: 12,
                     padding: "10px 14px", borderRadius: syncResult.errors.length > 0 ? "8px 8px 0 0" : 8,
-                    background: syncResult.failed === 0 ? "var(--tertiary-container)" : syncResult.success > 0 ? "#fff3cd" : "var(--error-container)",
-                    color: syncResult.failed === 0 ? "var(--on-tertiary-container)" : syncResult.success > 0 ? "#856404" : "var(--on-error-container)",
+                    background: syncResult.failed === 0 ? "var(--tertiary-container)" : syncResult.success > 0 ? "var(--warning-container)" : "var(--error-container)",
+                    color: syncResult.failed === 0 ? "var(--on-tertiary-container)" : syncResult.success > 0 ? "var(--warning)" : "var(--on-error-container)",
                   }}>
                     <span className="material-symbols" style={{ fontSize: 20 }}>
                       {syncResult.failed === 0 ? "check_circle" : syncResult.success > 0 ? "warning" : "error"}
@@ -1815,7 +1817,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
             <div style={{ display: "flex", gap: 10, marginTop: 24, justifyContent: "flex-end" }}>
               <button
                 type="button"
-                className="button secondary"
+                className="secondary-button"
                 onClick={() => setShowReuseModal(false)}
                 disabled={reuseLoading}
                 style={{ padding: "8px 18px", fontSize: 14 }}
@@ -1825,7 +1827,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
               {!reuseResult?.ok && (
                 <button
                   type="button"
-                  className="button primary"
+                  className="primary-button"
                   onClick={handleReuseSubmit}
                   disabled={reuseLoading || !reuseUqaKey || !reuseTeKey}
                   style={{ padding: "8px 20px", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}

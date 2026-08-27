@@ -16,6 +16,19 @@ interface Props {
 
 type Mode = "login" | "register";
 
+const inputBase =
+  "w-full rounded-lg border border-line bg-card py-2.5 text-sm text-ink outline-none transition placeholder:text-faint focus:border-primary";
+
+const fieldLabel = "mb-1.5 block text-xs font-semibold text-muted";
+
+function FieldIcon({ children }: { children: string }) {
+  return (
+    <span className="material-symbols pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 !text-[18px] text-faint">
+      {children}
+    </span>
+  );
+}
+
 export default function Login({ onLogin }: Props) {
   const [mode, setMode] = useState<Mode>("login");
 
@@ -99,43 +112,28 @@ export default function Login({ onLogin }: Props) {
     }
   };
 
-  const iconStyle: React.CSSProperties = {
-    position: "absolute",
-    left: 12,
-    top: "50%",
-    transform: "translateY(-50%)",
-    fontSize: 18,
-    color: "var(--on-surface-variant)",
-    pointerEvents: "none",
-  };
-
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--surface)" }}>
-      <div style={{ width: "100%", maxWidth: 420, padding: "0 24px" }}>
+    <div className="flex min-h-screen items-center justify-center bg-canvas px-6 font-sans">
+      <div className="w-full max-w-[400px]">
         {/* Brand */}
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <img src={logo} alt="QA Buddy" style={{ width: 56, height: 56, marginBottom: 14 }} />
-          <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", color: "var(--on-surface)" }}>QA Buddy</h1>
+        <div className="mb-7 text-center">
+          <img src={logo} alt="QA Buddy" className="mx-auto mb-3 h-[52px] w-[52px]" />
+          <h1 className="text-[22px] font-bold tracking-tight text-ink">QA Buddy</h1>
+          <p className="mt-0.5 text-xs text-muted">Buddy Up. Test Smarter.</p>
         </div>
 
         {/* Tab switcher */}
-        <div style={{ display: "flex", borderRadius: 10, overflow: "hidden", border: "1px solid var(--outline-variant)", marginBottom: 20 }}>
+        <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl border border-line bg-surface-low p-1">
           {(["login", "register"] as Mode[]).map((m) => (
             <button
               key={m}
               type="button"
               onClick={() => switchMode(m)}
-              style={{
-                flex: 1,
-                padding: "10px 0",
-                border: "none",
-                cursor: "pointer",
-                fontSize: 14,
-                fontWeight: mode === m ? 600 : 400,
-                background: mode === m ? "var(--primary)" : "var(--surface-container)",
-                color: mode === m ? "var(--on-primary)" : "var(--on-surface-variant)",
-                transition: "background 0.15s",
-              }}
+              className={
+                mode === m
+                  ? "rounded-lg bg-card py-2 text-[13px] font-semibold text-ink shadow-sm"
+                  : "rounded-lg py-2 text-[13px] font-medium text-muted transition-colors hover:text-ink"
+              }
             >
               {m === "login" ? "Masuk" : "Daftar"}
             </button>
@@ -143,18 +141,18 @@ export default function Login({ onLogin }: Props) {
         </div>
 
         {/* Card */}
-        <div className="card" style={{ padding: "28px 28px 24px", borderRadius: 16 }}>
-          <h2 style={{ fontSize: 17, fontWeight: 600, margin: "0 0 20px", color: "var(--on-surface)" }}>
+        <div className="rounded-2xl border border-line bg-card p-6">
+          <h2 className="mb-4 text-[17px] font-semibold text-ink">
             {mode === "login" ? "Masuk ke akun Anda" : "Buat akun baru"}
           </h2>
 
           {/* ── LOGIN FORM ── */}
           {mode === "login" && (
-            <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div className="field-group">
-                <label style={{ fontSize: 13, fontWeight: 500 }}>PN (Employee ID)</label>
-                <div style={{ position: "relative" }}>
-                  <span className="material-symbols" style={iconStyle}>badge</span>
+            <form onSubmit={handleLogin} className="flex flex-col gap-4">
+              <label className="block">
+                <span className={fieldLabel}>PN (Employee ID)</span>
+                <div className="relative">
+                  <FieldIcon>badge</FieldIcon>
                   <input
                     type="text"
                     value={pn}
@@ -163,15 +161,15 @@ export default function Login({ onLogin }: Props) {
                     autoComplete="username"
                     autoFocus
                     required
-                    style={{ paddingLeft: 40, width: "100%" }}
+                    className={`${inputBase} pl-10`}
                   />
                 </div>
-              </div>
+              </label>
 
-              <div className="field-group">
-                <label style={{ fontSize: 13, fontWeight: 500 }}>Password</label>
-                <div style={{ position: "relative" }}>
-                  <span className="material-symbols" style={iconStyle}>lock</span>
+              <label className="block">
+                <span className={fieldLabel}>Password</span>
+                <div className="relative">
+                  <FieldIcon>lock</FieldIcon>
                   <input
                     type={showPassword ? "text" : "password"}
                     value={password}
@@ -179,33 +177,32 @@ export default function Login({ onLogin }: Props) {
                     placeholder="Password"
                     autoComplete="current-password"
                     required
-                    style={{ paddingLeft: 40, paddingRight: 44, width: "100%" }}
+                    className={`${inputBase} pl-10 pr-11`}
                   />
-                  <button type="button" onClick={() => setShowPassword((v) => !v)} tabIndex={-1}
-                    style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", padding: 4, display: "flex", alignItems: "center" }}>
-                    <span className="material-symbols" style={{ fontSize: 18 }}>{showPassword ? "visibility_off" : "visibility"}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    tabIndex={-1}
+                    className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted transition-colors hover:bg-surface-mid"
+                  >
+                    <span className="material-symbols !text-[18px]">{showPassword ? "visibility_off" : "visibility"}</span>
                   </button>
                 </div>
-              </div>
+              </label>
 
               {error && <ErrorBox message={error} />}
 
-              <button type="submit" className="primary-button" disabled={loading}
-                style={{ width: "100%", height: 44, fontSize: 15, borderRadius: 10, marginTop: 4 }}>
-                {loading
-                  ? <><span className="material-symbols" style={{ fontSize: 18, animation: "spin 1s linear infinite" }}>progress_activity</span>Masuk...</>
-                  : <><span className="material-symbols" style={{ fontSize: 18 }}>login</span>Masuk</>}
-              </button>
+              <SubmitButton loading={loading} label={loading ? "Masuk..." : "Masuk"} icon={loading ? "" : "login"} />
             </form>
           )}
 
           {/* ── REGISTER FORM ── */}
           {mode === "register" && (
-            <form onSubmit={handleRegister} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div className="field-group">
-                <label style={{ fontSize: 13, fontWeight: 500 }}>PN (Employee ID)</label>
-                <div style={{ position: "relative" }}>
-                  <span className="material-symbols" style={iconStyle}>badge</span>
+            <form onSubmit={handleRegister} className="flex flex-col gap-4">
+              <label className="block">
+                <span className={fieldLabel}>PN (Employee ID)</span>
+                <div className="relative">
+                  <FieldIcon>badge</FieldIcon>
                   <input
                     type="text"
                     value={regPn}
@@ -213,80 +210,85 @@ export default function Login({ onLogin }: Props) {
                     placeholder="e.g. 00400291"
                     autoFocus
                     required
-                    style={{ paddingLeft: 40, width: "100%" }}
+                    className={`${inputBase} pl-10`}
                   />
                 </div>
-              </div>
+              </label>
 
-              <div className="field-group">
-                <label style={{ fontSize: 13, fontWeight: 500 }}>Role</label>
-                <div style={{ position: "relative" }}>
-                  <span className="material-symbols" style={iconStyle}>manage_accounts</span>
+              <label className="block">
+                <span className={fieldLabel}>Role</span>
+                <div className="relative">
+                  <FieldIcon>manage_accounts</FieldIcon>
                   <select
                     value={regRole}
                     onChange={(e) => { setRegRole(e.target.value); setError(null); }}
                     required
-                    style={{ paddingLeft: 40, width: "100%", appearance: "none" }}
+                    className={`${inputBase} appearance-none pl-10 pr-9`}
                   >
                     <option value="">-- Pilih Role --</option>
                     {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                 </div>
-              </div>
+              </label>
 
-              <div className="field-group">
-                <label style={{ fontSize: 13, fontWeight: 500 }}>Password</label>
-                <div style={{ position: "relative" }}>
-                  <span className="material-symbols" style={iconStyle}>lock</span>
+              <label className="block">
+                <span className={fieldLabel}>Password</span>
+                <div className="relative">
+                  <FieldIcon>lock</FieldIcon>
                   <input
                     type={showRegPassword ? "text" : "password"}
                     value={regPassword}
                     onChange={(e) => { setRegPassword(e.target.value); setError(null); }}
                     placeholder="Minimal 6 karakter"
                     required
-                    style={{ paddingLeft: 40, paddingRight: 44, width: "100%" }}
+                    className={`${inputBase} pl-10 pr-11`}
                   />
-                  <button type="button" onClick={() => setShowRegPassword((v) => !v)} tabIndex={-1}
-                    style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", padding: 4, display: "flex", alignItems: "center" }}>
-                    <span className="material-symbols" style={{ fontSize: 18 }}>{showRegPassword ? "visibility_off" : "visibility"}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowRegPassword((v) => !v)}
+                    tabIndex={-1}
+                    className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted transition-colors hover:bg-surface-mid"
+                  >
+                    <span className="material-symbols !text-[18px]">{showRegPassword ? "visibility_off" : "visibility"}</span>
                   </button>
                 </div>
-              </div>
+              </label>
 
-              <div className="field-group">
-                <label style={{ fontSize: 13, fontWeight: 500 }}>Konfirmasi Password</label>
-                <div style={{ position: "relative" }}>
-                  <span className="material-symbols" style={iconStyle}>lock_reset</span>
+              <label className="block">
+                <span className={fieldLabel}>Konfirmasi Password</span>
+                <div className="relative">
+                  <FieldIcon>lock_reset</FieldIcon>
                   <input
                     type={showRegPassword ? "text" : "password"}
                     value={regConfirm}
                     onChange={(e) => { setRegConfirm(e.target.value); setError(null); }}
                     placeholder="Ulangi password"
                     required
-                    style={{ paddingLeft: 40, width: "100%" }}
+                    className={`${inputBase} pl-10`}
                   />
                 </div>
-              </div>
+              </label>
 
               {error && <ErrorBox message={error} />}
               {success && (
-                <div style={{ fontSize: 13, color: "var(--primary)", background: "rgba(var(--primary-rgb), 0.08)", border: "1px solid rgba(var(--primary-rgb), 0.25)", borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span className="material-symbols" style={{ fontSize: 16, flexShrink: 0 }}>check_circle</span>
+                <div className="flex items-center gap-2 rounded-lg border px-3 py-2.5 text-[13px]"
+                  style={{
+                    color: "var(--success)",
+                    background: "var(--success-container)",
+                    borderColor: "color-mix(in srgb, var(--success) 30%, transparent)",
+                  }}
+                >
+                  <span className="material-symbols !flex-shrink-0 !text-[16px]">check_circle</span>
                   {success}
                 </div>
               )}
 
-              <button type="submit" className="primary-button" disabled={loading}
-                style={{ width: "100%", height: 44, fontSize: 15, borderRadius: 10, marginTop: 4 }}>
-                {loading
-                  ? <><span className="material-symbols" style={{ fontSize: 18, animation: "spin 1s linear infinite" }}>progress_activity</span>Mendaftar...</>
-                  : <><span className="material-symbols" style={{ fontSize: 18 }}>person_add</span>Daftar</>}
-              </button>
+              <SubmitButton loading={loading} label={loading ? "Mendaftar..." : "Daftar"} icon={loading ? "" : "person_add"} />
             </form>
           )}
         </div>
 
-        <p style={{ textAlign: "center", fontSize: 11, color: "var(--on-surface-variant)", marginTop: 20 }}>
+        <p className="mt-5 text-center text-[11px] text-faint">
           QA Buddy v{appVersion} · For BRI Internal Use Only
         </p>
       </div>
@@ -294,10 +296,34 @@ export default function Login({ onLogin }: Props) {
   );
 }
 
+function SubmitButton({ loading, label, icon }: { loading: boolean; label: string; icon: string }) {
+  return (
+    <button
+      type="submit"
+      disabled={loading}
+      className="mt-1 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-sm font-semibold text-on-primary transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-55"
+    >
+      {loading ? (
+        <span className="material-symbols spin !text-[18px]">progress_activity</span>
+      ) : (
+        <span className="material-symbols !text-[18px]">{icon}</span>
+      )}
+      {label}
+    </button>
+  );
+}
+
 function ErrorBox({ message }: { message: string }) {
   return (
-    <div style={{ fontSize: 13, color: "var(--error)", background: "rgba(var(--error-rgb, 220,38,38), 0.08)", border: "1px solid rgba(var(--error-rgb, 220,38,38), 0.25)", borderRadius: 8, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
-      <span className="material-symbols" style={{ fontSize: 16, flexShrink: 0 }}>error</span>
+    <div
+      className="flex items-center gap-2 rounded-lg border px-3 py-2.5 text-[13px]"
+      style={{
+        color: "var(--error)",
+        background: "var(--error-container)",
+        borderColor: "color-mix(in srgb, var(--error) 30%, transparent)",
+      }}
+    >
+      <span className="material-symbols !flex-shrink-0 !text-[16px]">error</span>
       {message}
     </div>
   );

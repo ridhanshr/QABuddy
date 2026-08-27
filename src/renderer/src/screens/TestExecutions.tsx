@@ -99,6 +99,18 @@ export default function TestExecutions() {
 
   return (
     <div>
+      <div className="page-header" style={{ marginBottom: 20 }}>
+        <div className="page-header-left">
+          <div className="screen-icon">
+            <span className="material-symbols filled" style={{ fontSize: 22 }}>assignment_turned_in</span>
+          </div>
+          <div>
+            <h2 className="text-display" style={{ margin: 0 }}>Test Executions</h2>
+            <p className="text-body-lg" style={{ marginTop: 2 }}>Monitoring hasil eksekusi test case dari Jira Xray.</p>
+          </div>
+        </div>
+      </div>
+
       {/* ── Test Execution Monitoring ── */}
       {activeTab === "monitoring" && (
         <div>
@@ -116,7 +128,7 @@ export default function TestExecutions() {
                 style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 14 }}
               />
               <button
-                className="button primary"
+                className="primary-button"
                 onClick={() => fetchExecDetails(execKeyInput)}
                 disabled={execDetailsLoading || !execKeyInput.trim()}
                 type="button"
@@ -161,7 +173,7 @@ export default function TestExecutions() {
 
           {execDetails && !execDetailsLoading && (() => {
             const d = execDetails;
-            const passRateColor = d.passRate >= 80 ? "var(--tertiary)" : d.passRate >= 50 ? "#f59e0b" : "var(--error)";
+            const passRateColor = d.passRate >= 80 ? "var(--tertiary)" : d.passRate >= 50 ? "var(--warning)" : "var(--error)";
             return (
               <div>
                 <div className="card" style={{ padding: 20, marginBottom: 16 }}>
@@ -191,7 +203,7 @@ export default function TestExecutions() {
                     <div style={{ height: 10, background: "var(--surface-container-high)", borderRadius: 6, overflow: "hidden", display: "flex" }}>
                       {d.passed > 0 && <div style={{ height: "100%", background: "var(--tertiary)", width: `${(d.passed / d.total) * 100}%` }} title={`Passed: ${d.passed}`} />}
                       {d.failed > 0 && <div style={{ height: "100%", background: "var(--error)", width: `${(d.failed / d.total) * 100}%` }} title={`Failed: ${d.failed}`} />}
-                      {d.blocked > 0 && <div style={{ height: "100%", background: "#f59e0b", width: `${(d.blocked / d.total) * 100}%` }} title={`Blocked: ${d.blocked}`} />}
+                      {d.blocked > 0 && <div style={{ height: "100%", background: "var(--warning)", width: `${(d.blocked / d.total) * 100}%` }} title={`Blocked: ${d.blocked}`} />}
                       {d.inProgress > 0 && <div style={{ height: "100%", background: "var(--secondary)", width: `${(d.inProgress / d.total) * 100}%` }} title={`In Progress: ${d.inProgress}`} />}
                       {d.unexecuted > 0 && <div style={{ height: "100%", background: "var(--outline-variant)", width: `${(d.unexecuted / d.total) * 100}%` }} title={`To Do: ${d.unexecuted}`} />}
                     </div>
@@ -203,7 +215,7 @@ export default function TestExecutions() {
                       { label: "In Progress", count: d.inProgress, color: "var(--secondary)" },
                       { label: "Done", count: d.passed, color: "var(--tertiary)" },
                       { label: "Failed", count: d.failed, color: "var(--error)" },
-                      { label: "Blocked", count: d.blocked, color: "#f59e0b" },
+                      { label: "Blocked", count: d.blocked, color: "var(--warning)" },
                     ].map(item => (
                       <span key={item.label} style={{ color: "var(--on-surface-variant)" }}>
                         <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: item.color, marginRight: 4, verticalAlign: "middle" }} />
@@ -267,7 +279,7 @@ export default function TestExecutions() {
                             style={{ flex: 1, padding: "7px 10px", borderRadius: 6, border: "1px solid var(--outline)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 13 }}
                           />
                           <button
-                            className="button primary"
+                            className="primary-button"
                             onClick={handleInject}
                             disabled={injecting || !targetIssueKey.trim()}
                             type="button"
@@ -330,7 +342,7 @@ export default function TestExecutions() {
                           <div style={{ height: 8, background: "var(--surface-container-high)", borderRadius: 4, overflow: "hidden", display: "flex" }}>
                             {snap.passed > 0 && <div style={{ height: "100%", background: "var(--tertiary)", width: `${(snap.passed / snap.total) * 100}%` }} />}
                             {snap.failed > 0 && <div style={{ height: "100%", background: "var(--error)", width: `${(snap.failed / snap.total) * 100}%` }} />}
-                            {snap.blocked > 0 && <div style={{ height: "100%", background: "#f59e0b", width: `${(snap.blocked / snap.total) * 100}%` }} />}
+                            {snap.blocked > 0 && <div style={{ height: "100%", background: "var(--warning)", width: `${(snap.blocked / snap.total) * 100}%` }} />}
                             {snap.inProgress > 0 && <div style={{ height: "100%", background: "var(--secondary)", width: `${(snap.inProgress / snap.total) * 100}%` }} />}
                           </div>
                           <div style={{ fontSize: 10, color: "var(--on-surface-variant)", marginTop: 2 }}>{pct.toFixed(0)}% done</div>
@@ -338,7 +350,7 @@ export default function TestExecutions() {
                         {[
                           { val: snap.passed, color: "var(--tertiary)" },
                           { val: snap.failed, color: "var(--error)" },
-                          { val: snap.blocked, color: "#f59e0b" },
+                          { val: snap.blocked, color: "var(--warning)" },
                           { val: snap.inProgress, color: "var(--secondary)" },
                           { val: snap.unexecuted, color: "var(--on-surface-variant)" },
                         ].map((col, ci) => (

@@ -125,6 +125,7 @@ pub async fn review_document(
         &root.id,
         &mut raw_pages,
         &mut HashSet::new(),
+        app,
     )
     .await?;
     let mut seen_page_ids = HashSet::new();
@@ -345,38 +346,77 @@ async fn collect_children(
     parent_id: &str,
     pages: &mut Vec<Value>,
     visited: &mut HashSet<String>,
+    app: Option<&tauri::AppHandle>,
 ) -> Result<()> {
-    let mut queue = vec![parent_id.to_string()];
-    while let Some(current) = queue.pop() {
-        if pages.len() >= 100 || !visited.insert(current.clone()) {
-            continue;
+    const MAX_PAGES: usize = 100;
+    let mut queue: Vec<String> = vec![parent_id.to_string()];
+    let mut guard = 0usize;
+    while !queue.is_empty() && pages.len() < MAX_PAGES {
+        guard += 1;
+        if guard > MAX_PAGES * 4 {
+            break;
         }
-        let mut children = confluence.list_child_pages(config, &current).await?;
-        if children.is_empty() {
-            children = confluence.list_pages(config, &current).await?;
-            children.retain(|page| {
-                page["id"].as_str() != Some(current.as_str())
-                    && page["ancestors"]
-                        .as_array()
-                        .map(|ancestors| {
-                            ancestors
-                                .iter()
-                                .any(|ancestor| ancestor["id"].as_str() == Some(current.as_str()))
-                        })
-                        .unwrap_or(true)
-            });
+        let level: Vec<String> = std::mem::take(&mut queue)
+            .into_iter()
+            .filter(|id| visited.insert(id.clone()))
+            .take(MAX_PAGES.saturating_sub(pages.len()).max(1))
+            .collect();
+        let fetches = level.iter().map(|current| {
+            let current = current.clone();
+            async move {
+                let mut children = confluence
+                    .list_child_pages(config, &current)
+                    .await
+                    .unwrap_or_default();
+                if children.is_empty() {
+                    if let Ok(mut listed) = confluence.list_pages(config, &current).await {
+                        listed.retain(|page| {
+                            page["id"].as_str() != Some(current.as_str())
+                                && page["ancestors"]
+                                    .as_array()
+                                    .map(|ancestors| {
+                                        ancestors
+                                            .iter()
+                                            .any(|ancestor| ancestor["id"].as_str() == Some(current.as_str()))
+                                    })
+                                    .unwrap_or(true)
+                        });
+                        children = listed;
+                    }
+                }
+                (current, children)
+            }
+        });
+        let fetched: Vec<(String, Vec<Value>)> = futures::future::join_all(fetches).await;
+        let total_fetched: usize = fetched.iter().map(|(_, children)| children.len()).sum();
+        if total_fetched > 0 {
+            emit_progress(
+                app,
+                "fetch",
+                format!(
+                    "Mengambil halaman Confluence... {} halaman terkumpul.",
+                    pages.len()
+                ),
+                0,
+                0,
+            );
         }
-        for mut child in children {
-            let id = child["id"].as_str().unwrap_or("").to_string();
-            if id.is_empty() || pages.iter().any(|p| p["id"].as_str() == Some(id.as_str())) {
-                continue;
+        for (current, children) in fetched {
+            for mut child in children {
+                let id = child["id"].as_str().unwrap_or("").to_string();
+                if id.is_empty() || pages.iter().any(|p| p["id"].as_str() == Some(id.as_str())) {
+                    continue;
+                }
+                if child["ancestors"].as_array().is_none() {
+                    child["ancestors"] = serde_json::json!([{ "id": current }]);
+                }
+                pages.push(child);
+                queue.push(id);
+                if pages.len() >= MAX_PAGES {
+                    break;
+                }
             }
-            if child["ancestors"].as_array().is_none() {
-                child["ancestors"] = serde_json::json!([{ "id": current }]);
-            }
-            pages.push(child);
-            queue.push(id);
-            if pages.len() >= 100 {
+            if pages.len() >= MAX_PAGES {
                 break;
             }
         }
@@ -2130,12 +2170,10 @@ fn validate_scenario_capture_tables(
 ) {
     let storage_html = page.raw["body"]["storage"]["value"].as_str().unwrap_or("");
     let view_html = page.raw["body"]["view"]["value"].as_str().unwrap_or("");
+    // ponytail: page.content = storage + view, so a third parse is always redundant
     let mut tables = dedupe_tables(parse_html_tables(storage_html));
     if tables.is_empty() {
         tables = dedupe_tables(parse_html_tables(view_html));
-    }
-    if tables.is_empty() {
-        tables = dedupe_tables(parse_html_tables(&page.content));
     }
     if tables.is_empty() {
         score.possible += SCENARIO_COMPLETENESS_WEIGHT;

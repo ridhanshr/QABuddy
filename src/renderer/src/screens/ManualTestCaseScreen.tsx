@@ -170,11 +170,11 @@ export default function ManualTestCaseScreen() {
       case "success":
         return { color: "var(--primary)", border: "1px solid var(--primary)", background: "rgba(var(--primary-rgb), 0.08)" };
       case "fallback":
-        return { color: "#f59e0b", border: "1px solid #f59e0b", background: "rgba(245, 158, 11, 0.08)" };
+        return { color: "var(--warning)", border: "1px solid #f59e0b", background: "color-mix(in srgb, var(--warning) 10%, transparent)" };
       case "empty":
         return { color: "var(--on-surface-variant)", border: "1px solid var(--outline-variant)", background: "transparent" };
       case "error":
-        return { color: "var(--error)", border: "1px solid var(--error)", background: "rgba(239, 68, 68, 0.08)" };
+        return { color: "var(--error)", border: "1px solid var(--error)", background: "color-mix(in srgb, var(--error) 8%, transparent)" };
       case "loading":
         return { color: "var(--on-surface-variant)", border: "1px solid var(--outline-variant)", background: "rgba(var(--primary-rgb), 0.04)" };
       default:
@@ -656,14 +656,14 @@ export default function ManualTestCaseScreen() {
                             style={{
                               background:
                                 item.category === "Functional"
-                                  ? "#10b981"
+                                  ? "var(--success)"
                                   : item.category === "UI/UX"
-                                  ? "#f59e0b"
+                                  ? "var(--warning)"
                                   : item.category === "Security"
-                                  ? "#ef4444"
+                                  ? "var(--error)"
                                   : item.category === "Error Handling"
-                                  ? "#8b5cf6"
-                                  : "#3b82f6",
+                                  ? "var(--severity-epic)"
+                                  : "var(--info)",
                             }}
                           ></span>
                           {item.category}
@@ -686,7 +686,7 @@ export default function ManualTestCaseScreen() {
                   </div>
                 </div>
               ) : extractionStatus === "error" ? (
-                <div className="card" style={{ padding: 24, border: "1px dashed var(--error)", background: "rgba(239, 68, 68, 0.05)" }}>
+                <div className="card" style={{ padding: 24, border: "1px dashed var(--error)", background: "color-mix(in srgb, var(--error) 5%, transparent)" }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                     <span className="material-symbols" style={{ color: "var(--error)", fontSize: 20 }}>error</span>
                     <div>

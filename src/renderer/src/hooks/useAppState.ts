@@ -2481,16 +2481,8 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
   const clearConfEntries = async () => {
     setConfEntries([createEmptyConfEntry()]);
-    const clearedConfig = {
-      ...config,
-      confluence: { ...config.confluence, targetPageId: "" },
-    };
-    setConfig(clearedConfig);
-    try {
-      await window.qaBuddy.saveConfig(clearedConfig);
-    } catch {
-      // non-critical — entries are already cleared in UI
-    }
+    // Clear All hanya mengosongkan tabel — config (Target Page ID, Jira Server ID) dipertahankan.
+    setConfig({ ...config });
   };
 
   const updateConfEntry = (id: string, field: string, value: any) => {

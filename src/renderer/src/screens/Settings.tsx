@@ -82,7 +82,7 @@ export default function Settings() {
           <span className="material-symbols" style={{ fontSize: 18 }}>neurology</span>
           Knowledge Base
         </button>
-        <button 
+        <button
           className={`tab-btn ${settingsTab === "updates" ? "active" : ""}`}
           onClick={() => setSettingsTab("updates")}
           type="button"
@@ -91,16 +91,16 @@ export default function Settings() {
           <span className="material-symbols" style={{ fontSize: 18 }}>system_update</span>
           Updates
           {updateInfo?.updateAvailable && (
-            <span 
-              className="update-badge-dot animate-pulse" 
-              style={{ 
-                position: "absolute", 
-                top: 4, 
+            <span
+              className="update-badge-dot animate-pulse"
+              style={{
+                position: "absolute",
+                top: 4,
                 right: 4, 
                 width: 8, 
                 height: 8, 
                 borderRadius: "50%", 
-                background: "var(--error, #dc2626)" 
+                background: "var(--error)" 
               }} 
             />
           )}
@@ -123,8 +123,8 @@ export default function Settings() {
               <div style={{ marginBottom: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
                   <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--primary)" }}>Jira Configuration</h4>
-                  <span className={`bug-preview-badge ${status.jira.ok ? "connected" : ""}`} style={{ fontSize: 11, background: status.jira.ok ? "rgba(16, 185, 129, 0.1)" : "var(--surface-container)", color: status.jira.ok ? "#10b981" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
-                    <span className="tag-dot" style={{ background: status.jira.ok ? "#10b981" : "#737686", marginRight: 6 }}></span>
+                  <span className={`bug-preview-badge ${status.jira.ok ? "connected" : ""}`} style={{ fontSize: 11, background: status.jira.ok ? "color-mix(in srgb, var(--success) 12%, transparent)" : "var(--surface-container)", color: status.jira.ok ? "var(--success)" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
+                    <span className="tag-dot" style={{ background: status.jira.ok ? "var(--success)" : "var(--font-disabled)", marginRight: 6 }}></span>
                     {status.jira.ok ? "Jira Connected" : "Connection Pending"}
                   </span>
                 </div>
@@ -233,8 +233,8 @@ export default function Settings() {
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
                   <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--primary)" }}>Confluence Configuration</h4>
-                  <span className={`bug-preview-badge ${status.confluence.ok ? "connected" : ""}`} style={{ fontSize: 11, background: status.confluence.ok ? "rgba(16, 185, 129, 0.1)" : "var(--surface-container)", color: status.confluence.ok ? "#10b981" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
-                    <span className="tag-dot" style={{ background: status.confluence.ok ? "#10b981" : "#737686", marginRight: 6 }}></span>
+                  <span className={`bug-preview-badge ${status.confluence.ok ? "connected" : ""}`} style={{ fontSize: 11, background: status.confluence.ok ? "color-mix(in srgb, var(--success) 12%, transparent)" : "var(--surface-container)", color: status.confluence.ok ? "var(--success)" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
+                    <span className="tag-dot" style={{ background: status.confluence.ok ? "var(--success)" : "var(--font-disabled)", marginRight: 6 }}></span>
                     {status.confluence.ok ? "Confluence Connected" : "Connection Pending"}
                   </span>
                 </div>
@@ -321,8 +321,8 @@ export default function Settings() {
               <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px dashed var(--outline-variant)" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
                   <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--primary)" }}>Bitbucket Self-Hosted Configuration</h4>
-                  <span className="bug-preview-badge" style={{ fontSize: 11, background: config.bitbucket?.baseUrl ? "rgba(16, 185, 129, 0.1)" : "var(--surface-container)", color: config.bitbucket?.baseUrl ? "#10b981" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
-                    <span className="tag-dot" style={{ background: config.bitbucket?.baseUrl ? "#10b981" : "#737686", marginRight: 6 }}></span>
+                  <span className="bug-preview-badge" style={{ fontSize: 11, background: config.bitbucket?.baseUrl ? "color-mix(in srgb, var(--success) 12%, transparent)" : "var(--surface-container)", color: config.bitbucket?.baseUrl ? "var(--success)" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
+                    <span className="tag-dot" style={{ background: config.bitbucket?.baseUrl ? "var(--success)" : "var(--font-disabled)", marginRight: 6 }}></span>
                     {config.bitbucket?.baseUrl ? "Bitbucket Configured" : "Not Configured"}
                   </span>
                 </div>
@@ -437,8 +437,8 @@ export default function Settings() {
                   <p style={{ fontSize: 14, color: "var(--on-surface-variant)" }}>Manage your local LLM engine.</p>
                 </div>
               </div>
-              <span className="bug-preview-badge" style={{ background: status.ollama.ok ? "rgba(37, 99, 235, 0.1)" : "var(--surface-container)", color: status.ollama.ok ? "var(--primary)" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
-                <span className={`tag-dot ${status.ollama.ok ? "animate-pulse" : ""}`} style={{ background: status.ollama.ok ? "var(--primary)" : "#737686", marginRight: 6 }}></span>
+              <span className="bug-preview-badge" style={{ background: status.ollama.ok ? "var(--tertiary-container)" : "var(--surface-container)", color: status.ollama.ok ? "var(--primary)" : "var(--on-surface-variant)", border: "1px solid currentColor" }}>
+                <span className={`tag-dot ${status.ollama.ok ? "animate-pulse" : ""}`} style={{ background: status.ollama.ok ? "var(--primary)" : "var(--font-disabled)", marginRight: 6 }}></span>
                 Ollama {status.ollama.ok ? "Running" : "Offline"}
               </span>
             </div>
@@ -626,7 +626,7 @@ export default function Settings() {
                         padding: 16,
                         borderRadius: 12,
                         border: "1px solid var(--outline-variant)",
-                        background: ok ? "rgba(22, 163, 74, 0.06)" : "rgba(220, 38, 38, 0.06)",
+                        background: ok ? "var(--success-container)" : "var(--error-container)",
                         display: "flex",
                         gap: 12,
                         alignItems: "flex-start",
@@ -634,7 +634,7 @@ export default function Settings() {
                     >
                       <span
                         className="material-symbols"
-                        style={{ fontSize: 20, color: ok ? "#16a34a" : "#dc2626", marginTop: 2 }}
+                        style={{ fontSize: 20, color: ok ? "var(--success)" : "var(--error)", marginTop: 2 }}
                       >
                         {ok ? item.icon : "error"}
                       </span>
@@ -720,8 +720,8 @@ export default function Settings() {
 
           {/* Prerequisite check */}
           {!config.ollama.endpoint && (
-            <div className="surface-card" style={{ padding: 20, marginBottom: 24, borderLeft: "4px solid var(--color-warning, #FB8C00)", display: "flex", gap: 12, alignItems: "center" }}>
-              <span className="material-symbols" style={{ color: "var(--color-warning, #FB8C00)", fontSize: 24 }}>warning</span>
+            <div className="surface-card" style={{ padding: 20, marginBottom: 24, borderLeft: "4px solid var(--warning)", display: "flex", gap: 12, alignItems: "center" }}>
+              <span className="material-symbols" style={{ color: "var(--warning)", fontSize: 24 }}>warning</span>
               <div>
                 <strong>Ollama diperlukan</strong>
                 <p className="text-body-sm" style={{ margin: 0, opacity: 0.8 }}>Embedding model memerlukan Ollama. Pastikan Ollama berjalan dan model <code>nomic-embed-text</code> sudah di-pull.</p>
@@ -732,7 +732,7 @@ export default function Settings() {
           {/* Stats Cards */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
             <div className="surface-card" style={{ padding: 20, textAlign: "center" }}>
-              <span className="material-symbols" style={{ fontSize: 32, color: "var(--md-primary)", marginBottom: 8 }}>database</span>
+              <span className="material-symbols" style={{ fontSize: 32, color: "var(--primary)", marginBottom: 8 }}>database</span>
               <div className="text-display" style={{ fontSize: 28 }}>{ragStats?.totalChunks ?? 0}</div>
               <div className="text-body-sm" style={{ opacity: 0.7 }}>Total Chunks</div>
             </div>
@@ -747,7 +747,7 @@ export default function Settings() {
               <div className="text-body-sm" style={{ opacity: 0.7 }}>Jira Issues ({ragStats?.jiraChunks ?? 0} chunks)</div>
             </div>
             <div className="surface-card" style={{ padding: 20, textAlign: "center" }}>
-              <span className="material-symbols" style={{ fontSize: 32, color: "var(--md-primary)", marginBottom: 8 }}>code_blocks</span>
+              <span className="material-symbols" style={{ fontSize: 32, color: "var(--primary)", marginBottom: 8 }}>code_blocks</span>
               <div className="text-display" style={{ fontSize: 28 }}>{ragStats?.bitbucketRepos ?? 0}</div>
               <div className="text-body-sm" style={{ opacity: 0.7 }}>Bitbucket PR Cache ({ragStats?.bitbucketChunks ?? 0} chunks)</div>
             </div>
@@ -773,15 +773,15 @@ export default function Settings() {
           {ragProgress && ragLoading && (
             <div className="surface-card" style={{ padding: 20, marginBottom: 24 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                <span className="material-symbols spin" style={{ fontSize: 20, color: "var(--md-primary)" }}>progress_activity</span>
+                <span className="material-symbols spin" style={{ fontSize: 20, color: "var(--primary)" }}>progress_activity</span>
                 <span className="text-body" style={{ fontWeight: 500 }}>{ragProgress.message}</span>
               </div>
               {ragProgress.total > 0 && (
-                <div style={{ width: "100%", height: 6, background: "var(--md-surface-variant, #e0e0e0)", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: "100%", height: 6, background: "var(--surface-container-high)", borderRadius: 3, overflow: "hidden" }}>
                   <div style={{
                     width: `${Math.round((ragProgress.current / ragProgress.total) * 100)}%`,
                     height: "100%",
-                    background: "var(--md-primary)",
+                    background: "var(--primary)",
                     borderRadius: 3,
                     transition: "width 0.3s ease",
                   }} />
@@ -885,7 +885,7 @@ export default function Settings() {
 
             <div className="surface-card" style={{ padding: 24 }}>
               <h3 className="text-title" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="material-symbols" style={{ fontSize: 20, color: "var(--color-error, #d32f2f)" }}>delete_sweep</span>
+                <span className="material-symbols" style={{ fontSize: 20, color: "var(--error)" }}>delete_sweep</span>
                 Hapus Index
               </h3>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -920,7 +920,7 @@ export default function Settings() {
                   className="secondary-button"
                   onClick={() => handleRagClear()}
                   disabled={ragLoading !== null || !ragStats?.totalChunks}
-                  style={{ width: "100%", height: 36, fontSize: 13, color: "var(--color-error, #d32f2f)" }}
+                  style={{ width: "100%", height: 36, fontSize: 13, color: "var(--error)" }}
                   type="button"
                 >
                   Hapus Semua
@@ -931,7 +931,7 @@ export default function Settings() {
 
           {/* Prerequisite info */}
           <div className="surface-card" style={{ padding: 20, marginTop: 24, display: "flex", gap: 12, alignItems: "flex-start" }}>
-            <span className="material-symbols" style={{ fontSize: 20, color: "var(--md-primary)", flexShrink: 0 }}>lightbulb</span>
+            <span className="material-symbols" style={{ fontSize: 20, color: "var(--primary)", flexShrink: 0 }}>lightbulb</span>
             <div className="text-body-sm" style={{ opacity: 0.7, lineHeight: 1.6 }}>
               <strong>Prerequisite:</strong> Pastikan model embedding sudah tersedia di Ollama Anda dengan running <code>ollama pull nomic-embed-text</code>.
               Setelah Knowledge Base terisi, Chat Assistant akan otomatis menggunakan konteks dari knowledge base untuk menjawab pertanyaan Anda.
@@ -949,11 +949,11 @@ export default function Settings() {
                   width: 48, 
                   height: 48, 
                   borderRadius: 12, 
-                  background: updateInfo?.updateAvailable ? "rgba(249, 115, 22, 0.1)" : "rgba(16, 185, 129, 0.1)", 
+                  background: updateInfo?.updateAvailable ? "color-mix(in srgb, var(--warning) 12%, transparent)" : "color-mix(in srgb, var(--success) 12%, transparent)", 
                   display: "flex", 
                   alignItems: "center", 
                   justifyContent: "center",
-                  color: updateInfo?.updateAvailable ? "var(--warning, #f97316)" : "#10b981"
+                  color: updateInfo?.updateAvailable ? "var(--warning)" : "var(--success)"
                 }}
               >
                 <span className="material-symbols" style={{ fontSize: 28 }}>
@@ -1044,7 +1044,7 @@ export default function Settings() {
                 style={{ 
                   marginTop: 24, 
                   padding: 12, 
-                  background: "rgba(8, 87, 195, 0.08)", 
+                  background: "var(--tertiary-container)", 
                   borderRadius: 8, 
                   border: "1px dashed var(--tertiary)", 
                   display: "flex", 

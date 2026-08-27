@@ -3,10 +3,10 @@ import { useApp } from "../context/AppContext";
 import type { DocumentReviewSummary, ReviewFinding } from "@shared/types";
 
 const statusColor: Record<string, string> = {
-  PASS: "#16803c",
-  WARNING: "#a15c00",
-  FAIL: "#ba1a1a",
-  NOT_APPLICABLE: "#687076",
+  PASS: "var(--success)",
+  WARNING: "var(--warning)",
+  FAIL: "var(--error)",
+  NOT_APPLICABLE: "var(--font-disabled)",
 };
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -30,14 +30,18 @@ function csvField(value: unknown): string {
 function FindingCard({ finding }: { finding: ReviewFinding }) {
   const color = statusColor[finding.status] ?? "var(--on-surface-variant)";
   return (
-    <article style={{ border: "1px solid var(--outline-variant)", borderRadius: 16, padding: 18, background: "var(--surface)", boxShadow: "0 8px 24px rgba(15, 23, 42, 0.04)" }}>
+    <article className="card" style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{ color, fontWeight: 800, fontSize: 11, letterSpacing: "0.06em" }}>{finding.status}</span>
+        <span style={{
+          color, fontWeight: 700, fontSize: 10.5, letterSpacing: "0.06em",
+          background: `color-mix(in srgb, ${color} 12%, transparent)`,
+          padding: "2px 8px", borderRadius: 999, textTransform: "uppercase",
+        }}>{finding.status}</span>
         <span style={{ color: "var(--on-surface-variant)", fontSize: 12, paddingLeft: 8, borderLeft: "1px solid var(--outline-variant)" }}>{finding.section}</span>
-        {finding.sourceKey ? <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 12 }}>{finding.sourceKey}</span> : null}
+        {finding.sourceKey ? <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--on-surface-variant)" }}>{finding.sourceKey}</span> : null}
       </div>
-      <h3 style={{ margin: "0 0 6px", fontSize: 15 }}>{finding.title}</h3>
-      <p style={{ margin: "0 0 8px", color: "var(--on-surface-variant)", lineHeight: 1.5, whiteSpace: "pre-line" }}>{finding.description}</p>
+      <h3 style={{ margin: "0 0 6px", fontSize: 14.5 }}>{finding.title}</h3>
+      <p style={{ margin: "0 0 8px", color: "var(--on-surface-variant)", lineHeight: 1.5, whiteSpace: "pre-line", fontSize: 13.5 }}>{finding.description}</p>
       {(finding.validationSource || typeof finding.confidence === "number" || finding.evidence) ? (
         <div style={{ margin: "0 0 8px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", color: "var(--on-surface-variant)", fontSize: 12 }}>
           {finding.validationSource ? <span>Source: {finding.validationSource}</span> : null}
@@ -59,9 +63,9 @@ function FindingCard({ finding }: { finding: ReviewFinding }) {
 
 function Metric({ label, value, tone }: { label: string; value: number | string; tone?: string }) {
   return (
-    <div className="card" style={{ minWidth: 132, flex: "1 1 132px", padding: 16, borderRadius: 16 }}>
-      <div style={{ color: "var(--on-surface-variant)", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 800, marginTop: 8, color: tone ?? "var(--on-surface)" }}>{value}</div>
+    <div className="card stat-card">
+      <div className="stat-label">{label}</div>
+      <div className="stat-value" style={{ color: tone }}>{value}</div>
     </div>
   );
 }
@@ -248,7 +252,7 @@ export default function DocumentationReview() {
   return (
     <section style={{ maxWidth: 1180, margin: "0 auto", paddingBottom: 40 }}>
       <header style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 28 }}>
-        <div style={{ width: 48, height: 48, display: "grid", placeItems: "center", borderRadius: 14, background: "var(--primary-container)", color: "var(--on-primary-container)", flex: "0 0 auto" }}>
+        <div className="screen-icon" style={{ width: 44, height: 44 }}>
           <span className="material-symbols" style={{ fontSize: 25 }}>fact_check</span>
         </div>
         <div>
@@ -258,7 +262,7 @@ export default function DocumentationReview() {
         </div>
       </header>
 
-      <div className="card" style={{ marginBottom: 24, padding: 22, borderRadius: 18, border: "1px solid var(--outline-variant)", background: "linear-gradient(135deg, var(--surface-container-low), var(--surface))" }}>
+      <div className="card" style={{ marginBottom: 24, padding: 22, borderRadius: 18, border: "1px solid var(--outline-variant)", background: "var(--surface-container-low)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 16 }}>
           <span className="material-symbols" style={{ color: "var(--primary)", fontSize: 22 }}>pin</span>
           <div>
@@ -299,56 +303,14 @@ export default function DocumentationReview() {
         {error ? <p role="alert" style={{ color: "var(--error)", margin: "12px 0 0", fontSize: 13, fontWeight: 600 }}>{error}</p> : null}
       </div>
 
-      {(busy || liveFindings.length > 0) ? (
-        <div className="card" style={{ marginBottom: 24, padding: 22, borderRadius: 18 }} aria-live="polite">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 800 }}>{busy ? "Review berjalan..." : "Pengecekan selesai"}</div>
-            <div style={{ color: "var(--on-surface-variant)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
-              {progressStep && progressStep.total > 0 ? `${Math.min(progressStep.current, progressStep.total)}/${progressStep.total} pemeriksaan` : ""}
-            </div>
-          </div>
-          {busy ? (
-            <>
-              <div style={{ marginTop: 10, height: 8, borderRadius: 999, background: "var(--surface-container-high)", overflow: "hidden" }}>
-                <style>{"@keyframes review-indeterminate{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}"}</style>
-                <div
-                  style={{
-                    height: "100%",
-                    width: progressStep && progressStep.total > 0
-                      ? `${Math.min(100, Math.round((progressStep.current / progressStep.total) * 100))}%`
-                      : "40%",
-                    minWidth: 12,
-                    borderRadius: 999,
-                    background: "var(--primary)",
-                    transition: "width 250ms ease",
-                    ...(progressStep && progressStep.total > 0 ? {} : { animation: "review-indeterminate 1.4s ease-in-out infinite" }),
-                  }}
-                />
-              </div>
-              <p style={{ margin: "8px 0 0", color: "var(--on-surface-variant)", fontSize: 13 }}>{progressMessage ?? "Memproses..."}</p>
-            </>
-          ) : null}
-          {liveFindings.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: busy ? 16 : 0 }}>
-              <div style={{ color: "var(--on-surface-variant)", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                Temuan sejauh ini ({liveFindings.length})
-              </div>
-              {liveFindings.map((finding, index) => (
-                <FindingCard key={`${finding.section}-${finding.title}-${index}`} finding={finding} />
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
       {result ? (
         <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }} aria-live="polite">
-            <Metric label="Score" value={`${result.score}/100`} tone={result.score >= 80 ? "#16803c" : result.score >= 60 ? "#a15c00" : "#ba1a1a"} />
+            <Metric label="Score" value={`${result.score}/100`} tone={result.score >= 80 ? "var(--success)" : result.score >= 60 ? "var(--warning)" : "var(--error)"} />
             <Metric label="Overall status" value={result.overallStatus} tone={statusColor[result.overallStatus]} />
-            <Metric label="Pass" value={result.passCount} tone="#16803c" />
-            <Metric label="Warning" value={result.warningCount} tone="#a15c00" />
-            <Metric label="Fail" value={result.failCount} tone="#ba1a1a" />
+            <Metric label="Pass" value={result.passCount} tone="var(--success)" />
+            <Metric label="Warning" value={result.warningCount} tone="var(--warning)" />
+            <Metric label="Fail" value={result.failCount} tone="var(--error)" />
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
@@ -391,10 +353,10 @@ export default function DocumentationReview() {
               <p style={{ color: "var(--on-surface-variant)" }}>Official metrics from Jira/Xray API. Only DONE executions are included.</p>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <Metric label="Confluence executed" value={reconciliation.confluenceExecuted ?? "-"} />
-                <Metric label="Jira executed" value={reconciliation.jiraExecuted} tone={reconciliation.isMatch ? "#16803c" : "#ba1a1a"} />
+                <Metric label="Jira executed" value={reconciliation.jiraExecuted} tone={reconciliation.isMatch ? "var(--success)" : "var(--error)"} />
                 <Metric label="Jira total" value={reconciliation.jiraTotal} />
-                <Metric label="PASS" value={reconciliation.jiraPass} tone="#16803c" />
-                <Metric label="FAIL" value={reconciliation.jiraFail} tone="#ba1a1a" />
+                <Metric label="PASS" value={reconciliation.jiraPass} tone="var(--success)" />
+                <Metric label="FAIL" value={reconciliation.jiraFail} tone="var(--error)" />
               </div>
               <p style={{ marginBottom: 0, fontFamily: "var(--font-mono)", fontSize: 12 }}>Executions: {reconciliation.jiraExecutionKeys.join(", ")}</p>
             </div>
@@ -409,7 +371,7 @@ export default function DocumentationReview() {
                   <td style={{ padding: "8px 6px", fontFamily: "var(--font-mono)" }}>{execution.key}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.summary}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.projectKey}</td>
-                  <td style={{ padding: "8px 6px", color: execution.status.toLowerCase() === "done" ? "#16803c" : "#a15c00" }}>{execution.status}</td>
+                  <td style={{ padding: "8px 6px", color: execution.status.toLowerCase() === "done" ? "var(--success)" : "var(--warning)" }}>{execution.status}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.total}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.executed}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.included ? "Yes" : "No"}</td>
@@ -418,18 +380,64 @@ export default function DocumentationReview() {
             </div>
           ) : null}
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <h2 style={{ margin: 0 }}>Findings</h2>
-            {result.findings.map((finding, index) => <FindingCard key={`${finding.section}-${finding.title}-${index}`} finding={finding} />)}
+          <div>
+            <h2 style={{ margin: "0 0 12px" }}>Findings</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10, alignItems: "start" }}>
+              {result.findings.map((finding, index) => <FindingCard key={`${finding.section}-${finding.title}-${index}`} finding={finding} />)}
+            </div>
           </div>
         </>
       ) : (
-        <div className="card" style={{ minHeight: 250, display: "grid", placeItems: "center", textAlign: "center", padding: 32, borderRadius: 18, border: "1px dashed var(--outline)" }}>
-          <div>
-            <span className="material-symbols" style={{ fontSize: 42, color: "var(--primary)", opacity: 0.85 }}>analytics</span>
-            <h2 style={{ margin: "12px 0 6px" }}>Ready for a document review</h2>
-            <p style={{ margin: 0, color: "var(--on-surface-variant)", maxWidth: 420 }}>Hasil review akan muncul di sini setelah Page ID diproses.</p>
-          </div>
+        <div className="card" style={{ minHeight: 250, display: "grid", placeItems: "center", textAlign: "center", padding: 32, borderRadius: 18, border: "1px dashed var(--outline)" }} aria-live="polite">
+          {busy || liveFindings.length > 0 ? (
+            <div style={{ width: "100%", maxWidth: 620 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 700 }}>{busy ? "Review berjalan..." : "Pengecekan selesai"}</div>
+                <div style={{ color: "var(--on-surface-variant)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
+                  {progressStep && progressStep.total > 0 ? `${Math.min(progressStep.current, progressStep.total)}/${progressStep.total} pemeriksaan` : ""}
+                </div>
+              </div>
+              {busy ? (
+                <>
+                  <div style={{ marginTop: 10, height: 8, borderRadius: 999, background: "var(--surface-container-high)", overflow: "hidden" }}>
+                    <style>{"@keyframes review-indeterminate{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}"}</style>
+                    <div
+                      style={{
+                        height: "100%",
+                        width: progressStep && progressStep.total > 0
+                          ? `${Math.min(100, Math.round((progressStep.current / progressStep.total) * 100))}%`
+                          : "40%",
+                        minWidth: 12,
+                        borderRadius: 999,
+                        background: "var(--primary)",
+                        transition: "width 250ms ease",
+                        ...(progressStep && progressStep.total > 0 ? {} : { animation: "review-indeterminate 1.4s ease-in-out infinite" }),
+                      }}
+                    />
+                  </div>
+                  <p style={{ margin: "8px 0 0", color: "var(--on-surface-variant)", fontSize: 13 }}>{progressMessage ?? "Memproses..."}</p>
+                </>
+              ) : null}
+              {liveFindings.length > 0 ? (
+                <div style={{ marginTop: busy ? 16 : 0, textAlign: "left" }}>
+                  <div style={{ color: "var(--on-surface-variant)", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
+                    Temuan sejauh ini ({liveFindings.length})
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10, alignItems: "start" }}>
+                    {liveFindings.map((finding, index) => (
+                      <FindingCard key={`${finding.section}-${finding.title}-${index}`} finding={finding} />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div>
+              <span className="material-symbols" style={{ fontSize: 42, color: "var(--primary)", opacity: 0.85 }}>analytics</span>
+              <h2 style={{ margin: "12px 0 6px" }}>Ready for a document review</h2>
+              <p style={{ margin: 0, color: "var(--on-surface-variant)", maxWidth: 420 }}>Hasil review akan muncul di sini setelah Page ID diproses.</p>
+            </div>
+          )}
         </div>
       )}
     </section>

@@ -34,11 +34,9 @@ export default function DocumentationSync() {
     loadConfPageAttachments,
     confPageLoading,
     confAttachmentHydrating,
-    saveSettings,
     fetchConfSteps,
     confFetchingSteps,
-    pushConfEntryToJira,
-    confPushingSteps,
+    saveSettings,
     loggedInUser,
   } = useApp();
 
@@ -49,6 +47,7 @@ export default function DocumentationSync() {
 
   // ── Import Test Execution modal state ────────────────────────────────
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [syncConfigOpen, setSyncConfigOpen] = useState(false);
   const [importTeKey, setImportTeKey] = useState("");
   const [importSearching, setImportSearching] = useState(false);
   const [importTcList, setImportTcList] = useState<MonitoringTestCase[]>([]);
@@ -241,8 +240,8 @@ export default function DocumentationSync() {
           <div className="field-group">
             <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Result</label>
             <div style={{ display: 'flex', gap: 8, height: 45, boxSizing: 'border-box' }}>
-              <button onClick={() => handleSetResult(item, "PASS")} style={{ flex: 1, height: '100%', borderRadius: 8, border: item.result === "PASS" ? 'none' : '1px solid var(--outline-variant)', background: item.result === "PASS" ? '#10b981' : 'var(--surface-container-low)', color: item.result === "PASS" ? 'white' : 'var(--on-surface)', fontWeight: item.result === "PASS" ? 600 : 400, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} type="button">PASS</button>
-              <button onClick={() => handleSetResult(item, "FAILED")} style={{ flex: 1, height: '100%', borderRadius: 8, border: item.result === "FAILED" ? 'none' : '1px solid var(--outline-variant)', background: item.result === "FAILED" ? '#ef4444' : 'var(--surface-container-low)', color: item.result === "FAILED" ? 'white' : 'var(--on-surface)', fontWeight: item.result === "FAILED" ? 600 : 400, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} type="button">FAILED</button>
+              <button onClick={() => handleSetResult(item, "PASS")} className={`result-toggle ${item.result === "PASS" ? "pass-active" : ""}`} type="button">PASS</button>
+              <button onClick={() => handleSetResult(item, "FAILED")} className={`result-toggle ${item.result === "FAILED" ? "fail-active" : ""}`} type="button">FAILED</button>
             </div>
           </div>
         </div>
@@ -391,26 +390,40 @@ export default function DocumentationSync() {
         )}
       </div>
 
-      <div className="card" style={{ padding: 32, marginBottom: 40 }}>
-        <h3 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24 }}>Confluence Sync Configuration</h3>
-        <div className="field-group" style={{ maxWidth: 500 }}>
-          <label>Target Page ID</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input placeholder="e.g. 123456789" value={config.confluence.targetPageId} onChange={(e) => setConfig({ ...config, confluence: { ...config.confluence, targetPageId: e.target.value } })} style={{ flex: 1 }} />
-            <button className="secondary-button" onClick={() => void parseConfPageEntries()} disabled={confPageLoading || !config.confluence.targetPageId.trim()} type="button" style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14, whiteSpace: 'nowrap' }}>
-              <span className="material-symbols" style={{ fontSize: 18, marginRight: 4 }}>table_rows</span>
-              {confPageLoading ? "Loading..." : "Parse Entries from Page"}
-            </button>
+      <div
+        className="card"
+        style={{
+          padding: "14px 20px",
+          marginBottom: 40,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <span className="material-symbols" style={{ fontSize: 20, color: config.confluence.targetPageId ? "var(--success)" : "var(--on-surface-variant)" }}>
+            {config.confluence.targetPageId ? "check_circle" : "tune"}
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600 }}>Confluence Sync Configuration</div>
+            <div style={{ fontSize: 12, color: "var(--on-surface-variant)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {config.confluence.targetPageId
+                ? `Target Page ID: ${config.confluence.targetPageId}${config.confluence.jiraServerId ? ` · Server ID: ${config.confluence.jiraServerId}` : ""}`
+                : "Belum ada Target Page ID — atur lewat Configure."}
+            </div>
           </div>
-          <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 8 }}>Masukkan ID halaman Confluence tempat template tabel berada. Klik "Parse Entries from Page" untuk mengambil dan menyunting tabel yang ada secara instan.</p>
         </div>
-
-        <div style={{ marginTop: 24 }}>
-          <button className="primary-button" onClick={() => void saveSettings()} style={{ padding: '8px 24px', borderRadius: 8, fontSize: 14 }} type="button">
-            <span className="material-symbols" style={{ fontSize: 18, marginRight: 6 }}>save</span>
-            Save Sync Settings
-          </button>
-        </div>
+        <button
+          className="secondary-button"
+          onClick={() => setSyncConfigOpen(true)}
+          type="button"
+          style={{ flexShrink: 0, padding: "7px 14px", fontSize: 13 }}
+          title="Buka Confluence Sync Configuration"
+        >
+          <span className="material-symbols" style={{ fontSize: 18 }}>settings</span>
+          Configure
+        </button>
       </div>
 
       <>
@@ -438,7 +451,7 @@ export default function DocumentationSync() {
               <button
                 className="secondary-button"
                 onClick={() => {
-                  if (window.confirm(`Hapus semua ${confEntries.length} entry dan reset Page ID? Tindakan ini tidak bisa dibatalkan.`)) {
+                  if (window.confirm(`Hapus semua ${confEntries.length} entry dari tabel? Config (Target Page ID & Jira Server ID) tetap tersimpan.`)) {
                     void clearConfEntries();
                   }
                 }}
@@ -466,6 +479,136 @@ export default function DocumentationSync() {
           </div>
         </>
     </section>
+
+      {/* ── Confluence Sync Configuration Modal ─────────────────────── */}
+      {syncConfigOpen && (
+        <div
+          className="dialog-overlay"
+          onClick={(e) => { if (e.target === e.currentTarget) setSyncConfigOpen(false); }}
+        >
+          <div className="dialog" style={{ maxWidth: 560, width: "100%" }} role="dialog" aria-modal="true">
+            <div className="dialog-header">
+              <div className="dialog-header-info">
+                <h3 className="dialog-title">Confluence Sync Configuration</h3>
+                <p className="dialog-subtitle">Tentukan halaman Confluence target untuk sync test evidence.</p>
+              </div>
+              <div className="dialog-header-actions">
+                <button type="button" className="icon-button" onClick={() => setSyncConfigOpen(false)} title="Tutup">
+                  <span className="material-symbols" style={{ fontSize: 18 }}>close</span>
+                </button>
+              </div>
+            </div>
+            <div className="dialog-body">
+              <div className="field-group">
+                <label>Target Page ID</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    placeholder="e.g. 123456789"
+                    value={config.confluence.targetPageId}
+                    onChange={(e) => setConfig({ ...config, confluence: { ...config.confluence, targetPageId: e.target.value.replace(/\D/g, "") } })}
+                    onKeyDown={(e) => { if (e.key === "Enter") void parseConfPageEntries(); }}
+                    inputMode="numeric"
+                    style={{ flex: 1, fontFamily: "var(--font-mono)" }}
+                  />
+                  <button
+                    className="secondary-button"
+                    onClick={() => void parseConfPageEntries()}
+                    disabled={confPageLoading || !config.confluence.targetPageId.trim()}
+                    type="button"
+                    style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+                  >
+                    <span className="material-symbols" style={{ fontSize: 18 }}>{confPageLoading ? "progress_activity spin" : "table_rows"}</span>
+                    {confPageLoading ? "Loading..." : "Parse Entries from Page"}
+                  </button>
+                </div>
+                <p style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
+                  Masukkan ID halaman Confluence tempat template tabel berada. Klik "Parse Entries from Page" untuk mengambil dan menyunting tabel yang ada secara instan.
+                </p>
+              </div>
+
+              <div className="field-group">
+                <label>Jira Server ID</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    placeholder="Terisi otomatis setelah parse — atau isi manual"
+                    value={config.confluence.jiraServerId ?? ""}
+                    onChange={(e) => setConfig({ ...config, confluence: { ...config.confluence, jiraServerId: e.target.value.trim() } })}
+                    style={{ flex: 1, fontFamily: "var(--font-mono)" }}
+                  />
+                  {(config.confluence.jiraServerId ?? "").trim() ? (
+                    <button
+                      type="button"
+                      className="icon-button"
+                      title="Hapus Jira Server ID"
+                      onClick={() => setConfig({ ...config, confluence: { ...config.confluence, jiraServerId: "" } })}
+                    >
+                      <span className="material-symbols" style={{ fontSize: 18 }}>backspace</span>
+                    </button>
+                  ) : null}
+                </div>
+                <p style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
+                  Diperlukan untuk membuat link halaman evidence yang berisi table ticker. Otomatis terdeteksi saat parse page; isi manual jika link salah generate.
+                </p>
+              </div>
+
+              {confParseStatus?.contentLoaded && confParseStatus.jiraServerId && (
+                <div
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid color-mix(in srgb, var(--info) 30%, transparent)",
+                    background: "var(--info-container)",
+                    color: "var(--on-info-container)",
+                    fontSize: 12.5,
+                    display: "flex", alignItems: "center", gap: 8,
+                  }}
+                >
+                  <span className="material-symbols" style={{ fontSize: 16 }}>fingerprint</span>
+                  Jira Server ID terdeteksi: <strong style={{ fontFamily: "var(--font-mono)" }}>{confParseStatus.jiraServerId}</strong>
+                  {confParseStatus.jiraServerId !== (config.confluence.jiraServerId ?? "") ? " — tersimpan saat Save" : ""}
+                </div>
+              )}
+
+              {confParseStatus && (
+                <div
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: `1px solid ${confParseStatus.contentLoaded ? "color-mix(in srgb, var(--success) 30%, transparent)" : "color-mix(in srgb, var(--error) 30%, transparent)"}`,
+                    background: confParseStatus.contentLoaded ? "var(--success-container)" : "var(--error-container)",
+                    color: confParseStatus.contentLoaded ? "var(--success)" : "var(--error)",
+                    fontSize: 12.5,
+                  }}
+                >
+                  {confParseStatus.contentLoaded
+                    ? `Page ${confParseStatus.pageId} berhasil dibaca${confParseStatus.pageTitle ? `: ${confParseStatus.pageTitle}` : ""} — ${confParseStatus.entries.length} entry terdeteksi.`
+                    : `Page ${confParseStatus.pageId} tidak terambil${confParseStatus.error ? `, error: ${confParseStatus.error}` : ""}.`}
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "0 24px 20px", flexShrink: 0 }}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setSyncConfigOpen(false)}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={async () => {
+                  await saveSettings();
+                  setSyncConfigOpen(false);
+                }}
+              >
+                <span className="material-symbols" style={{ fontSize: 18 }}>save</span>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Import Test Execution Modal ─────────────────────────────── */}
       {importModalOpen && (

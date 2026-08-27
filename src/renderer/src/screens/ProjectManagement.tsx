@@ -7,9 +7,9 @@ function SyncedBadge({ onClick, syncing, justSynced }: { onClick?: () => void; s
   const [hovered, setHovered] = React.useState(false);
   const interactive = !!onClick;
   const isSuccess = justSynced && !syncing;
-  const color = syncing ? "#0d7a3e" : isSuccess ? "#ffffff" : hovered ? "#0d7a3e" : "#16a34a";
-  const bg = syncing ? "#16a34a28" : isSuccess ? "#16a34a" : hovered ? "#16a34a28" : "#16a34a18";
-  const border = syncing ? "#16a34a80" : isSuccess ? "#16a34a" : hovered ? "#16a34a80" : "#16a34a40";
+  const color = syncing ? "var(--success)" : isSuccess ? "var(--on-primary)" : hovered ? "var(--success)" : "var(--success)";
+  const bg = syncing ? "color-mix(in srgb, var(--success) 16%, transparent)" : isSuccess ? "var(--success)" : hovered ? "color-mix(in srgb, var(--success) 16%, transparent)" : "color-mix(in srgb, var(--success) 9%, transparent)";
+  const border = syncing ? "color-mix(in srgb, var(--success) 50%, transparent)" : isSuccess ? "var(--success)" : hovered ? "color-mix(in srgb, var(--success) 50%, transparent)" : "color-mix(in srgb, var(--success) 25%, transparent)";
   return (
     <span
       onClick={!syncing ? onClick : undefined}
@@ -103,11 +103,11 @@ function StatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase();
   const color =
     s.includes("done") || s.includes("closed") || s.includes("resolved")
-      ? "#16a34a"
+      ? "var(--success)"
       : s.includes("progress") || s.includes("testing")
-      ? "#d97706"
+      ? "var(--warning)"
       : s.includes("abort") || s.includes("bug") || s.includes("fail")
-      ? "#dc2626"
+      ? "var(--error)"
       : "var(--on-surface-variant)";
   return (
     <span
@@ -138,11 +138,11 @@ function ExecProgressBar({ exec }: { exec: TestExecutionItem }) {
 
   const { total, passed = 0, failed = 0, blocked = 0, inProgress = 0, unexecuted = 0 } = exec;
   const segments = [
-    { label: "Passed", value: passed, color: "#16a34a" },
-    { label: "Failed", value: failed, color: "#dc2626" },
-    { label: "Blocked", value: blocked, color: "#9333ea" },
-    { label: "In Progress", value: inProgress, color: "#d97706" },
-    { label: "Unexecuted", value: unexecuted, color: "#6b7280" },
+    { label: "Passed", value: passed, color: "var(--success)" },
+    { label: "Failed", value: failed, color: "var(--error)" },
+    { label: "Blocked", value: blocked, color: "var(--severity-epic)" },
+    { label: "In Progress", value: inProgress, color: "var(--warning)" },
+    { label: "Unexecuted", value: unexecuted, color: "var(--outline)" },
   ].filter((s) => s.value > 0);
 
   return (
@@ -731,17 +731,21 @@ export default function ProjectManagement() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
+      {/* ── Page Header ── */}
+      <div className="page-header" style={{ marginBottom: 20 }}>
+        <div className="page-header-left">
+          <div className="screen-icon">
+            <span className="material-symbols filled" style={{ fontSize: 22 }}>folder_open</span>
+          </div>
+          <div>
+            <h2 className="text-display" style={{ margin: 0 }}>Project Management</h2>
+            <p className="text-body-lg" style={{ marginTop: 2 }}>Kelola repository test, project UQA, plan, dan eksekusi.</p>
+          </div>
+        </div>
+      </div>
+
       {/* ── Tab Bar ── */}
-      <div
-        style={{
-          display: "flex",
-          gap: 2,
-          borderBottom: "1px solid var(--outline-variant)",
-          paddingBottom: 0,
-          marginBottom: 20,
-          flexShrink: 0,
-        }}
-      >
+      <div className="doc-sync-tabs" style={{ marginBottom: 20, flexShrink: 0 }}>
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -754,21 +758,7 @@ export default function ProjectManagement() {
               }
               setSubView(t.key);
             }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              padding: "10px 18px",
-              background: "none",
-              border: "none",
-              borderBottom: subView === t.key ? "2px solid var(--primary)" : "2px solid transparent",
-              color: subView === t.key ? "var(--primary)" : "var(--on-surface-variant)",
-              fontWeight: subView === t.key ? 600 : 400,
-              fontSize: 13,
-              cursor: "pointer",
-              borderRadius: 0,
-              transition: "color 0.15s",
-            }}
+            className={`doc-sync-tab ${subView === t.key ? "active" : ""}`}
           >
             <span className="material-symbols" style={{ fontSize: 17 }}>
               {t.icon}
@@ -935,7 +925,7 @@ export default function ProjectManagement() {
               })()}
 
               {manualSaveResult && (
-                <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 6, background: manualSaveResult.ok ? "#16a34a18" : "var(--error-container)", color: manualSaveResult.ok ? "#16a34a" : "var(--on-error-container)", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 6, background: manualSaveResult.ok ? "color-mix(in srgb, var(--success) 9%, transparent)" : "var(--error-container)", color: manualSaveResult.ok ? "var(--success)" : "var(--on-error-container)", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="material-symbols" style={{ fontSize: 16 }}>{manualSaveResult.ok ? "check_circle" : "error"}</span>
                   {manualSaveResult.msg}
                 </div>
@@ -1034,7 +1024,7 @@ export default function ProjectManagement() {
                     </span>
                     <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
                       {repoSyncResult && (
-                        <span style={{ fontSize: 12, color: repoSyncResult.ok ? "#16a34a" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ fontSize: 12, color: repoSyncResult.ok ? "var(--success)" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
                           <span className="material-symbols" style={{ fontSize: 15 }}>{repoSyncResult.ok ? "check_circle" : "error"}</span>
                           {repoSyncResult.msg}
                         </span>
@@ -1056,11 +1046,11 @@ export default function ProjectManagement() {
                 )}
 
                 <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <table className="data-table">
                     <thead>
-                      <tr style={{ borderBottom: "1px solid var(--outline-variant)", background: "var(--surface-container)" }}>
+                      <tr>
                         {["Project Key", "Nama Project", "Status DB", "Aksi"].map((h) => (
-                          <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          <th key={h}>
                             {h}
                           </th>
                         ))}
@@ -1165,7 +1155,7 @@ export default function ProjectManagement() {
                 </div>
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
                   {uqaSyncResult && (
-                    <span style={{ fontSize: 12, color: uqaSyncResult.ok ? "#16a34a" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ fontSize: 12, color: uqaSyncResult.ok ? "var(--success)" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
                       <span className="material-symbols" style={{ fontSize: 15 }}>{uqaSyncResult.ok ? "check_circle" : "error"}</span>
                       {uqaSyncResult.msg}
                     </span>
@@ -1305,11 +1295,11 @@ export default function ProjectManagement() {
                         Project dengan Test Plan di Jira ({jiraItems.length})
                       </div>
                       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <table className="data-table">
                           <thead>
-                            <tr style={{ borderBottom: "1px solid var(--outline-variant)", background: "var(--surface-container)" }}>
+                            <tr>
                               {headers.map((h) => (
-                                <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                <th key={h}>
                                   {h}
                                 </th>
                               ))}
@@ -1331,11 +1321,11 @@ export default function ProjectManagement() {
                         </span>
                       </div>
                       <div className="card" style={{ padding: 0, overflow: "hidden", opacity: 0.75 }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <table className="data-table">
                           <thead>
-                            <tr style={{ borderBottom: "1px solid var(--outline-variant)", background: "var(--surface-container)" }}>
+                            <tr>
                               {headers.map((h) => (
-                                <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                <th key={h}>
                                   {h}
                                 </th>
                               ))}
@@ -1464,7 +1454,7 @@ export default function ProjectManagement() {
                             </label>
                             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
                               {syncResult && (
-                                <span style={{ fontSize: 12, color: syncResult.ok ? "#16a34a" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
+                                <span style={{ fontSize: 12, color: syncResult.ok ? "var(--success)" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
                                   <span className="material-symbols" style={{ fontSize: 15 }}>{syncResult.ok ? "check_circle" : "error"}</span>
                                   {syncResult.msg}
                                 </span>
@@ -1487,12 +1477,12 @@ export default function ProjectManagement() {
                       )}
 
                       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <table className="data-table">
                           <thead>
-                            <tr style={{ borderBottom: "1px solid var(--outline-variant)", background: "var(--surface-container)" }}>
+                            <tr>
                               <th style={{ padding: "10px 14px", width: 40 }} />
                               {["Test Plan Key", "Judul Test Plan", "Status", "Project", "Status DB"].map((h) => (
-                                <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                <th key={h}>
                                   {h}
                                 </th>
                               ))}
@@ -1637,7 +1627,7 @@ export default function ProjectManagement() {
                           </label>
                           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
                             {execSyncResult && (
-                              <span style={{ fontSize: 12, color: execSyncResult.ok ? "#16a34a" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontSize: 12, color: execSyncResult.ok ? "var(--success)" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
                                 <span className="material-symbols" style={{ fontSize: 15 }}>{execSyncResult.ok ? "check_circle" : "error"}</span>
                                 {execSyncResult.msg}
                               </span>
@@ -1659,12 +1649,12 @@ export default function ProjectManagement() {
                       )}
 
                       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <table className="data-table">
                           <thead>
-                            <tr style={{ borderBottom: "1px solid var(--outline-variant)", background: "var(--surface-container)" }}>
+                            <tr>
                               <th style={{ padding: "10px 14px", width: 40 }} />
                               {["Test Execution Key", "Judul Test Execution", "Status", "Assignee", "Progress Eksekusi", "Status DB", "TC di DB"].map((h) => (
-                                <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                <th key={h}>
                                   {h}
                                 </th>
                               ))}
@@ -1739,7 +1729,7 @@ export default function ProjectManagement() {
                                             {syncing ? "Menyimpan..." : "Sync TC"}
                                           </button>
                                           {res && (
-                                            <span style={{ fontSize: 10, color: res.ok ? "#16a34a" : "var(--error)" }}>
+                                            <span style={{ fontSize: 10, color: res.ok ? "var(--success)" : "var(--error)" }}>
                                               {res.ok ? "✓" : "✗"} {res.msg}
                                             </span>
                                           )}

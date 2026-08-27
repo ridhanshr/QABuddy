@@ -29,7 +29,7 @@ const primaryNavigation: NavItem[] = [
 ];
 
 const footerNavigation: NavItem[] = [
-  { key: "logs", label: "Notifications", icon: "notifications", filledIcon: "notifications" },
+  { key: "logs", label: "Logs", icon: "notifications", filledIcon: "notifications" },
   { key: "settings", label: "Settings", icon: "settings", filledIcon: "settings" },
   { key: "documentation", label: "Documentation", icon: "menu_book", filledIcon: "menu_book" },
 ];
@@ -66,17 +66,20 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
   const currentTitle = currentNav?.label || "Dashboard";
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-title-row">
-            <img src={logo} alt="QA Buddy Logo" className="brand-logo" />
-            <h1>QA Buddy</h1>
+    <div className="flex h-screen w-screen overflow-hidden bg-canvas font-sans text-ink">
+      {/* ── Sidebar ── */}
+      <aside className="flex w-[264px] shrink-0 flex-col border-r border-line bg-surface">
+        <div className="border-b border-line px-5 pb-4 pt-6">
+          <div className="flex items-center gap-2.5">
+            <img src={logo} alt="QA Buddy Logo" className="h-8 w-8 object-contain" />
+            <div>
+              <h1 className="text-[15px] font-bold leading-none tracking-tight">QA Buddy</h1>
+            </div>
           </div>
-          <p>Buddy Up. Test Smarter.</p>
+          <p className="mt-1.5 text-[11px] font-medium text-faint">Buddy Up. Test Smarter.</p>
         </div>
 
-        <nav className="nav-list">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto p-2.5">
           {visibleNavigation.map((item) => (
             <NavigationButton
               active={item.key === activeView}
@@ -90,36 +93,30 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
         {brdGenerating && (
           <div
             onClick={() => setActiveView("manual-test-case")}
+            className="mx-2.5 mb-2 flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors"
             style={{
-              margin: "8px 12px",
-              padding: "10px 12px",
-              background: "rgba(22, 163, 74, 0.08)",
-              borderRadius: "8px",
-              border: "1px solid #16a34a",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              transition: "all 0.2s ease",
+              background: "color-mix(in srgb, var(--success) 7%, var(--surface))",
+              borderColor: "color-mix(in srgb, var(--success) 30%, transparent)",
             }}
             title="Klik untuk kembali ke halaman Generate Test Case"
           >
-            <span className="material-symbols rotating" style={{ color: "#16a34a", fontSize: 18 }}>smart_toy</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "#16a34a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <span className="material-symbols rotating text-[18px]" style={{ color: "var(--success)" }}>smart_toy</span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[11px] font-semibold" style={{ color: "var(--success)" }}>
                 AI Generating Test Cases...
               </div>
               {brdChunkProgress && (
                 <>
-                  <div style={{ width: "100%", height: 4, background: "var(--surface-container-high)", borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
-                    <div style={{
-                      width: `${Math.round((brdChunkProgress.done / Math.max(brdChunkProgress.total, 1)) * 100)}%`,
-                      height: "100%",
-                      background: "#16a34a",
-                      transition: "width 0.4s ease",
-                    }} />
+                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-surface-high">
+                    <div
+                      className="h-full rounded-full transition-all duration-400"
+                      style={{
+                        width: `${Math.round((brdChunkProgress.done / Math.max(brdChunkProgress.total, 1)) * 100)}%`,
+                        background: "var(--success)",
+                      }}
+                    />
                   </div>
-                  <div style={{ fontSize: 10, color: "var(--on-surface-variant)", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div className="mt-0.5 truncate text-[10px] text-muted">
                     {brdChunkProgress.done}/{brdChunkProgress.total} fitur
                     {brdChunkProgress.currentFeature ? ` — ${brdChunkProgress.currentFeature}` : ""}
                   </div>
@@ -136,34 +133,30 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
               setSettingsTab("updates");
               setShowDetailedProgress(true);
             }}
+            className="mx-2.5 mb-2 flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 transition-colors"
             style={{
-              margin: "8px 12px",
-              padding: "10px 12px",
-              background: "rgba(8, 87, 195, 0.08)",
-              borderRadius: "8px",
-              border: "1px solid var(--tertiary)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              transition: "all 0.2s ease"
+              background: "color-mix(in srgb, var(--primary) 6%, var(--surface))",
+              borderColor: "color-mix(in srgb, var(--primary) 28%, transparent)",
             }}
             title="Klik untuk membuka detail unduhan"
           >
-            <span className="material-symbols rotating" style={{ color: "var(--tertiary)", fontSize: 18 }}>sync</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--tertiary)" }}>Downloading update...</div>
-              <div style={{ width: "100%", height: 4, background: "var(--surface-container-high)", borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
-                <div style={{ width: `${downloadProgress || 0}%`, height: "100%", background: "var(--tertiary)" }} />
+            <span className="material-symbols rotating text-[18px] text-primary">sync</span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[11px] font-semibold text-primary">Downloading update...</div>
+              <div className="mt-1 h-1 overflow-hidden rounded-full bg-surface-high">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${downloadProgress || 0}%` }}
+                />
               </div>
             </div>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--tertiary)" }}>
+            <span className="shrink-0 text-[11px] font-semibold text-primary">
               {downloadProgress !== null ? `${Math.round(downloadProgress)}%` : "0%"}
             </span>
           </div>
         )}
 
-        <div className="sidebar-footer">
+        <div className="space-y-0.5 border-t border-line p-2.5">
           {footerNavigation.map((item) => (
             <NavigationButton
               active={item.key === activeView}
@@ -175,32 +168,33 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
         </div>
       </aside>
 
-      <div className="main-shell">
-        <header className="topbar">
-          <div className="topbar-left" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <h2 style={{ margin: 0 }}>{currentTitle}</h2>
-          </div>
-          <div className="topbar-right" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 16 }}>
-            <div className="topbar-icons">
-              <button
-                onClick={() => {
-                  const modes = ["light", "dark", "system"];
-                  const idx = modes.indexOf(config.preferences.theme);
-                  const next = modes[(idx + 1) % modes.length];
-                  const updated = { ...config, preferences: { ...config.preferences, theme: next as any } };
-                  setConfig(updated);
-                  window.qaBuddy.saveConfig(updated).catch(() => {});
-                }}
-                title={`Theme: ${config.preferences.theme}`}
-                className="icon-button"
-                type="button"
-              >
-                <span className="material-symbols" style={{ fontSize: 20 }}>
-                  {config.preferences.theme === "dark" ? "dark_mode" : config.preferences.theme === "system" ? "desktop_windows" : "light_mode"}
-                </span>
-              </button>
-            </div>
-            <div className="connection-indicators" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      {/* ── Main column ── */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line px-6"
+          style={{ background: "var(--glass-topbar)", backdropFilter: "blur(12px)" }}
+        >
+          <h2 className="text-[15px] font-semibold">{currentTitle}</h2>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const modes = ["light", "dark", "system"];
+                const idx = modes.indexOf(config.preferences.theme);
+                const next = modes[(idx + 1) % modes.length];
+                const updated = { ...config, preferences: { ...config.preferences, theme: next as any } };
+                setConfig(updated);
+                window.qaBuddy.saveConfig(updated).catch(() => {});
+              }}
+              title={`Theme: ${config.preferences.theme}`}
+              className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-mid hover:text-ink"
+              type="button"
+            >
+              <span className="material-symbols text-[20px]">
+                {config.preferences.theme === "dark" ? "dark_mode" : config.preferences.theme === "system" ? "desktop_windows" : "light_mode"}
+              </span>
+            </button>
+
+            <div className="connection-indicators flex items-center gap-2.5">
               {connectionPills.map((pill) => (
                 <span
                   key={pill.label}
@@ -214,65 +208,59 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
               ))}
             </div>
 
+            <div className="h-6 w-px bg-line" />
+
             {/* User info + logout */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, borderLeft: "1px solid var(--outline-variant)", paddingLeft: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: "50%",
-                  background: "var(--primary-container)",
-                  color: "var(--on-primary-container)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 13, fontWeight: 700,
-                }}>
+            <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary text-[11px] font-bold text-on-primary">
                   {loggedInUser.slice(0, 2)}
-                </div>
-                <span style={{ fontSize: 12, fontWeight: 500, color: "var(--on-surface-variant)" }}>
-                  {loggedInUser}
                 </span>
+                <span className="max-w-[140px] truncate text-xs font-medium text-muted">{loggedInUser}</span>
               </div>
               <button
                 type="button"
                 onClick={async () => { await flushTokensOnLogout(); onLogout(); }}
-                className="icon-button"
+                className="grid h-7 w-7 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-mid hover:text-ink"
                 title="Logout"
-                style={{ color: "var(--on-surface-variant)" }}
               >
-                <span className="material-symbols" style={{ fontSize: 18 }}>logout</span>
+                <span className="material-symbols text-[18px]">logout</span>
               </button>
             </div>
-
           </div>
         </header>
 
-        <main className="content">
-          {banner ? (
-            <div className={`app-banner ${banner.tone}`}>
-              <span>{banner.text}</span>
-              <button className="ghost-button" onClick={() => setBanner(null)} type="button">
-                Dismiss
-              </button>
-            </div>
-          ) : null}
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-[1440px] p-6">
+            {banner ? (
+              <div className={`app-banner ${banner.tone}`}>
+                <span>{banner.text}</span>
+                <button className="ghost-button" onClick={() => setBanner(null)} type="button">
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
 
-          {loading && <div className="card">Memuat workspace QA Buddy...</div>}
+            {loading && <div className="card">Memuat workspace QA Buddy...</div>}
 
-          {!loading && (
-            <>
-              {activeView === "dashboard" && <Dashboard />}
-              {activeView === "project-management" && <ProjectManagement />}
-              {activeView === "chat-assistant" && <ChatAssistant />}
-              {activeView === "manual-test-case" && <ManualTestCaseScreen />}
-              {activeView === "documentation-sync" && <DocumentationSync />}
-              {activeView === "advanced-jira-organizer" && <AdvancedJiraOrganizer />}
-              {activeView === "daily-uqa" && <DailyUQA />}
-              {activeView === "defect-repository" && <DefectRepository />}
-              {activeView === "test-cycle-manager" && <TestCycleManager />}
-              {activeView === "logs" && <Logs />}
-              {activeView === "settings" && <Settings />}
-              {activeView === "documentation" && <Documentation />}
-              {activeView === "document-review" && <DocumentationReview />}
-            </>
-          )}
+            {!loading && (
+              <>
+                {activeView === "dashboard" && <Dashboard />}
+                {activeView === "project-management" && <ProjectManagement />}
+                {activeView === "chat-assistant" && <ChatAssistant />}
+                {activeView === "manual-test-case" && <ManualTestCaseScreen />}
+                {activeView === "documentation-sync" && <DocumentationSync />}
+                {activeView === "advanced-jira-organizer" && <AdvancedJiraOrganizer />}
+                {activeView === "daily-uqa" && <DailyUQA />}
+                {activeView === "defect-repository" && <DefectRepository />}
+                {activeView === "test-cycle-manager" && <TestCycleManager />}
+                {activeView === "logs" && <Logs />}
+                {activeView === "settings" && <Settings />}
+                {activeView === "documentation" && <Documentation />}
+                {activeView === "document-review" && <DocumentationReview />}
+              </>
+            )}
+          </div>
         </main>
       </div>
     </div>

@@ -42,6 +42,21 @@ export default function Dashboard() {
     setDashboardLoading,
   } = useApp();
 
+
+  const STATUS_TOKEN = (status: string): string => {
+    const sl = (status || "").toLowerCase();
+    if (sl.includes("queue")) return "var(--info)";
+    if (sl.includes("in progress") || sl.includes("ongoing") || sl.includes("on going")) return "var(--warning)";
+    if (sl.includes("under review") || sl.includes("review")) return "var(--severity-epic)";
+    if (sl.includes("done") && sl.includes("uat")) return "var(--severity-epic)";
+    if (sl.includes("done") && sl.includes("deploy")) return "var(--info)";
+    if (sl.includes("done") && sl.includes("live")) return "var(--success)";
+    if (sl.includes("cancel")) return "var(--font-disabled)";
+    if (sl.includes("hold") || sl.includes("pending")) return "var(--error)";
+    if (sl.includes("done") || sl.includes("selesai")) return "var(--success)";
+    return "var(--outline)";
+  };
+
   const READY_FOR_QA_ISSUE_TYPES = ["Bug", "Test Execution", "Test Plan", "Task", "Epic"] as const;
   type ReadyForQaIssueType = typeof READY_FOR_QA_ISSUE_TYPES[number];
 
@@ -148,10 +163,10 @@ export default function Dashboard() {
     return a.localeCompare(b);
   });
   const SDLC_COLORS: Record<string, string> = {
-    "NCM":     "#1e40af",  // dark blue
-    "NCM OPS": "#6d28d9",  // violet
-    "ECM":     "#065f46",  // dark emerald
-    "Support": "#92400e",  // amber brown
+    "NCM": "var(--primary)",
+    "NCM OPS": "var(--severity-epic)",
+    "ECM": "var(--success)",
+    "Support": "var(--warning)",
   };
 
   // Computed data based on active tab
@@ -348,21 +363,10 @@ export default function Dashboard() {
             <>
               {/* Status pill row — stretch to fill card width */}
               <div style={{ display: "grid", gridTemplateColumns: `repeat(${uqaStatusOrder.length}, 1fr)`, gap: 8, marginBottom: expandedUqaStatus ? 16 : 0 }}>
-                {uqaStatusOrder.map((status, idx) => {
+                {uqaStatusOrder.map((status) => {
                   const count = uqaByStatus[status].length;
                   const isActive = expandedUqaStatus === status;
-                  const sl = status.toLowerCase();
-                  const color =
-                    sl.includes("queue")                                          ? "#3d5a80"
-                    : sl.includes("in progress") || sl.includes("ongoing") || sl.includes("on going") ? "#8b1a1a"
-                    : sl.includes("under review") || sl.includes("review")       ? "#2d6a4f"
-                    : sl.includes("done - uat") || sl.includes("done-uat") || (sl.includes("done") && sl.includes("uat")) ? "#6a0dad"
-                    : sl.includes("done - deploy") || sl.includes("done-deploy") || (sl.includes("done") && sl.includes("deploy")) ? "#007c91"
-                    : sl.includes("done - live") || sl.includes("done-live") || (sl.includes("done") && sl.includes("live")) ? "#c0531a"
-                    : sl.includes("cancel") || sl.includes("cancelled")          ? "#b8860b"
-                    : sl.includes("hold") || sl.includes("pending")              ? "#9e2a2b"
-                    : sl.includes("done") || sl.includes("selesai")              ? "#1b5e20"
-                    : ["#3d5a80","#8b1a1a","#2d6a4f","#6a0dad","#007c91","#c0531a","#b8860b","#9e2a2b","#1b5e20","#4a4a8a"][idx % 10];
+                  const color = STATUS_TOKEN(status);
                   return (
                     <button
                       key={status}
@@ -370,15 +374,15 @@ export default function Dashboard() {
                       onClick={() => setExpandedUqaStatus(isActive ? null : status)}
                       style={{
                         display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-                        padding: "12px 8px", borderRadius: 12, border: "2px solid",
+                        padding: "12px 8px", borderRadius: "var(--radius-lg)",
                         cursor: "pointer", transition: "all 0.15s",
-                        background: isActive ? color : `${color}18`,
-                        borderColor: isActive ? color : `${color}55`,
+                        background: isActive ? color : `color-mix(in srgb, ${color} 10%, transparent)`,
+                        border: `1px solid ${isActive ? color : `color-mix(in srgb, ${color} 33%, transparent)`}`,
                         color: isActive ? "#fff" : "var(--on-surface)",
                       }}
                     >
                       <span style={{ fontSize: 24, fontWeight: 700, lineHeight: 1, color: isActive ? "#fff" : color }}>{count}</span>
-                      <span style={{ fontSize: 10, fontWeight: 600, textAlign: "center", lineHeight: 1.3, color: isActive ? "#ffffffcc" : "var(--on-surface-variant)" }}>{status}</span>
+                      <span style={{ fontSize: 10, fontWeight: 600, textAlign: "center", lineHeight: 1.3, color: isActive ? "rgba(255,255,255,0.85)" : "var(--on-surface-variant)" }}>{status}</span>
                     </button>
                   );
                 })}
@@ -458,7 +462,7 @@ export default function Dashboard() {
                 {sdlcTypeOrder.map((sdlcType) => {
                   const projects = sdlcByType[sdlcType];
                   const isActive = expandedSdlcType === sdlcType;
-                  const color = SDLC_COLORS[sdlcType] || "#4b5563";
+                  const color = SDLC_COLORS[sdlcType] || "var(--outline)";
                   return (
                     <button
                       key={sdlcType}
@@ -468,12 +472,12 @@ export default function Dashboard() {
                         display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
                         padding: "14px 8px", borderRadius: 12, border: "2px solid",
                         cursor: "pointer", transition: "all 0.15s",
-                        background: isActive ? color : `${color}18`,
-                        borderColor: isActive ? color : `${color}55`,
+                        background: isActive ? color : `color-mix(in srgb, ${color} 10%, transparent)`,
+                        borderColor: isActive ? color : `color-mix(in srgb, ${color} 33%, transparent)`,
                       }}
                     >
                       <span style={{ fontSize: 26, fontWeight: 700, lineHeight: 1, color: isActive ? "#fff" : color }}>{projects.length}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, textAlign: "center", lineHeight: 1.3, color: isActive ? "#ffffffee" : color, letterSpacing: "0.04em" }}>{sdlcType}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, textAlign: "center", lineHeight: 1.3, color: isActive ? "color-mix(in srgb, var(--success) 93%, transparent)" : color, letterSpacing: "0.04em" }}>{sdlcType}</span>
                     </button>
                   );
                 })}
@@ -488,16 +492,7 @@ export default function Dashboard() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {sdlcByType[expandedSdlcType].map((p) => {
                       const statusLower = (p.status || "").toLowerCase();
-                      const statusColor =
-                        statusLower.includes("queue")   ? "#3d5a80"
-                        : statusLower.includes("in progress") || statusLower.includes("ongoing") || statusLower.includes("on going") ? "#8b1a1a"
-                        : statusLower.includes("under review") || statusLower.includes("review") ? "#2d6a4f"
-                        : statusLower.includes("done") && statusLower.includes("uat")    ? "#6a0dad"
-                        : statusLower.includes("done") && statusLower.includes("deploy") ? "#007c91"
-                        : statusLower.includes("done") && statusLower.includes("live")   ? "#c0531a"
-                        : statusLower.includes("cancel") ? "#b8860b"
-                        : statusLower.includes("done")  ? "#1b5e20"
-                        : "var(--outline)";
+                      const statusColor = STATUS_TOKEN(p.status || "");
                       return (
                         <div
                           key={p.uqa_key}
@@ -515,7 +510,7 @@ export default function Dashboard() {
                                 <span style={{
                                   display: "inline-block", padding: "2px 8px", borderRadius: 20,
                                   fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
-                                  background: `${statusColor}20`, color: statusColor, border: `1px solid ${statusColor}50`,
+                                  background: `color-mix(in srgb, ${statusColor} 13%, transparent)`, color: statusColor, border: `1px solid color-mix(in srgb, ${statusColor} 33%, transparent)`,
                                 }}>
                                   {p.status}
                                 </span>
@@ -568,51 +563,52 @@ export default function Dashboard() {
       )}
 
       {dashboard.isDemo && (
-        <div style={{ background: "rgba(239, 68, 68, 0.08)", border: "1px solid rgba(239, 68, 68, 0.25)", padding: "10px 16px", borderRadius: 10, marginBottom: 16, display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-          <span className="material-symbols filled" style={{ color: "var(--error)", fontSize: 20 }}>info</span>
-          <span style={{ color: "var(--on-surface)" }}><strong>Data Demo</strong> — Koneksi Jira gagal. Periksa Settings &gt; Jira Configuration.</span>
+        <div className="app-banner error">
+          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className="material-symbols filled" style={{ color: "var(--error)", fontSize: 20 }}>info</span>
+            <span><strong>Data Demo</strong> — Koneksi Jira gagal. Periksa Settings &gt; Jira Configuration.</span>
+          </span>
+          <span />
         </div>
       )}
       {updateInfo?.updateAvailable && (
         <div
           className="card"
           style={{
-            background: "linear-gradient(135deg, rgba(249, 115, 22, 0.1) 0%, rgba(239, 68, 68, 0.1) 100%)",
-            border: "1px solid rgba(249, 115, 22, 0.25)",
-            padding: "16px 20px",
+            background: "color-mix(in srgb, var(--warning) 8%, var(--surface))",
+            border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
+            padding: "14px 18px",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             marginBottom: 20,
-            borderRadius: 12,
-            boxShadow: "0 4px 20px -2px rgba(249, 115, 22, 0.08)",
-            animation: "fadeIn 0.3s ease-in-out"
+            borderRadius: "var(--radius-lg)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span className="material-symbols filled" style={{ color: "var(--warning, #f97316)", fontSize: 24 }}>system_update</span>
+            <span className="material-symbols filled" style={{ color: "var(--warning)", fontSize: 22 }}>system_update</span>
             <div>
-              <strong style={{ fontSize: 14, color: "var(--on-surface)" }}>Update Baru Tersedia!</strong>
-              <div style={{ fontSize: 13, color: "var(--on-surface-variant)", marginTop: 2 }}>
-                Versi <strong>v{updateInfo.latestVersion}</strong> sekarang tersedia di GitHub. Unduh sekarang untuk mendapatkan fitur terbaru dan perbaikan bug.
+              <strong style={{ fontSize: 13.5, color: "var(--on-surface)" }}>Update Baru Tersedia!</strong>
+              <div style={{ fontSize: 12.5, color: "var(--on-surface-variant)", marginTop: 2 }}>
+                Versi <strong>v{updateInfo.latestVersion}</strong> sekarang tersedia di GitHub.
               </div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8 }}>
             <button
-              className="insight-btn primary"
+              className="primary-button"
               onClick={() => { if (updateInfo.url) { window.qaBuddy.openExternal(updateInfo.url).catch(() => {}); } }}
-              style={{ background: "var(--warning, #f97316)", color: "#fff", borderColor: "transparent", fontSize: 12, fontWeight: 600, padding: "8px 16px", cursor: "pointer" }}
               type="button"
+              style={{ padding: "7px 14px", fontSize: 12.5 }}
             >
               <span className="material-symbols" style={{ fontSize: 16 }}>download</span>
               Unduh
             </button>
             <button
-              className="insight-btn secondary"
+              className="secondary-button"
               onClick={() => { setSettingsTab("updates"); setActiveView("settings"); }}
-              style={{ fontSize: 12, padding: "8px 16px", cursor: "pointer" }}
               type="button"
+              style={{ padding: "7px 14px", fontSize: 12.5 }}
             >
               Lihat Detail
             </button>
@@ -679,14 +675,10 @@ export default function Dashboard() {
                 type="button"
                 onClick={() => setFilterByMe((v) => !v)}
                 title={filterByMe ? "Tampilkan semua issue" : "Tampilkan hanya issue saya"}
-                style={{
-                  display: "flex", alignItems: "center", gap: 5, padding: "4px 10px",
-                  borderRadius: 20, border: "1.5px solid", cursor: "pointer", fontSize: 11, fontWeight: 600,
-                  background: filterByMe ? "var(--primary)" : "transparent",
-                  color: filterByMe ? "var(--on-primary)" : "var(--on-surface-variant)",
-                  borderColor: filterByMe ? "var(--primary)" : "var(--outline-variant)",
-                  transition: "all 0.15s",
-                }}
+                className={filterByMe ? "chip chip-active" : "chip"}
+                style={filterByMe
+                  ? { background: "var(--primary)", color: "var(--on-primary)" }
+                  : undefined}
               >
                 <span className="material-symbols" style={{ fontSize: 14 }}>person</span>
                 {filterByMe ? "Milik saya" : "Semua"}
@@ -709,14 +701,10 @@ export default function Dashboard() {
                 key={t}
                 type="button"
                 onClick={() => { setReadyForQaIssueType(t); setProjectPage(1); }}
-                style={{
-                  padding: "4px 12px", fontSize: 12, borderRadius: 20, border: "1.5px solid",
-                  cursor: "pointer", fontWeight: readyForQaIssueType === t ? 600 : 400,
-                  background: readyForQaIssueType === t ? "var(--primary)" : "transparent",
-                  color: readyForQaIssueType === t ? "var(--on-primary)" : "var(--on-surface-variant)",
-                  borderColor: readyForQaIssueType === t ? "var(--primary)" : "var(--outline-variant)",
-                  transition: "all 0.15s",
-                }}
+                className={readyForQaIssueType === t ? "chip chip-active" : "chip"}
+                style={readyForQaIssueType === t
+                  ? { background: "var(--primary)", color: "var(--on-primary)" }
+                  : undefined}
               >
                 {t}
               </button>
@@ -941,12 +929,10 @@ export default function Dashboard() {
                           next[index] = { ...next[index], enabled: !next[index].enabled };
                           setDashboardProjects(next);
                         }}
-                        style={{
-                          padding: "4px 12px", borderRadius: 999, border: "none", cursor: "pointer",
-                          fontSize: 11, fontWeight: 600, transition: "all 0.2s",
-                          background: proj.enabled ? "var(--tertiary)" : "var(--surface-container-low)",
-                          color: proj.enabled ? "#fff" : "var(--on-surface-variant)",
-                        }}
+                        className="status-pill"
+                        style={proj.enabled
+                          ? { background: "var(--success-container)", color: "var(--success)", cursor: "pointer", border: "none" }
+                          : { background: "var(--surface-container)", color: "var(--on-surface-variant)", cursor: "pointer", border: "none" }}
                       >
                         {proj.enabled ? "ON" : "OFF"}
                       </button>
