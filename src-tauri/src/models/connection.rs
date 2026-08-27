@@ -122,6 +122,8 @@ pub struct JiraIssueSummary {
     #[serde(default)]
     pub assignee: String,
     #[serde(default)]
+    pub reporter: String,
+    #[serde(default)]
     pub r#type: String,
     pub url: String,
 }

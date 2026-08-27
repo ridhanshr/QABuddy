@@ -22,7 +22,6 @@ import type {
   ChatHistoryMessage,
   ChatResponse,
   ConfluenceParseProgress,
-  ConfluencePreviewResult,
   ConfluenceTestImportEntry,
   ConnectionStatus,
   DashboardDigest,
@@ -56,7 +55,6 @@ import type {
   OcrResult,
   ParseConfluenceEntriesOptions,
   ParseConfluenceEntriesResult,
-  PerIssueReminder,
   ProjectInsightRequest,
   RagIndexProgress,
   RagStats,
@@ -122,8 +120,8 @@ const api = {
   healthcheck: () => cmd<unknown>("healthcheck"),
 
   // Dashboard
-  getDashboard: (options?: { skipInsight?: boolean }) =>
-    cmd<DashboardDigest>("get_dashboard", { skipInsight: options?.skipInsight ?? false }),
+  getDashboard: (options?: { skipInsight?: boolean; readyForQaIssueType?: string }) =>
+    cmd<DashboardDigest>("get_dashboard", { skipInsight: options?.skipInsight ?? false, readyForQaIssueType: options?.readyForQaIssueType }),
   getProjectInsight: (request: ProjectInsightRequest) =>
     cmd<string>("get_project_insight", { request }),
 
@@ -171,10 +169,6 @@ const api = {
   // Confluence sync
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) =>
     cmd<SyncToConfluenceResult>("sync_to_confluence", { pageId, payload }),
-  previewConfluenceSync: (pageId: string, payload: { entries: unknown[] }) =>
-    cmd<ConfluencePreviewResult>("preview_confluence_sync", { pageId, payload }),
-  getConfluencePage: (pageId: string) =>
-    cmd<{ title: string; content: string; version: number }>("get_confluence_page", { pageId }),
   reviewDocument: (pageId: string, jiraProjectKey: string) =>
     cmd<DocumentReviewSummary>("review_document", { pageId, jiraProjectKey }),
   onDocumentReviewProgress: (callback: (progress: DocumentReviewProgress) => void) =>
@@ -316,12 +310,14 @@ const api = {
   getUqaIssues: () => cmd<UqaIssue[]>("get_uqa_issues"),
   getUqaTransitions: (issueKey: string) =>
     cmd<UqaTransition[]>("get_uqa_transitions", { issueKey }),
-  appendUqaEntry: (issueKey: string, date: string, activity: string) =>
-    cmd<void>("append_uqa_entry", { issueKey, date, activity }),
+  appendUqaEntry: (issueKey: string, date: string, phase: string, activity: string) =>
+    cmd<void>("append_uqa_entry", { issueKey, date, phase, activity }),
   appendUqaEntryWithNotes: (issueKey: string, date: string, activity: string, notes: string) =>
     cmd<void>("append_uqa_entry_with_notes", { issueKey, date, activity, notes }),
   transitionUqaIssue: (issueKey: string, transitionId: string) =>
     cmd<void>("transition_uqa_issue", { issueKey, transitionId }),
+  updateUqaProjectStatus: (uqaKey: string, status: string) =>
+    cmd<void>("update_uqa_project_status", { uqaKey, status }),
   autoGenerateUqaNotes: (issueKey: string) =>
     cmd<AutoUqaGeneratedPayload>("auto_generate_uqa_notes", { issueKey }),
   getUqaDbExecutionSummary: (uqaKey: string) =>
@@ -339,10 +335,6 @@ const api = {
   syncUqaIssues: () => cmd<UqaIssue[]>("sync_uqa_issues"),
   onUqaSyncProgress: (callback: (progress: UqaSyncProgress) => void) =>
     on<UqaSyncProgress>("uqa-sync-progress", callback),
-  getPerUqaReminder: (issueKey: string) =>
-    cmd<PerIssueReminder | null>("get_per_uqa_reminder", { issueKey }),
-  updatePerUqaReminder: (issueKey: string, reminder: PerIssueReminder) =>
-    cmd<void>("update_per_uqa_reminder", { issueKey, reminder }),
 
   // ── Defect Repository ────────────────────────────────────────────────
   getDefectSources: (username: string, displayName: string) => cmd<JiraProjectSource[]>("get_defect_sources", { username, displayName }),
@@ -370,11 +362,13 @@ const api = {
   updateUserTokens: (pn: string, jiraApiToken: string, confluenceApiToken: string) => cmd<void>("update_user_tokens", { pn, jiraApiToken, confluenceApiToken }),
   getMyUqaProjects: (username: string, displayName: string) => cmd<import("@shared/types").MonitoringUqaProject[]>("get_my_uqa_projects", { username, displayName }),
   getMyTestExecutions: (username: string, displayName: string) => cmd<import("@shared/types").MonitoringTestExecution[]>("get_my_test_executions", { username, displayName }),
+  getTeByProjectPrefix: (projectPrefix: string) => cmd<import("@shared/types").MonitoringTestExecution[]>("get_te_by_project_prefix", { projectPrefix }),
   getMyTestCasesByExecution: (teJiraKey: string, username: string) => cmd<import("@shared/types").MonitoringTestCase[]>("get_my_test_cases_by_execution", { teJiraKey, username }),
   getTestCasesByTeKey: (teJiraKey: string) => cmd<import("@shared/types").MonitoringTestCase[]>("get_test_cases_by_te_key", { teJiraKey }),
   fetchTcDetailsBatch: (tcKeys: string[]) => cmd<FetchTestStepsResult[]>("fetch_tc_details_batch", { tcKeys }),
   updateTestRunStatus: (teKey: string, tcKey: string, status: string) => cmd<void>("update_test_run_status", { teKey, tcKey, status }),
   updateTestCaseRunStatus: (tcKey: string, teJiraKey: string, testRunStatus: string, executedBy: string) => cmd<void>("update_test_case_run_status", { tcKey, teJiraKey, testRunStatus, executedBy }),
+  updateTestExecutionStatus: (teJiraKey: string, executionStatus: string) => cmd<void>("update_test_execution_status", { teJiraKey, executionStatus }),
   getTestCaseTitles: (tcKeys: string[]) => cmd<Record<string, string>>("get_test_case_titles", { tcKeys }),
 
   // ── OCR ──────────────────────────────────────────────────────────────
@@ -407,7 +401,7 @@ const api = {
   saveTestCases: (cases: SaveTestCaseInput[]) =>
     cmd<void>("save_test_cases", { cases }),
   syncExecutionTestsToDb: (execKey: string) =>
-    cmd<number>("sync_execution_tests_to_db", { execKey }),
+    cmd<{ count: number; truncated: boolean }>("sync_execution_tests_to_db", { execKey }),
 
   // ── Bitbucket Self-Hosted API ───────────────────────────────────────
   getBitbucketPrDetails: (prUrlOrId: string) =>

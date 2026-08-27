@@ -12,8 +12,8 @@ use serde_json::Value;
 use crate::models::app_config::ConfluenceConfig;
 use crate::models::jira::ConfluenceTestImportEntry;
 use crate::models::misc::{
-    ConfluenceParseProgress, ConfluencePreviewResult, ParseConfluenceEntriesOptions,
-    ParseConfluenceEntriesResult, SyncToConfluencePayload, SyncToConfluenceResult,
+    ConfluenceParseProgress, ParseConfluenceEntriesOptions, ParseConfluenceEntriesResult,
+    SyncToConfluencePayload, SyncToConfluenceResult,
 };
 use crate::services::confluence::client::ConfluenceClient;
 use crate::services::error::Result;
@@ -502,38 +502,7 @@ impl ConfluenceService {
         html
     }
 
-    /// Count how many existing import-row tables already exist in the content
-    /// (heuristic: tables with the QA Buddy column header).
-    fn count_existing_entries(content: &str) -> usize {
-        let re = regex::Regex::new(r"(?i)<tr>\s*<th[^>]*>\s*TestCase No").unwrap();
-        re.find_iter(content).count()
-    }
-
     // ── High-level operations ───────────────────────────────────────────
-
-    /// Build a preview of the sync: current title/version, generated tables,
-    /// and entry/existing-entry counts. Does not write to Confluence.
-    pub async fn preview_sync(
-        &self,
-        config: &ConfluenceConfig,
-        page_id: &str,
-        entries: &[Value],
-    ) -> Result<ConfluencePreviewResult> {
-        let (title, content, version) = self.get_page_preview(config, page_id).await?;
-        let import_entries: Vec<ConfluenceTestImportEntry> = entries
-            .iter()
-            .filter_map(|e| serde_json::from_value::<ConfluenceTestImportEntry>(e.clone()).ok())
-            .collect();
-        let tables = Self::generate_single_table(&import_entries);
-        let existing = Self::count_existing_entries(&content);
-        Ok(ConfluencePreviewResult {
-            current_title: title,
-            current_version: version,
-            generated_tables: tables,
-            entry_count: import_entries.len() as u32,
-            existing_entry_count: existing as u32,
-        })
-    }
 
     /// Sync entries into a Confluence page.
     ///

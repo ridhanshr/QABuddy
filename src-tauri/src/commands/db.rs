@@ -298,6 +298,25 @@ pub async fn resync_uqa_project(
     Ok(())
 }
 
+/// Update only the status column of uqa_project after a Jira transition.
+#[tauri::command]
+pub async fn update_uqa_project_status(
+    state: State<'_, AppState>,
+    uqa_key: String,
+    status: String,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    sqlx::query(
+        r#"UPDATE uqa_project SET status = ?, last_sync = NOW() WHERE uqa_key = ?"#,
+    )
+    .bind(&status)
+    .bind(&uqa_key)
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal update status uqa_project {uqa_key}: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn check_uqa_projects_in_db(
     state: State<'_, AppState>,
@@ -408,13 +427,8 @@ pub async fn get_test_repositories_in_db(
 pub struct SaveTestCaseInput {
     pub tc_key: String,
     pub te_jira_key: String,
-    pub scenario: Option<String>,
-    pub category: Option<String>,
-    pub steps: Option<String>,
-    pub expected_result: Option<String>,
-    pub input_data: Option<String>,
-    pub function_name: Option<String>,
-    pub test_case_no: Option<String>,
+    pub title: Option<String>,
+    pub id_jira_repo: Option<String>,
 }
 
 #[tauri::command]
@@ -425,31 +439,25 @@ pub async fn save_test_cases(
     let pool = get_pool!(state);
 
     for tc in &cases {
+        // Derive id_jira_repo from tc_key prefix if not provided (e.g. "TRAW-1027" → "TRAW")
+        let id_jira_repo = tc.id_jira_repo.clone().or_else(|| {
+            tc.tc_key.rfind('-').map(|i| tc.tc_key[..i].to_string())
+        });
+
         sqlx::query(
             r#"
-            INSERT INTO test_case
-                (tc_key, te_jira_key, scenario, category, steps, expected_result, input_data, function_name, test_case_no, last_sync)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            INSERT INTO test_case (tc_key, te_jira_key, title, id_jira_repo, last_sync)
+            VALUES (?, ?, ?, ?, NOW())
             ON DUPLICATE KEY UPDATE
-                scenario      = COALESCE(VALUES(scenario), scenario),
-                category      = COALESCE(VALUES(category), category),
-                steps         = COALESCE(VALUES(steps), steps),
-                expected_result = COALESCE(VALUES(expected_result), expected_result),
-                input_data    = COALESCE(VALUES(input_data), input_data),
-                function_name = COALESCE(VALUES(function_name), function_name),
-                test_case_no  = COALESCE(VALUES(test_case_no), test_case_no),
-                last_sync     = NOW()
+                title        = COALESCE(VALUES(title), title),
+                id_jira_repo = COALESCE(VALUES(id_jira_repo), id_jira_repo),
+                last_sync    = NOW()
             "#,
         )
         .bind(&tc.tc_key)
         .bind(&tc.te_jira_key)
-        .bind(tc.scenario.as_deref())
-        .bind(tc.category.as_deref())
-        .bind(tc.steps.as_deref())
-        .bind(tc.expected_result.as_deref())
-        .bind(tc.input_data.as_deref())
-        .bind(tc.function_name.as_deref())
-        .bind(tc.test_case_no.as_deref())
+        .bind(tc.title.as_deref())
+        .bind(id_jira_repo.as_deref())
         .execute(&pool)
         .await
         .map_err(|e| format!("Gagal upsert test_case {}/{}: {e}", tc.tc_key, tc.te_jira_key))?;
@@ -466,11 +474,19 @@ pub async fn save_test_cases(
 ///   executed_by    ← assignee/executor display name from run
 ///   executed_at    ← finishedOn from run
 /// Existing non-NULL values are preserved via COALESCE.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SyncTcResult {
+    pub count: u32,
+    /// True when the TE exceeds Xray's 200-TC listing cap and not all TCs
+    /// could be discovered (JQL fallback unavailable or also incomplete).
+    pub truncated: bool,
+}
+
 #[tauri::command]
 pub async fn sync_execution_tests_to_db(
     state: State<'_, AppState>,
     exec_key: String,
-) -> Result<u32, String> {
+) -> Result<SyncTcResult, String> {
     let pool = get_pool!(state);
     let config = crate::commands::load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
@@ -479,12 +495,92 @@ pub async fn sync_execution_tests_to_db(
         .map_err(|e| format!("Gagal membuat Jira client: {e}"))?;
 
     // ── 1. Fetch TC list from TE ──
-    let list_path = format!("/testexec/{exec_key}/test");
-    let raw = client.xray.get_json_or_none(&list_path, &[]).await
-        .unwrap_or(serde_json::Value::Null);
-    let arr = raw.as_array().cloned().unwrap_or_default();
+    // Xray Server /testexec/{key}/test hard-caps results at 200 and does not
+    // honor startAt/limit for pagination (both are ignored, returning the
+    // same first page every time), so we can only fetch a single page.
+    // `detailed=true` is required to get `assignee`/`executedBy` on every
+    // TC (not just ones that already ran) — without it those fields are
+    // simply absent from the response.
+    let list_path = format!("/testexec/{exec_key}/test?detailed=true");
+    log::info!("[sync_tc] fetching url base={} prefix=/rest/raven/1.0/api path={list_path}",
+        config.jira.base_url);
+    const PAGE_SIZE: usize = 200;
+    let mut over_cap = false;
+    let mut arr: Vec<serde_json::Value> = match client.xray.get_json(&list_path, &[]).await {
+        Ok(raw) => {
+            log::info!("[sync_tc] exec={exec_key} raw_type={} raw_preview={}",
+                if raw.is_array() { "array" } else if raw.is_object() { "object" } else if raw.is_null() { "null" } else { "other" },
+                raw.to_string().chars().take(500).collect::<String>()
+            );
+            let a = raw.as_array().cloned().unwrap_or_default();
+            log::info!("[sync_tc] exec={exec_key} total_tc={}", a.len());
+            if a.len() >= PAGE_SIZE {
+                over_cap = true;
+            }
+            a
+        }
+        Err(e) if e.to_string().contains("Maximum results per request exceeded") => {
+            // Xray Server refuses to return the list at all once the TE has
+            // more TCs than its hard cap (no partial page, straight HTTP 400).
+            log::warn!("[sync_tc] exec={exec_key} /testexec/test rejected — TE exceeds the {PAGE_SIZE}-result cap ({e})");
+            over_cap = true;
+            Vec::new()
+        }
+        Err(e) => {
+            log::error!("[sync_tc] exec={exec_key} fetch_error={e}");
+            return Err(format!("Gagal mengambil daftar TC untuk {exec_key}: {e}"));
+        }
+    };
+
+    // Xray's /testexec/{key}/test hard-caps at 200 results with no working
+    // pagination (either truncating to 200, or — once past the cap —
+    // refusing the request entirely with HTTP 400). Either way, fall back to
+    // Jira's own paginated JQL search (which Xray Server exposes via the
+    // issueFunction JQL library) to discover the full key list, and merge in
+    // any keys the capped/failed Xray response was missing.
+    if over_cap {
+        log::warn!("[sync_tc] exec={exec_key} hit the {PAGE_SIZE}-result cap on /testexec/test; \
+            attempting full key discovery via JQL issueFunction fallback");
+        let jql = format!("issueFunction in testExecutionTests(\"{exec_key}\")");
+        match client.search_issues_paginated(&jql, "summary").await {
+            Ok(issues) if !issues.is_empty() => {
+                let known: std::collections::HashSet<String> = arr.iter()
+                    .filter_map(|t| t["key"].as_str())
+                    .map(|k| k.to_string())
+                    .collect();
+                let mut added = 0u32;
+                for issue in &issues {
+                    if let Some(key) = issue["key"].as_str() {
+                        if !known.contains(key) {
+                            arr.push(serde_json::json!({ "key": key }));
+                            added += 1;
+                        }
+                    }
+                }
+                log::info!("[sync_tc] exec={exec_key} JQL fallback found {} TCs total, {added} not present in capped list", issues.len());
+                // Full key list recovered — no longer truncated.
+                over_cap = false;
+            }
+            Ok(_) => {
+                log::warn!("[sync_tc] exec={exec_key} JQL fallback returned no issues; \
+                    'JQL Functions for Xray' plugin may not be installed. Proceeding with capped {PAGE_SIZE} TCs only.");
+            }
+            Err(e) => {
+                log::warn!("[sync_tc] exec={exec_key} JQL fallback failed ({e}); \
+                    proceeding with capped {PAGE_SIZE} TCs only.");
+            }
+        }
+    }
     if arr.is_empty() {
-        return Ok(0);
+        if over_cap {
+            return Err(format!(
+                "{exec_key} memiliki lebih dari {PAGE_SIZE} test case. Xray menolak permintaan ini \
+                 dan pencarian JQL cadangan (issueFunction) juga tidak mengembalikan hasil — \
+                 kemungkinan plugin 'JQL Functions for Xray' belum aktif di Jira. \
+                 Hubungi admin Jira untuk mengaktifkannya, atau pecah Test Execution ini menjadi beberapa TE lebih kecil."
+            ));
+        }
+        return Ok(SyncTcResult { count: 0, truncated: false });
     }
 
     // Collect tc_keys for batch Jira fetch
@@ -580,26 +676,44 @@ pub async fn sync_execution_tests_to_db(
             .rfind('-')
             .map(|i| tc_key[..i].to_string());
 
-        // Try endpoint variants for Test Run detail
-        let run_data_v1 = client.xray.get_json_or_none("/testrun", &[
-            ("testExecIssueKey", exec_key.clone()),
-            ("testIssueKey", tc_key.clone()),
-        ]).await;
+        // Use status directly from TC list response (avoids 1 HTTP call per TC).
+        // The /testexec/{key}/test response already contains status, assignee, executedBy fields.
+        let status_from_list = t["status"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
+        let executed_by_from_list = t["assignee"].as_str()
+            .or_else(|| t["executedBy"].as_str())
+            .or_else(|| t["executor"].as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let executed_at_from_list = t["finishedOn"].as_str()
+            .or_else(|| t["endedOn"].as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| parse_datetime(s));
 
-        let run_data = if run_data_v1.is_some() {
-            run_data_v1.unwrap_or(serde_json::Value::Null)
+        // Only call /testrun if list response lacks status (fallback for edge cases)
+        let detail = if status_from_list.is_some() {
+            RunDetail {
+                status: status_from_list,
+                executed_by: executed_by_from_list,
+                executed_at: executed_at_from_list,
+            }
         } else {
-            let run_path_v2 = format!("/test/{tc_key}/testrun");
-            client.xray.get_json_or_none(&run_path_v2, &[
+            let run_data_v1 = client.xray.get_json_or_none("/testrun", &[
                 ("testExecIssueKey", exec_key.clone()),
-            ]).await.unwrap_or(serde_json::Value::Null)
-        };
-
-        let detail = if run_data.is_null() {
-            let status_from_list = t["status"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
-            RunDetail { status: status_from_list, executed_by: None, executed_at: None }
-        } else {
-            extract_run_detail(&run_data, &exec_key)
+                ("testIssueKey", tc_key.clone()),
+            ]).await;
+            let run_data = if run_data_v1.is_some() {
+                run_data_v1.unwrap_or(serde_json::Value::Null)
+            } else {
+                let run_path_v2 = format!("/test/{tc_key}/testrun");
+                client.xray.get_json_or_none(&run_path_v2, &[
+                    ("testExecIssueKey", exec_key.clone()),
+                ]).await.unwrap_or(serde_json::Value::Null)
+            };
+            if run_data.is_null() {
+                RunDetail { status: None, executed_by: executed_by_from_list, executed_at: executed_at_from_list }
+            } else {
+                extract_run_detail(&run_data, &exec_key)
+            }
         };
 
         let test_run_status = detail.status.clone();
@@ -634,7 +748,7 @@ pub async fn sync_execution_tests_to_db(
         count += 1;
     }
 
-    Ok(count)
+    Ok(SyncTcResult { count, truncated: over_cap })
 }
 
 // ── Given a list of TP Jira keys, return which ones already exist in DB ───────
@@ -776,6 +890,7 @@ pub struct MonitoringTestExecution {
     pub te_jira_key: String,
     pub title: Option<String>,
     pub tp_jira_key: Option<String>,
+    pub uqa_key: Option<String>,
     pub assignee: Option<String>,
     pub execution_status: Option<String>,
     pub last_sync: Option<String>,
@@ -834,7 +949,7 @@ pub async fn get_my_uqa_projects(
     Ok(rows)
 }
 
-/// Fetch test executions from DB where assignee matches username or display name.
+/// Fetch all test executions linked to UQA projects where user is assignee or product_tester.
 #[tauri::command]
 pub async fn get_my_test_executions(
     state: State<'_, AppState>,
@@ -842,27 +957,67 @@ pub async fn get_my_test_executions(
     display_name: String,
 ) -> Result<Vec<MonitoringTestExecution>, String> {
     let pool = get_pool!(state);
-    // Use display_name if available, otherwise fall back to username
     let name_a = if display_name.is_empty() { &username } else { &display_name };
+    let like_username = format!("%{}%", username);
+    let like_name_a  = format!("%{}%", name_a);
     let rows = sqlx::query_as::<_, MonitoringTestExecution>(
         r#"
         SELECT
-            te_jira_key,
-            title,
-            tp_jira_key,
-            assignee,
-            execution_status,
-            DATE_FORMAT(last_sync, '%Y-%m-%d %H:%i:%s') AS last_sync
-        FROM test_execution
-        WHERE assignee IN (?, ?)
-        ORDER BY last_sync DESC
+            te.te_jira_key,
+            te.title,
+            te.tp_jira_key,
+            tp.uqa_key,
+            te.assignee,
+            te.execution_status,
+            DATE_FORMAT(te.last_sync, '%Y-%m-%d %H:%i:%s') AS last_sync
+        FROM test_execution te
+        LEFT JOIN test_plan tp ON tp.tp_jira_key = te.tp_jira_key
+        LEFT JOIN uqa_project uqa ON uqa.uqa_key = tp.uqa_key
+        WHERE uqa.assignee LIKE ?
+           OR uqa.assignee LIKE ?
+           OR uqa.product_tester LIKE ?
+           OR uqa.product_tester LIKE ?
+        ORDER BY te.last_sync DESC
         "#,
     )
-    .bind(&username)
-    .bind(name_a)
+    .bind(&like_username)
+    .bind(&like_name_a)
+    .bind(&like_username)
+    .bind(&like_name_a)
     .fetch_all(&pool)
     .await
     .map_err(|e| format!("Gagal fetch test executions: {e}"))?;
+    Ok(rows)
+}
+
+/// Fetch test executions from DB whose te_jira_key starts with the given project prefix.
+#[tauri::command]
+pub async fn get_te_by_project_prefix(
+    state: State<'_, AppState>,
+    project_prefix: String,
+) -> Result<Vec<MonitoringTestExecution>, String> {
+    let pool = get_pool!(state);
+    let pattern = format!("{}-%", project_prefix);
+    let rows = sqlx::query_as::<_, MonitoringTestExecution>(
+        r#"
+        SELECT
+            te.te_jira_key,
+            te.title,
+            te.tp_jira_key,
+            tp.uqa_key,
+            te.assignee,
+            te.execution_status,
+            DATE_FORMAT(te.last_sync, '%Y-%m-%d %H:%i:%s') AS last_sync
+        FROM test_execution te
+        LEFT JOIN test_plan tp ON tp.tp_jira_key = te.tp_jira_key
+        WHERE te.te_jira_key LIKE ?
+        ORDER BY te.last_sync DESC
+        "#,
+    )
+    .bind(&pattern)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal fetch test executions by prefix: {e}"))?;
     Ok(rows)
 }
 
@@ -942,13 +1097,13 @@ pub async fn get_uqa_db_execution_summary(
             COALESCE(te.execution_status, '')                 AS execution_status,
             DATE_FORMAT(te.last_sync, '%Y-%m-%d %H:%i:%s')   AS last_sync,
             COUNT(tc.tc_key)                                  AS total,
-            SUM(tc.test_run_status IN ('PASS','DONE','Done','Pass')) AS done_count,
-            SUM(tc.test_run_status IN ('FAIL','FAILED','Failed','Fail')) AS failed_count,
-            SUM(tc.test_run_status IN ('ABORTED','Aborted'))  AS aborted_count,
-            SUM(tc.test_run_status IN ('EXECUTING','IN_PROGRESS','In Progress','In progress','Executing'))
-                                                              AS in_progress_count,
-            SUM(tc.test_run_status IN ('TODO','To Do','To do','todo'))
-                                                              AS todo_count
+            CAST(SUM(tc.test_run_status IN ('PASS','DONE','Done','Pass')) AS SIGNED) AS done_count,
+            CAST(SUM(tc.test_run_status IN ('FAIL','FAILED','Failed','Fail')) AS SIGNED) AS failed_count,
+            CAST(SUM(tc.test_run_status IN ('ABORTED','Aborted')) AS SIGNED) AS aborted_count,
+            CAST(SUM(tc.test_run_status IN ('EXECUTING','IN_PROGRESS','In Progress','In progress','Executing'))
+                                                              AS SIGNED) AS in_progress_count,
+            CAST(SUM(tc.test_run_status IN ('TODO','To Do','To do','todo'))
+                                                              AS SIGNED) AS todo_count
         FROM test_plan tp
         JOIN test_execution te ON te.tp_jira_key = tp.tp_jira_key
         LEFT JOIN test_case tc ON tc.te_jira_key = te.te_jira_key
@@ -1063,6 +1218,27 @@ pub async fn update_test_case_run_status(
     .execute(&pool)
     .await
     .map_err(|e| format!("Gagal update test_run_status: {e}"))?;
+    Ok(())
+}
+
+/// Update execution_status and last_sync for a specific TE in the DB.
+#[tauri::command]
+pub async fn update_test_execution_status(
+    state: State<'_, AppState>,
+    te_jira_key: String,
+    execution_status: String,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    sqlx::query(
+        r#"UPDATE test_execution
+           SET execution_status = ?, last_sync = NOW()
+           WHERE te_jira_key = ?"#,
+    )
+    .bind(&execution_status)
+    .bind(&te_jira_key)
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal update execution_status: {e}"))?;
     Ok(())
 }
 

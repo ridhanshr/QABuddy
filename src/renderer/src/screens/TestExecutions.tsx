@@ -53,8 +53,11 @@ export default function TestExecutions() {
     setSyncingDb(true);
     setSyncDbResult(null);
     try {
-      const count = await window.qaBuddy.syncExecutionTestsToDb(execDetails.key);
-      setSyncDbResult({ ok: true, msg: `${count} test case berhasil disinkronkan ke database.` });
+      const { count, truncated } = await window.qaBuddy.syncExecutionTestsToDb(execDetails.key);
+      const msg = truncated
+        ? `${count} test case disinkronkan, tapi TE ini melebihi batas 200 TC Xray — sebagian TC mungkin tidak tersync. Pertimbangkan memecah TE ini menjadi beberapa TE lebih kecil.`
+        : `${count} test case berhasil disinkronkan ke database.`;
+      setSyncDbResult({ ok: !truncated, msg });
     } catch (e: any) {
       setSyncDbResult({ ok: false, msg: e?.message || String(e) });
     } finally {

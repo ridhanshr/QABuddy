@@ -1,24 +1,10 @@
 use crate::commands::load_config;
 use crate::models::app_config::OllamaConfig;
-use crate::models::misc::{ConfluencePreviewResult, ParseConfluenceEntriesOptions, ParseConfluenceEntriesResult, SyncToConfluencePayload, SyncToConfluenceResult};
+use crate::models::misc::{ParseConfluenceEntriesOptions, ParseConfluenceEntriesResult, SyncToConfluencePayload, SyncToConfluenceResult};
 use crate::models::test_case::ExtractedTestCaseResult;
 use crate::AppState;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
-
-#[tauri::command]
-pub async fn get_confluence_page(
-    state: State<'_, AppState>,
-    page_id: String,
-) -> Result<serde_json::Value, String> {
-    let config = load_config(state.clone()).await?;
-    let confluence_service = state.confluence_service.lock().await;
-    let (title, content, version) = confluence_service
-        .get_page_preview(&config.confluence, &page_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({ "title": title, "content": content, "version": version }))
-}
 
 #[tauri::command]
 pub async fn parse_confluence_entries(
@@ -37,21 +23,6 @@ pub async fn parse_confluence_entries(
     });
     confluence_service
         .parse_confluence_entries(Some(&app_handle), &config.confluence, &page_id, &options)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn preview_confluence_sync(
-    state: State<'_, AppState>,
-    page_id: String,
-    payload: serde_json::Value,
-) -> Result<ConfluencePreviewResult, String> {
-    let config = load_config(state.clone()).await?;
-    let confluence_service = state.confluence_service.lock().await;
-    let entries = payload["entries"].as_array().cloned().unwrap_or_default();
-    confluence_service
-        .preview_sync(&config.confluence, &page_id, &entries)
         .await
         .map_err(|e| e.to_string())
 }

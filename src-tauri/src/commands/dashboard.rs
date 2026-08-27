@@ -25,6 +25,7 @@ fn demo_dashboard() -> DashboardDigest {
 pub async fn get_dashboard(
     state: State<'_, AppState>,
     skip_insight: Option<bool>,
+    ready_for_qa_issue_type: Option<String>,
 ) -> Result<DashboardDigest, String> {
     let config = load_config(state.clone()).await?;
     if config.jira.base_url.is_empty() || config.jira.token.is_empty() {
@@ -33,68 +34,57 @@ pub async fn get_dashboard(
 
     let jira_service = state.jira_service.lock().await;
     let ollama_service = state.ollama_service.lock().await;
-    let first_project = config.dashboard.projects.iter().find(|p| p.enabled);
-    let main_project_key = first_project.map(|p| p.project_key.clone()).unwrap_or_default();
-    let main_issue_type = first_project.map(|p| p.issue_type.clone()).unwrap_or_default();
-    let exclude_labels = first_project.map(|p| p.exclude_labels.clone()).unwrap_or_default();
-    let include_labels = first_project.map(|p| p.include_labels.clone()).unwrap_or_default();
-    let exclude_statuses = first_project.map(|p| p.exclude_statuses.clone()).unwrap_or_default();
-    let include_statuses = first_project.map(|p| p.include_statuses.clone()).unwrap_or_default();
 
-    let ready_for_qa = jira_service
-        .get_ready_for_qa_issues(
-            &config.jira,
-            if main_project_key.is_empty() { None } else { Some(main_project_key.as_str()) },
-            if main_issue_type.is_empty() { None } else { Some(main_issue_type.as_str()) },
-            &exclude_labels,
-            &include_labels,
-            &exclude_statuses,
-            &include_statuses,
-        )
-        .await
-        .unwrap_or_default();
-    let bug_metrics = jira_service
-        .get_bug_metrics(
-            &config.jira,
-            if main_project_key.is_empty() { None } else { Some(main_project_key.as_str()) },
-            if main_issue_type.is_empty() { None } else { Some(main_issue_type.as_str()) },
-            &exclude_labels,
-            &include_labels,
-            &exclude_statuses,
-            &include_statuses,
-        )
+    let enabled_projects: Vec<_> = config.dashboard.projects.iter().filter(|p| p.enabled).collect();
+    let first_project = enabled_projects.first().copied();
+    let main_project_key = first_project.map(|p| p.project_key.as_str()).unwrap_or("");
+
+    // Effective issue type: caller override > first project config > "Bug"
+    let eff_issue_type = ready_for_qa_issue_type.as_deref()
+        .or_else(|| first_project.map(|p| p.issue_type.as_str()))
+        .unwrap_or("Bug");
+
+    // Collect all enabled project keys for the single-JQL multi-project fetch
+    let all_keys: Vec<&str> = enabled_projects.iter().map(|p| p.project_key.as_str()).collect();
+
+    // Single JQL call covering all projects at once, then sprint report
+    let multi_ready = jira_service
+        .get_ready_for_qa_issues_multi(&config.jira, &all_keys, eff_issue_type)
         .await
         .unwrap_or_default();
     let sprint_report = jira_service.get_sprint_report(&config.jira).await.unwrap_or(None);
 
+    // Build per-project data from the single-fetch result (no extra API calls)
     let mut projects = std::collections::BTreeMap::<String, DashboardProjectData>::new();
-    for pc in config.dashboard.projects.iter().filter(|p| p.enabled) {
-        let ready = jira_service
-            .get_ready_for_qa_issues(
-                &config.jira,
-                Some(pc.project_key.as_str()),
-                Some(pc.issue_type.as_str()),
-                &pc.exclude_labels,
-                &pc.include_labels,
-                &pc.exclude_statuses,
-                &pc.include_statuses,
-            )
-            .await
-            .unwrap_or_default();
-        let bugs = jira_service
-            .get_bug_metrics(
-                &config.jira,
-                Some(pc.project_key.as_str()),
-                Some(pc.issue_type.as_str()),
-                &pc.exclude_labels,
-                &pc.include_labels,
-                &pc.exclude_statuses,
-                &pc.include_statuses,
-            )
-            .await
-            .unwrap_or_default();
-        projects.insert(pc.project_key.clone(), DashboardProjectData { bug_metrics: bugs, ready_for_qa: ready });
+    for pc in &enabled_projects {
+        let ready = multi_ready.get(&pc.project_key).cloned().unwrap_or_default();
+        projects.insert(pc.project_key.clone(), DashboardProjectData {
+            bug_metrics: BugMetrics::default(),
+            ready_for_qa: ready,
+        });
     }
+
+    // Aggregate ready_for_qa across all projects (deduplicated by issue key)
+    let mut seen = std::collections::HashSet::new();
+    let ready_for_qa: Vec<_> = projects.values()
+        .flat_map(|pd| pd.ready_for_qa.iter().cloned())
+        .filter(|i| seen.insert(i.key.clone()))
+        .collect();
+
+    // bug_metrics for the first/main project only (still one call, not N)
+    let bug_metrics = if main_project_key.is_empty() {
+        BugMetrics::default()
+    } else {
+        jira_service.get_bug_metrics(
+            &config.jira,
+            Some(main_project_key),
+            Some(eff_issue_type),
+            first_project.map(|p| p.exclude_labels.as_slice()).unwrap_or(&[]),
+            first_project.map(|p| p.include_labels.as_slice()).unwrap_or(&[]),
+            first_project.map(|p| p.exclude_statuses.as_slice()).unwrap_or(&[]),
+            first_project.map(|p| p.include_statuses.as_slice()).unwrap_or(&[]),
+        ).await.unwrap_or_default()
+    };
 
     let insight = if skip_insight.unwrap_or(false) || config.ollama.endpoint.is_empty() {
         format!(

@@ -68,10 +68,6 @@ pub struct UqaConfig {
     /// Map of issueKey → last ISO date a reminder was fired.
     #[serde(default)]
     pub last_notified_date: std::collections::BTreeMap<String, String>,
-    /// Map of issueKey → per-issue reminder overrides.
-    #[serde(default)]
-    pub per_issue_reminders:
-        std::collections::BTreeMap<String, crate::models::uqa::PerIssueReminder>,
     /// "productTester" | "assignee" | "both"
     pub search_mode: String,
     #[serde(default)]
@@ -195,7 +191,6 @@ impl Default for AppConfig {
                 remind_days: vec![1, 2, 3, 4, 5],
                 product_tester_field_id: None,
                 last_notified_date: std::collections::BTreeMap::new(),
-                per_issue_reminders: std::collections::BTreeMap::new(),
                 search_mode: "both".to_string(),
                 project_keys: vec![],
             },

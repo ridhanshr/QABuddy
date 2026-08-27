@@ -40,16 +40,6 @@ pub struct UqaIssue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PerIssueReminder {
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remind_time: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remind_days: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UqaSyncProgress {
     /// "fetching" | "processing" | "saving" | "done" | "error"
     pub status: String,

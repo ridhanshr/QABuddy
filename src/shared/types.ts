@@ -192,21 +192,12 @@ export interface UqaTransition {
   toStatus: string;
 }
 
-export interface PerIssueReminder {
-  issueKey?: string;
-  remindTime?: string;
-  remindDays?: number[];
-  note?: string;
-  enabled?: boolean;
-}
-
 export interface UqaConfig {
   enabled: boolean;
   remindTime: string;
   remindDays: number[];
   productTesterFieldId?: string | null;
   lastNotifiedDate?: Record<string, string>;
-  perIssueReminders?: Record<string, PerIssueReminder>;
   searchMode: string;
   projectKeys: string[];
 }
@@ -271,6 +262,7 @@ export interface JiraIssueSummary {
   status: string;
   priority: string;
   assignee: string;
+  reporter: string;
   type: string;
   url: string;
 }
@@ -482,14 +474,6 @@ export interface SyncToConfluenceResult {
   attachmentCount: number;
 }
 
-export interface ConfluencePreviewResult {
-  currentTitle: string;
-  currentVersion: number;
-  generatedTables: string;
-  entryCount: number;
-  existingEntryCount: number;
-}
-
 export interface ParseConfluenceEntriesResult {
   pageId: string;
   pageTitle: string;
@@ -667,7 +651,7 @@ export interface DesktopApi {
   onUpdateStatusPushed: (callback: (info: UpdateInfo) => void) => () => void;
   testConnections: () => Promise<ConnectionStatus>;
   healthcheck: () => Promise<any>;
-  getDashboard: (options?: { skipInsight?: boolean }) => Promise<DashboardDigest>;
+  getDashboard: (options?: { skipInsight?: boolean; readyForQaIssueType?: string }) => Promise<DashboardDigest>;
   getProjectInsight: (request: ProjectInsightRequest) => Promise<string>;
   askAssistant: (prompt: string, history?: ChatHistoryMessage[]) => Promise<ChatResponse>;
   polishBugReport: (draft: BugFormDraft) => Promise<BugPreview>;
@@ -690,7 +674,6 @@ export interface DesktopApi {
   getXrayFolderIssues: (projectKey: string, folderId: number) => Promise<{ key: string; summary: string }[]>;
   addTestsToExecution: (execKey: string, testKeys: string[]) => Promise<void>;
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) => Promise<SyncToConfluenceResult>;
-  previewConfluenceSync: (pageId: string, payload: { entries: any[] }) => Promise<ConfluencePreviewResult>;
   openExternal: (url: string) => Promise<void>;
   getOllamaModels: (endpoint: string) => Promise<string[]>;
   ragIndexConfluence: (spaceKey: string) => Promise<{ indexed: number; skipped: number }>;
@@ -710,7 +693,6 @@ export interface DesktopApi {
   getJiraLabels: () => Promise<string[]>;
   getJiraCustomFields: () => Promise<{ id: string; name: string; type: string; isCustom: boolean }[]>;
   findIssuesByJql: (jql: string, maxResults: number) => Promise<JiraIssueSummary[]>;
-  getConfluencePage: (pageId: string) => Promise<{ title: string; content: string; version: number }>;
   reviewDocument: (pageId: string, jiraProjectKey: string) => Promise<DocumentReviewSummary>;
   onDocumentReviewProgress: (callback: (progress: DocumentReviewProgress) => void) => () => void;
   parseConfluenceEntries: (pageId: string, options?: ParseConfluenceEntriesOptions) => Promise<ParseConfluenceEntriesResult>;
@@ -733,9 +715,10 @@ export interface DesktopApi {
   // UQA
   getUqaIssues: () => Promise<UqaIssue[]>;
   getUqaTransitions: (issueKey: string) => Promise<UqaTransition[]>;
-  appendUqaEntry: (issueKey: string, date: string, activity: string) => Promise<void>;
+  appendUqaEntry: (issueKey: string, date: string, phase: string, activity: string) => Promise<void>;
   appendUqaEntryWithNotes: (issueKey: string, date: string, activity: string, notes: string) => Promise<void>;
   transitionUqaIssue: (issueKey: string, transitionId: string) => Promise<void>;
+  updateUqaProjectStatus: (uqaKey: string, status: string) => Promise<void>;
   onUqaReminder: (callback: (issueKey: string, summary: string) => void) => () => void;
   checkUqaOnStartup: () => Promise<UqaIssue[]>;
   cancelRequest: (requestId: string) => void;
@@ -746,8 +729,6 @@ export interface DesktopApi {
   getUqaSchedule: () => Promise<UqaConfig>;
   autoGenerateUqaNotes: (issueKey: string) => Promise<AutoUqaGeneratedPayload>;
   getUqaDbExecutionSummary: (uqaKey: string) => Promise<DbTeSummary[]>;
-  getPerUqaReminder: (issueKey: string) => Promise<PerIssueReminder | null>;
-  updatePerUqaReminder: (issueKey: string, reminder: PerIssueReminder) => Promise<void>;
   getUqaIssuesFromStore: () => Promise<UqaIssue[]>;
   syncUqaIssues: () => Promise<UqaIssue[]>;
   onUqaSyncProgress: (callback: (progress: UqaSyncProgress) => void) => () => void;
@@ -771,11 +752,13 @@ export interface DesktopApi {
   updateUserTokens: (pn: string, jiraApiToken: string, confluenceApiToken: string) => Promise<void>;
   getMyUqaProjects: (username: string, displayName: string) => Promise<MonitoringUqaProject[]>;
   getMyTestExecutions: (username: string, displayName: string) => Promise<MonitoringTestExecution[]>;
+  getTeByProjectPrefix: (projectPrefix: string) => Promise<MonitoringTestExecution[]>;
   getMyTestCasesByExecution: (teJiraKey: string, username: string) => Promise<MonitoringTestCase[]>;
   getTestCasesByTeKey: (teJiraKey: string) => Promise<MonitoringTestCase[]>;
   fetchTcDetailsBatch: (tcKeys: string[]) => Promise<FetchTestStepsResult[]>;
   updateTestRunStatus: (teKey: string, tcKey: string, status: string) => Promise<void>;
   updateTestCaseRunStatus: (tcKey: string, teJiraKey: string, testRunStatus: string, executedBy: string) => Promise<void>;
+  updateTestExecutionStatus: (teJiraKey: string, executionStatus: string) => Promise<void>;
   getTestCaseTitles: (tcKeys: string[]) => Promise<Record<string, string>>;
   // BRD / Test Management
   generateTestCasesFromBRD: (request: BRDGenerationRequest) => Promise<BRDGenerationResult>;
@@ -816,7 +799,7 @@ export interface DesktopApi {
   resyncUqaProject: (project: SaveUqaProjectInput) => Promise<void>;
   checkUqaProjectsInDb: (uqaKeys: string[]) => Promise<string[]>;
   saveTestCases: (cases: SaveTestCaseInput[]) => Promise<void>;
-  syncExecutionTestsToDb: (execKey: string) => Promise<number>;
+  syncExecutionTestsToDb: (execKey: string) => Promise<{ count: number; truncated: boolean }>;
   // Bitbucket Self-Hosted
   getBitbucketPrDetails: (prUrlOrId: string) => Promise<BitbucketDiffSummary>;
   fetchBitbucketDiff: (prUrlOrId: string) => Promise<string>;
@@ -895,13 +878,8 @@ export interface SaveTestPlanInput {
 export interface SaveTestCaseInput {
   tc_key: string;
   te_jira_key: string;
-  scenario?: string;
-  category?: string;
-  steps?: string;
-  expected_result?: string;
-  input_data?: string;
-  function_name?: string;
-  test_case_no?: string;
+  title?: string;
+  id_jira_repo?: string;
 }
 
 export interface JiraProject {
@@ -1340,6 +1318,7 @@ export interface MonitoringTestExecution {
   te_jira_key: string;
   title: string | null;
   tp_jira_key: string | null;
+  uqa_key: string | null;
   assignee: string | null;
   execution_status: string | null;
   last_sync: string | null;
@@ -1395,11 +1374,6 @@ export const uqaConfigSchema = z.object({
   remindDays: z.array(z.number()),
   productTesterFieldId: z.string().nullable(),
   lastNotifiedDate: z.record(z.string()),
-  perIssueReminders: z.record(z.object({
-    enabled: z.boolean(),
-    remindTime: z.string().optional(),
-    remindDays: z.array(z.number()).optional(),
-  })),
   searchMode: z.enum(["productTester", "assignee", "both"]),
   projectKeys: z.array(z.string()),
 });
@@ -1477,7 +1451,6 @@ export const defaultConfig: AppConfig = {
     remindDays: [1, 2, 3, 4, 5],
     productTesterFieldId: null,
     lastNotifiedDate: {},
-    perIssueReminders: {},
     searchMode: "both",
     projectKeys: [],
   },
