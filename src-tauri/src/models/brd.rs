@@ -109,3 +109,27 @@ pub struct SemanticSearchResult {
     pub score: f64,
     pub match_reason: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestCaseDuplicateCandidate {
+    pub title: String,
+    /// Empty = check against the whole project; otherwise only issues inside this Xray folder path.
+    #[serde(default)]
+    pub folder_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestCaseDuplicateMatch {
+    pub key: String,
+    pub summary: String,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestCaseDuplicateCheck {
+    pub title: String,
+    pub matches: Vec<TestCaseDuplicateMatch>,
+}

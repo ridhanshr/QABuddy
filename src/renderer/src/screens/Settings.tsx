@@ -532,7 +532,7 @@ export default function Settings() {
                 </div>
                 <div className="bug-form-row-2col" style={{ marginTop: 8 }}>
                   <label>
-                    <span>Defect Repo Embedding Model</span>
+                    <span>Embedding Model</span>
                     <select
                       onChange={(event) =>
                         setConfig({ ...config, ollama: { ...config.ollama, defectEmbeddingModel: event.target.value } })

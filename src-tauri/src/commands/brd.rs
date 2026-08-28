@@ -209,3 +209,17 @@ pub async fn semantic_search_test_cases(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn find_test_case_duplicate_candidates(
+    state: State<'_, AppState>,
+    project_key: String,
+    candidates: Vec<crate::models::brd::TestCaseDuplicateCandidate>,
+) -> Result<Vec<crate::models::brd::TestCaseDuplicateCheck>, String> {
+    let config = load_config(state.clone()).await?;
+    let service = state.brd_service.lock().await;
+    service
+        .find_test_case_duplicate_candidates(&config, &project_key, &candidates)
+        .await
+        .map_err(|e| e.to_string())
+}

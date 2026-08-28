@@ -1542,18 +1542,32 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       return;
     }
 
-    // Check duplicates before submit
+    // Check duplicates before submit — embedding-based when possible,
+    // falls back to keyword matching if the AI check is unavailable.
+    setManualLoading(true);
+    setProgressHidden(false);
     try {
-      const allIssues = await window.qaBuddy.findTestCasesByJql(
-        `project = "${manualProjectKey}" AND issuetype = Test`,
-        500
-      );
+      let duplicates: Record<string, { key: string; summary: string; score: number }[]> = {};
 
-      const duplicates: Record<string, { key: string; summary: string; score: number }[]> = {};
-      for (const c of manualCases) {
-        if (!c.title.trim()) continue;
-        const match = findBestMatch(c.title, allIssues);
-        duplicates[c.id] = match ? [{ key: match.key, summary: match.summary, score: 1 }] : [];
+      try {
+        const results = await window.qaBuddy.findTestCaseDuplicateCandidates(
+          manualProjectKey,
+          manualCases.map(c => ({ title: c.title, folderPath: c.xrayFolder }))
+        );
+        manualCases.forEach((c, idx) => {
+          const matches = results[idx]?.matches ?? [];
+          if (c.title.trim()) duplicates[c.id] = matches;
+        });
+      } catch {
+        const allIssues = await window.qaBuddy.findTestCasesByJql(
+          `project = "${manualProjectKey}" AND issuetype = Test`,
+          500
+        );
+        for (const c of manualCases) {
+          if (!c.title.trim()) continue;
+          const match = findBestMatch(c.title, allIssues);
+          duplicates[c.id] = match ? [{ key: match.key, summary: match.summary, score: 1 }] : [];
+        }
       }
 
       const newResults: typeof manualDuplicateResults = {};
@@ -1564,15 +1578,18 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
       const hasDuplicates = Object.values(duplicates).some(arr => arr.length > 0);
       if (hasDuplicates) {
+        setManualLoading(false);
         setManualPendingDuplicates(duplicates);
         setShowManualDuplicateModal(true);
         return;
       }
 
       await doSubmitManualCases();
-    } catch {
+    } catch (error) {
       // If duplicate check fails, allow direct submit
-      setBanner({ tone: "info", text: "Pemeriksaan duplikat gagal — melanjutkan submit." });
+      const reason = toErrorMessage(error, "error tidak diketahui");
+      setBanner({ tone: "info", text: `Pemeriksaan duplikat gagal — melanjutkan submit. Alasan: ${reason}` });
+      addLog("Submit to Jira", "info", "Pemeriksaan duplikat gagal", reason);
       await doSubmitManualCases();
     }
   };
@@ -1630,22 +1647,32 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     }
   };
 
-  const checkManualDuplicate = async (id: string, title: string) => {
+  const checkManualDuplicate = async (id: string, title: string, folderPath?: string) => {
     if (!title.trim() || !manualProjectKey) {
       setManualDuplicateResults(prev => ({ ...prev, [id]: { matches: [], checked: true } }));
       return;
     }
     try {
-      const escaped = title.replace(/["']/g, "").trim();
-      const issues = await window.qaBuddy.findTestCasesByJql(
-        `project = "${manualProjectKey}" AND issuetype = Test AND summary ~ "${escaped}"`,
-        5
-      );
-      const match = findBestMatch(title, issues);
+      let matches: { key: string; summary: string; score: number }[] = [];
+      try {
+        const results = await window.qaBuddy.findTestCaseDuplicateCandidates(
+          manualProjectKey,
+          [{ title, folderPath }]
+        );
+        matches = results[0]?.matches ?? [];
+      } catch {
+        const escaped = title.replace(/["']/g, "").trim();
+        const issues = await window.qaBuddy.findTestCasesByJql(
+          `project = "${manualProjectKey}" AND issuetype = Test AND summary ~ "${escaped}"`,
+          5
+        );
+        const match = findBestMatch(title, issues);
+        matches = match ? [{ key: match.key, summary: match.summary, score: 1 }] : [];
+      }
       setManualDuplicateResults(prev => ({
         ...prev,
         [id]: {
-          matches: match ? [{ key: match.key, summary: match.summary, score: 1 }] : [],
+          matches,
           checked: true,
         }
       }));

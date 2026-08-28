@@ -400,7 +400,7 @@ export default function ManualTestCaseScreen() {
                         placeholder="e.g. Validasi Login dengan data benar" 
                         value={item.title}
                         onChange={(e) => updateManualCase(item.id, "title", e.target.value)}
-                        onBlur={() => checkManualDuplicate(item.id, item.title)}
+                        onBlur={() => checkManualDuplicate(item.id, item.title, item.xrayFolder)}
                       />
                     </div>
                     <div className="field-group">

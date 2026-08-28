@@ -141,6 +141,8 @@ export default function DocumentationSync() {
   };
 
   const [draftSections, setDraftSections] = useState<Record<string, string>>({});
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [newSectionName, setNewSectionName] = useState("");
 
   // Track which entry card the mouse is currently hovering over so the global
   // paste listener knows which entry to attach the image to. A plain div cannot
@@ -191,6 +193,39 @@ export default function DocumentationSync() {
     }));
   }
 
+  const groupedEntries = useMemo(() => {
+    const groups: { section: string; entries: any[] }[] = [];
+    const sectionMap = new Map<string, any[]>();
+    for (const entry of confEntries) {
+      const section = entry.section || "";
+      if (!sectionMap.has(section)) sectionMap.set(section, []);
+      sectionMap.get(section)!.push(entry);
+    }
+    for (const [section, entries] of sectionMap) {
+      groups.push({ section, entries });
+    }
+    return groups;
+  }, [confEntries]);
+
+  const toggleSection = (section: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      return next;
+    });
+  };
+
+  const handleAddSection = () => {
+    const name = newSectionName.trim();
+    if (name) {
+      addConfEntry(name);
+    } else {
+      addConfEntry();
+    }
+    setNewSectionName("");
+  };
+
   const renderEntryCard = (item: any, globalIndex: number) => {
     const hasDeferredEntryImages = (item.screenCaptureFilenames?.length || 0) > 0 && (item.images?.length || 0) === 0;
     return (
@@ -217,6 +252,14 @@ export default function DocumentationSync() {
                 <span className="material-symbols" style={{ fontSize: 18 }}>delete</span>
               </button>
             )}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div className="field-group">
+            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Section / Module</label>
+            <input placeholder="e.g. Login Module, Transfer" list={`section-options-${item.id}`} value={draftSections[item.id] ?? item.section ?? ''} onChange={(e) => setDraftSections(prev => ({...prev, [item.id]: e.target.value}))} onBlur={(e) => { const v = e.target.value; updateConfEntry(item.id, "section", v); setDraftSections(prev => { const n = {...prev}; delete n[item.id]; return n; }); }} style={{ height: 40, boxSizing: 'border-box', fontSize: 13 }} />
+            <datalist id={`section-options-${item.id}`}>{confSections.map((s) => <option key={s} value={s} />)}</datalist>
           </div>
         </div>
 
@@ -465,12 +508,45 @@ export default function DocumentationSync() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-            {confEntries.map((item, index) => renderEntryCard(item, index))}
-            <button onClick={() => addConfEntry()} style={{ border: '1px dashed var(--outline-variant)', background: 'var(--surface-container-lowest)', height: 44, borderRadius: 8, fontSize: 13 }} className="secondary-button">
-              <span className="material-symbols" style={{ fontSize: 18 }}>add_circle</span>
-              Add Entry
-            </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+            {groupedEntries.map(({ section, entries }) => {
+              const isCollapsed = collapsedSections.has(section);
+              return (
+                <div key={section || '__uncategorized__'} className="card" style={{ border: '1px solid var(--outline-variant)', borderRadius: 16, background: 'var(--surface)', overflow: 'hidden' }}>
+                  <div onClick={() => toggleSection(section)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', cursor: 'pointer', background: 'var(--surface-container-low)', borderBottom: isCollapsed ? 'none' : '1px solid var(--outline-variant)', transition: 'background 0.2s' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span className="material-symbols" style={{ fontSize: 20, color: 'var(--primary)', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>expand_more</span>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--on-surface)' }}>{section || 'Uncategorized'}</span>
+                      <span style={{ fontSize: 12, color: 'var(--on-surface-variant)', background: 'var(--surface-container-highest)', padding: '2px 8px', borderRadius: 10 }}>{entries.length} {entries.length === 1 ? 'entry' : 'entries'}</span>
+                    </div>
+                  </div>
+                  {!isCollapsed && (
+                    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+                      {entries.map((item) => {
+                        const globalIndex = confEntries.findIndex((e) => e.id === item.id);
+                        return renderEntryCard(item, globalIndex);
+                      })}
+                      <button onClick={() => addConfEntry(section)} style={{ border: '1px dashed var(--outline-variant)', background: 'var(--surface-container-lowest)', height: 44, borderRadius: 8, fontSize: 13 }} className="secondary-button">
+                        <span className="material-symbols" style={{ fontSize: 18 }}>add_circle</span>
+                        Add Entry to {section || 'Uncategorized'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="card" style={{ padding: 20, border: '1px dashed var(--outline-variant)', background: 'var(--surface-container-low)', borderRadius: 12 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span className="material-symbols" style={{ fontSize: 20, color: 'var(--primary)' }}>create_new_folder</span>
+                <input placeholder="New section name (optional)" value={newSectionName} onChange={(e) => setNewSectionName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddSection(); }} style={{ flex: 1, height: 40, boxSizing: 'border-box', fontSize: 13 }} />
+                <button className="primary-button" onClick={handleAddSection} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, height: 40 }}>
+                  <span className="material-symbols" style={{ fontSize: 18 }}>add</span>
+                  Add Section
+                </button>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 8, marginBottom: 0 }}>Kosongkan nama section untuk menambah entry tanpa grouping.</p>
+            </div>
 
             <button className="primary-button" onClick={() => void syncConfluence()} disabled={confLoading} style={{ padding: '10px 20px', borderRadius: 8, fontSize: 14, alignSelf: 'flex-end', marginTop: 8 }}>
               <span className="material-symbols" style={{ fontSize: 20 }}>{confLoading ? 'progress_activity' : 'cloud_upload'}</span>

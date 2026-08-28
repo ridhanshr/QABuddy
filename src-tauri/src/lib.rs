@@ -117,6 +117,7 @@ pub fn run() {
             commands::brd::sync_brd_test_cases_to_jira,
             commands::brd::get_execution_monitoring_data,
             commands::brd::semantic_search_test_cases,
+            commands::brd::find_test_case_duplicate_candidates,
             commands::config::get_ollama_models,
             commands::config::test_connections,
             commands::config::healthcheck,

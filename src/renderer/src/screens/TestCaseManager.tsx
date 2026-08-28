@@ -650,8 +650,8 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
             <span className="material-symbols filled" style={{ fontSize: 22 }}>assignment</span>
           </div>
           <div>
-            <h2 className="text-display" style={{ margin: 0 }}>Test Cases Management</h2>
-            <p className="text-body-lg" style={{ marginTop: 2 }}>Cari test case dari Jira Xray atau generate dari BRD.</p>
+            <h2 className="text-display" style={{ margin: 0 }}>Test Case Search</h2>
+            <p className="text-body-lg" style={{ marginTop: 2 }}>Cari test scenario dari Jira Xray.</p>
           </div>
         </div>
       </div>

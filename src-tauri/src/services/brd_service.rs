@@ -14,6 +14,7 @@ use crate::models::app_config::AppConfig;
 use crate::services::confluence::ConfluenceService;
 use crate::services::error::{Result, ServiceError};
 use crate::services::ollama::OllamaClient;
+use crate::services::rag::RagService;
 
 /// Emitted after each per-feature AI chunk finishes — lets the frontend
 /// append test cases incrementally without waiting for all features.
@@ -1572,67 +1573,70 @@ Output HANYA raw JSON:
             project_key
         );
         let issues = jira
-            .find_issues_by_jql(&config.jira, &jql, 50)
+            .find_issues_by_jql(&config.jira, &jql, 200)
             .await
             .map_err(|e| ServiceError::Api(format!("JQL search failed: {e}")))?;
 
-        let model = &config.ollama.model;
+        let embed_model = config
+            .ollama
+            .defect_embedding_model
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(config.ollama.model.as_str());
         let endpoint = &config.ollama.endpoint;
-        eprintln!("[BRD SemanticSearch] Using endpoint={endpoint}, model={model}, query=\"{query}\"");
-        let ollama_client = OllamaClient::new(endpoint, model);
-        let issues_context: String = issues
-            .iter()
-            .map(|i| format!("{}: {} [{}]", i.key, i.summary, i.status))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let prompt = format!(
-            "You are a semantic search matcher. Given a user query and a list of Jira issues, \
-             identify which issues are semantically related to the query. \
-             Respond with JSON array only: [{{ \"issueKey\": \"...\", \"summary\": \"...\", \
-             \"score\": 0.0-1.0, \"matchReason\": \"...\" }}]\n\n\
-             User query: \"{}\"\n\nProject: {}\n\nAvailable issues:\n{}\n\n\
-             Return matching issues with relevance scores.",
-            query, project_key, issues_context
-        );
+        eprintln!("[BRD SemanticSearch] endpoint={endpoint}, embed_model={embed_model}, query=\"{query}\"");
 
-        let response = ollama_client
-            .generate_text(&prompt, true, None, None)
-            .await;
+        let ollama_client = OllamaClient::new(endpoint, embed_model);
 
-        eprintln!("[BRD SemanticSearch] generate_text returned: {:?}", response.as_deref().unwrap_or("None"));
-
-        match response {
-            Some(resp) => {
-                let cleaned = resp
-                    .trim()
-                    .strip_prefix("```json")
-                    .or_else(|| resp.trim().strip_prefix("```"))
-                    .map(|s| s.strip_suffix("```").unwrap_or(s))
-                    .unwrap_or(resp.trim());
-
-                let parsed = serde_json::from_str::<Vec<crate::models::brd::SemanticSearchResult>>(cleaned)
-                    .or_else(|_| {
-                        // Ollama sometimes wraps the array in {"issues": [...]}
-                        #[derive(serde::Deserialize)]
-                        struct Wrapper {
-                            issues: Vec<crate::models::brd::SemanticSearchResult>,
-                        }
-                        serde_json::from_str::<Wrapper>(cleaned).map(|w| w.issues)
-                    });
-                match parsed {
-                    Ok(results) => {
-                        let mut filtered: Vec<_> = results.into_iter().filter(|r| r.score >= 0.5).collect();
-                        filtered.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-                        Ok(filtered)
-                    },
-                    Err(e) => {
-                        eprintln!("[BRD SemanticSearch] JSON parse failed: {e}, cleaned: {cleaned}");
-                        Ok(self.fallback_search(query, &issues))
-                    }
-                }
+        let query_emb = match ollama_client.embed(query, Some(embed_model)).await {
+            Ok(emb) if !emb.is_empty() => emb,
+            _ => {
+                eprintln!("[BRD SemanticSearch] query embedding failed, using keyword fallback");
+                return Ok(self.fallback_search(query, &issues));
             }
-            None => Ok(self.fallback_search(query, &issues)),
+        };
+
+        let mut scored: Vec<(f64, crate::models::brd::SemanticSearchResult)> = Vec::new();
+        for issue in issues.iter() {
+            let summary = issue.summary.trim();
+            if summary.is_empty() {
+                continue;
+            }
+            match ollama_client.embed(summary, Some(embed_model)).await {
+                Ok(emb) if !emb.is_empty() => {
+                    let score = RagService::cosine_similarity(&query_emb, &emb);
+                    scored.push((
+                        score,
+                        crate::models::brd::SemanticSearchResult {
+                            issue_key: issue.key.clone(),
+                            summary: issue.summary.clone(),
+                            score,
+                            match_reason: format!("Cosine similarity: {:.0}%", score * 100.0),
+                        },
+                    ));
+                }
+                Ok(_) => eprintln!("[BRD SemanticSearch] empty embedding for {}", issue.key),
+                Err(e) => eprintln!("[BRD SemanticSearch] embed failed for {}: {e}", issue.key),
+            }
         }
+
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        const SIM_THRESHOLD: f64 = 0.55;
+        const MAX_RESULTS: usize = 20;
+        let filtered: Vec<crate::models::brd::SemanticSearchResult> = scored
+            .into_iter()
+            .filter(|(score, _)| *score >= SIM_THRESHOLD)
+            .take(MAX_RESULTS)
+            .map(|(_, r)| r)
+            .collect();
+
+        if filtered.is_empty() {
+            eprintln!("[BRD SemanticSearch] no embedding matches, using keyword fallback");
+            return Ok(self.fallback_search(query, &issues));
+        }
+
+        Ok(filtered)
     }
 
     fn fallback_search(
@@ -1668,6 +1672,179 @@ Output HANYA raw JSON:
                 }
             })
             .collect()
+    }
+
+    /// Find existing test cases whose summaries are semantically similar to the
+    /// given candidate titles, using the configured Ollama embedding model (see
+    /// `config.ollama.defect_embedding_model`).
+    ///
+    /// Scoping: when `candidate.folder_path` is non-empty the check is limited
+    /// to issues inside that Xray folder; otherwise the whole project is used.
+    pub async fn find_test_case_duplicate_candidates(
+        &self,
+        config: &AppConfig,
+        project_key: &str,
+        candidates: &[crate::models::brd::TestCaseDuplicateCandidate],
+    ) -> Result<Vec<crate::models::brd::TestCaseDuplicateCheck>> {
+        if candidates.is_empty() || project_key.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let jira = crate::services::jira::JiraService::new();
+
+        let embed_model = config
+            .ollama
+            .defect_embedding_model
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(config.ollama.model.as_str());
+        let endpoint = &config.ollama.endpoint;
+
+        let ollama_client = OllamaClient::new(endpoint, embed_model);
+
+        // For each distinct xray folder, fetch + embed its issues once.
+        let mut scope_cache: std::collections::HashMap<
+            String,
+            Vec<(String, String, Vec<f64>)>,
+        > = Default::default();
+        let distinct_folders: Vec<String> = candidates
+            .iter()
+            .map(|c| c.folder_path.trim().to_string())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        for folder_path in &distinct_folders {
+            let existing = if folder_path.is_empty() {
+                // Whole-project scope.
+                let jql = format!(
+                    "project = {} AND issuetype in (\"Test Case\", \"Test\", \"Task\") ORDER BY updated DESC",
+                    project_key
+                );
+                let issues = jira
+                    .find_issues_by_jql(&config.jira, &jql, 500)
+                    .await
+                    .map_err(|e| ServiceError::Api(format!("JQL search failed: {e}")))?;
+                issues
+                    .iter()
+                    .map(|i| (i.key.clone(), i.summary.clone()))
+                    .collect::<Vec<_>>()
+            } else {
+                // Folder scope: resolve folder id then fetch issues inside it.
+                let folders = jira
+                    .get_xray_folders(&config.jira, project_key)
+                    .await
+                    .unwrap_or_default();
+                let parts = crate::services::jira::client::JiraClient::split_folder_path(folder_path);
+                let folder_id = crate::services::jira::client::JiraClient::find_folder_id(&folders, &parts);
+                match folder_id {
+                    Some(id) => {
+                        let raw = jira
+                            .get_xray_folder_issues(&config.jira, project_key, id)
+                            .await
+                            .unwrap_or_default();
+                        raw.iter()
+                            .filter_map(|v| {
+                                let key = v["key"].as_str()?.to_string();
+                                let summary = v["summary"].as_str().unwrap_or("").to_string();
+                                Some((key, summary))
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                    None => {
+                        eprintln!("[BRD DuplicateCheck] folder not found: {folder_path}");
+                        Vec::new()
+                    }
+                }
+            };
+
+            eprintln!(
+                "[BRD DuplicateCheck] folder=\"{folder_path}\" scope={} (model={embed_model})",
+                existing.len()
+            );
+
+            // Embed existing summaries in this scope once.
+            let mut existing_emb: Vec<(String, String, Vec<f64>)> = Vec::new();
+            for (key, summary) in existing.iter() {
+                let text = summary.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                match ollama_client.embed(text, Some(embed_model)).await {
+                    Ok(emb) if !emb.is_empty() => {
+                        existing_emb.push((key.clone(), text.to_string(), emb));
+                    }
+                    Ok(_) => eprintln!("[BRD DuplicateCheck] empty embedding for {}", key),
+                    Err(e) => eprintln!("[BRD DuplicateCheck] embed failed for {}: {e}", key),
+                }
+            }
+
+            if !existing.is_empty() && existing_emb.is_empty() {
+                // Issues exist but all embeddings failed → embedding unavailable.
+                eprintln!("[BRD DuplicateCheck] no embedding available for folder=\"{folder_path}\"");
+                return Err(ServiceError::Api(
+                    "Ollama embedding model tidak tersedia — embedding gagal untuk semua summary. Cek Ollama dan setting embedding model.".into(),
+                ));
+            }
+            scope_cache.insert(folder_path.clone(), existing_emb);
+        }
+
+        // Emit results in caller order, scoring each candidate against its folder scope.
+        let mut results: Vec<crate::models::brd::TestCaseDuplicateCheck> = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            let title = candidate.title.trim().to_string();
+            if title.is_empty() {
+                results.push(crate::models::brd::TestCaseDuplicateCheck {
+                    title: String::new(),
+                    matches: Vec::new(),
+                });
+                continue;
+            }
+            let existing_emb = scope_cache
+                .get(candidate.folder_path.trim())
+                .cloned()
+                .unwrap_or_default();
+
+            let query_emb = match ollama_client.embed(&title, Some(embed_model)).await {
+                Ok(emb) if !emb.is_empty() => emb,
+                _ => {
+                    results.push(crate::models::brd::TestCaseDuplicateCheck {
+                        title: title.clone(),
+                        matches: Vec::new(),
+                    });
+                    continue;
+                }
+            };
+
+            let mut scored: Vec<(f64, String, String)> = existing_emb
+                .iter()
+                .map(|(key, summary, emb)| {
+                    let score = RagService::cosine_similarity(&query_emb, emb);
+                    (score, key.clone(), summary.clone())
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            const DUP_THRESHOLD: f64 = 0.5;
+            const MAX_MATCHES: usize = 3;
+            let matches = scored
+                .into_iter()
+                .filter(|(score, _, _)| *score >= DUP_THRESHOLD)
+                .take(MAX_MATCHES)
+                .map(|(score, key, summary)| crate::models::brd::TestCaseDuplicateMatch {
+                    key,
+                    summary,
+                    score,
+                })
+                .collect();
+
+            results.push(crate::models::brd::TestCaseDuplicateCheck {
+                title,
+                matches,
+            });
+        }
+
+        Ok(results)
     }
 }
 

@@ -782,6 +782,11 @@ export interface DesktopApi {
   getExecutionMonitoringData: (testExecutionId?: string) => Promise<ExecutionMonitoringData[]>;
   // Semantic Search
   semanticSearchTestCases: (query: string, projectKey: string) => Promise<SemanticSearchResult[]>;
+  // Duplicate scenario check — embedding-based
+  findTestCaseDuplicateCandidates: (
+    projectKey: string,
+    candidates: { title: string; folderPath?: string }[]
+  ) => Promise<{ title: string; matches: { key: string; summary: string; score: number }[] }[]>;
   // OCR
   ocrExtractFromFile: (filePath: string) => Promise<OcrResult | null>;
 

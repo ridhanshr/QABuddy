@@ -107,7 +107,13 @@ function on<T>(event: string, callback: (payload: T) => void): () => void {
 
 /** Invoke a command, converting snake_case command names automatically. */
 function cmd<T>(name: string, args?: Record<string, unknown>): Promise<T> {
-  return invoke<T>(name, args);
+  return invoke<T>(name, args).catch((err: unknown) => {
+    if (err instanceof Error) throw err;
+    if (typeof err === "string" && err) throw new Error(err);
+    const msg = (err as { message?: unknown } | null)?.message;
+    if (typeof msg === "string" && msg) throw new Error(msg);
+    throw new Error(typeof err === "string" ? err : String(err ?? "Unknown error"));
+  });
 }
 
 // ── The DesktopApi implementation ───────────────────────────────────────
@@ -165,6 +171,11 @@ const api = {
     cmd<JiraIssueSummary[]>("find_test_cases_by_jql", { jql, maxResults }),
   semanticSearchTestCases: (query: string, projectKey: string) =>
     cmd<SemanticSearchResult[]>("semantic_search_test_cases", { query, projectKey }),
+  findTestCaseDuplicateCandidates: (projectKey: string, candidates: { title: string; folderPath?: string }[]) =>
+    cmd<{ title: string; matches: { key: string; summary: string; score: number }[] }[]>(
+      "find_test_case_duplicate_candidates",
+      { projectKey, candidates }
+    ),
 
   // Confluence sync
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) =>

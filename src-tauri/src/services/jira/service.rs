@@ -771,8 +771,33 @@ impl JiraService {
             if let Some(name) = assignee.filter(|s| !s.is_empty()) {
                 fields["assignee"] = json!({ "name": name });
             }
-            let body = json!({ "fields": fields });
-            let resp: Value = client.api.post_json("/issue", &body).await?;
+            let body = json!({ "fields": fields.clone() });
+            let resp: Value = match client.api.post_json("/issue", &body).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    if fields.get("assignee").is_some() {
+                        let mut stripped = fields.clone();
+                        if let Some(obj) = stripped.as_object_mut() {
+                            obj.remove("assignee");
+                        }
+                        match client
+                            .api
+                            .post_json("/issue", &json!({ "fields": stripped }))
+                            .await
+                        {
+                            Ok(resp2) => {
+                                log::warn!(
+                                    "created issue without assignee after assignee error: {e}"
+                                );
+                                resp2
+                            }
+                            Err(_) => return Err(e),
+                        }
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
             let key = resp["key"].as_str().unwrap_or("").to_string();
             created.push(CreatedIssue {
                 key: key.clone(),
