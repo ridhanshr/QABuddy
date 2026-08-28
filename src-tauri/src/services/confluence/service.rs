@@ -816,6 +816,7 @@ impl ConfluenceService {
                 order: usize,
                 filename: String,
                 download_path: String,
+                expand_group: String,
             }
 
             let mut download_tasks: Vec<DownloadTaskItem> = Vec::new();
@@ -827,6 +828,11 @@ impl ConfluenceService {
                             order,
                             filename: filename.clone(),
                             download_path: download_path.clone(),
+                            expand_group: entry
+                                .screen_capture_expand_groups
+                                .get(order)
+                                .cloned()
+                                .unwrap_or_default(),
                         });
                     }
                 }
@@ -853,7 +859,13 @@ impl ConfluenceService {
                     join_set.spawn(async move {
                         let _permit = sem.acquire().await;
                         let res = client.download_attachment(&item.download_path).await;
-                        (item.entry_idx, item.order, item.filename, res)
+                        (
+                            item.entry_idx,
+                            item.order,
+                            item.filename,
+                            item.expand_group,
+                            res,
+                        )
                     });
                 }
 
@@ -873,7 +885,7 @@ impl ConfluenceService {
                         total_downloads,
                         None,
                     );
-                    if let Ok((entry_idx, order, filename, Ok(bytes))) = res {
+                    if let Ok((entry_idx, order, filename, expand_group, Ok(bytes))) = res {
                         let ext = filename.rsplit('.').next().unwrap_or("png").to_lowercase();
                         let mime = match ext.as_str() {
                             "jpg" | "jpeg" => "image/jpeg",
@@ -888,7 +900,7 @@ impl ConfluenceService {
                             data: format!("data:{mime};base64,{b64}"),
                             order: order + 1,
                             note: String::new(),
-                            expand_group: String::new(),
+                            expand_group,
                         };
                         downloaded_map
                             .entry(entry_idx)
@@ -1578,24 +1590,77 @@ fn extract_scenario_text(raw: &str) -> String {
     }
 }
 
-/// Extract attachment filenames from a Confluence cell.
-/// Handles both direct <ri:attachment ri:filename="..."/> and
-/// filenames wrapped inside Expand macros or other nested structures.
-/// Also handles single-quoted attribute values.
-fn extract_attachment_filenames(raw: &str) -> Vec<String> {
-    // Match ri:filename with double or single quotes
-    let re = regex::Regex::new(
+/// True for generic Expand titles that must not become an image's expand
+/// group (mirror of Electron `isScreenCaptureExpandTitle`).
+fn is_default_expand_title(title: &str) -> bool {
+    let t = title.trim().to_lowercase();
+    t == "screen capture" || t == "click here to expand..."
+}
+
+/// Mirror of Electron `latestAttachmentGroupBefore`: scan every Expand title
+/// marker before an attachment (both view-format `expand-control-text` spans
+/// and storage-format `title` parameters) and return the last non-default
+/// title — the innermost enclosing Expand for nested expand-in-expand layouts.
+fn latest_expand_group_before(html: &str, from: usize, index: usize) -> String {
+    let end = index.min(html.len());
+    let start = from.min(end);
+    let before = &html[start..end];
+    let title_re = regex::Regex::new(
+        r#"(?is)<span\b[^>]*class\s*=\s*["'][^"']*\bexpand-control-text\b[^"']*["'][^>]*>([\s\S]*?)</span>|<ac:parameter\b[^>]*\bac:name\s*=\s*["']title["'][^>]*>([\s\S]*?)</ac:parameter>"#,
+    )
+    .unwrap();
+    let mut group = String::new();
+    for cap in title_re.captures_iter(before) {
+        let raw = cap
+            .get(1)
+            .or_else(|| cap.get(2))
+            .map(|m| m.as_str())
+            .unwrap_or("");
+        let title = strip_inner_tags(raw).trim().to_string();
+        if !title.is_empty() && !is_default_expand_title(&title) {
+            group = title;
+        }
+    }
+    group
+}
+
+/// Extract (filename, expand_group) pairs for every attachment in the Screen
+/// Capture region. The group is the title of the innermost enclosing Expand
+/// macro; empty for the default "Click here to expand..." expand.
+fn extract_screen_capture_files_with_groups(body: &str) -> Vec<(String, String)> {
+    // Find where the Screen Capture label appears (case-insensitive plain text)
+    let lower = body.to_lowercase();
+    let marker_pos = lower
+        .find("screen capture")
+        .or_else(|| lower.find("screenshot"))
+        .or_else(|| lower.find("screen shot"));
+
+    let Some(marker) = marker_pos else {
+        return Vec::new();
+    };
+
+    // Search for ri:attachment anywhere after the marker in the full body —
+    // this handles Expand macros that contain </tr> inside them.
+    let region = &body[marker..];
+    let att_re = regex::Regex::new(
         r#"(?i)<ri:attachment\b[^>]*\bri:filename\s*=\s*(?:"([^"]+)"|'([^']+)')"#,
     )
     .unwrap();
-    re.captures_iter(raw)
-        .map(|c| {
-            c.get(1)
+
+    att_re
+        .captures_iter(region)
+        .filter_map(|c| {
+            let filename = c
+                .get(1)
                 .or_else(|| c.get(2))
                 .map(|m| m.as_str().to_string())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            if filename.is_empty() {
+                return None;
+            }
+            let abs = marker + c.get(0).unwrap().start();
+            Some((filename, latest_expand_group_before(body, marker, abs)))
         })
-        .filter(|s| !s.is_empty())
         .collect()
 }
 
@@ -1645,25 +1710,6 @@ fn split_row_cells(row_html: &str) -> Vec<String> {
     cells
 }
 
-/// Find the position of "Screen Capture" label row in the table body,
-/// then extract ALL ri:attachment filenames from the rest of the table body
-/// after that label — this handles Expand macros that contain </tr> inside them.
-fn extract_screen_capture_filenames_from_body(body: &str) -> Vec<String> {
-    // Find where the Screen Capture label appears (case-insensitive plain text)
-    let lower = body.to_lowercase();
-    let marker_pos = lower
-        .find("screen capture")
-        .or_else(|| lower.find("screenshot"))
-        .or_else(|| lower.find("screen shot"));
-
-    if let Some(pos) = marker_pos {
-        // Search for ri:attachment anywhere after the marker in the full body
-        extract_attachment_filenames(&body[pos..])
-    } else {
-        Vec::new()
-    }
-}
-
 /// Parse a vertical-format table (one test case per table block).
 /// Rows: | Field Label | Value |
 fn parse_vertical_table(body: &str, counter: &mut usize) -> Option<ConfluenceTestImportEntry> {
@@ -1710,9 +1756,9 @@ fn parse_vertical_table(body: &str, counter: &mut usize) -> Option<ConfluenceTes
         }
     }
 
-    // Extract screen capture filenames from the full table body (bypasses lazy </tr> truncation)
-    // This correctly handles Expand macros that embed </tr> inside their body.
-    let screen_capture_filenames = extract_screen_capture_filenames_from_body(body);
+    // Extract screen capture filenames + expand groups from the full table body
+    // (bypasses lazy </tr> truncation). Correctly handles nested Expand macros.
+    let screen_capture_files = extract_screen_capture_files_with_groups(body);
 
     if !found_any {
         return None;
@@ -1731,7 +1777,14 @@ fn parse_vertical_table(body: &str, counter: &mut usize) -> Option<ConfluenceTes
         expected_result,
         selected: true,
         source_table_index: None,
-        screen_capture_filenames,
+        screen_capture_filenames: screen_capture_files
+            .iter()
+            .map(|(f, _)| f.clone())
+            .collect(),
+        screen_capture_expand_groups: screen_capture_files
+            .iter()
+            .map(|(_, g)| g.clone())
+            .collect(),
         images: Vec::new(), // populated later by parse_confluence_entries
     })
 }
@@ -1853,6 +1906,7 @@ fn build_entry(
         selected: true,
         source_table_index: None,
         screen_capture_filenames: Vec::new(),
+        screen_capture_expand_groups: Vec::new(),
         images: Vec::new(),
     }
 }
@@ -1949,6 +2003,7 @@ mod tests {
             selected: true,
             source_table_index: None,
             screen_capture_filenames: Vec::new(),
+            screen_capture_expand_groups: Vec::new(),
             images: Vec::new(),
         }];
         let table = ConfluenceService::generate_single_table(&entries);
@@ -1979,5 +2034,59 @@ mod tests {
         let html = "<ol><li>Klik menu</li><li>Pilih opsi</li></ol>";
         let lines = extract_text_lines(html);
         assert_eq!(lines, "Klik menu\nPilih opsi");
+    }
+
+    #[test]
+    fn extract_screen_capture_groups_nested_expand_view_html() {
+        let html = r#"<table><tbody>
+            <tr><td class="confluenceTd"><p><strong>Screen Capture</strong></p></td>
+            <td class="confluenceTd"><div class="expand-container"><div class="expand-control"><span class="expand-control-text conf-macro-render">Click here to expand...</span></div>
+            <div class="expand-content">
+              <div class="expand-container"><div class="expand-control"><span class="expand-control-text conf-macro-render">Refund</span></div>
+              <div class="expand-content"><ol>
+                <li><ri:attachment ri:filename="TC004-1.png"/></li>
+                <li><ri:attachment ri:filename="TC004-2.png"/></li>
+              </ol></div></div>
+              <div class="expand-container"><div class="expand-control"><span class="expand-control-text conf-macro-render">Reversal</span></div>
+              <div class="expand-content"><ol>
+                <li><ri:attachment ri:filename="TC004-3.png"/></li>
+              </ol></div></div>
+            </div></div></td></tr>
+        </tbody></table>"#;
+        let files = extract_screen_capture_files_with_groups(html);
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0], ("TC004-1.png".to_string(), "Refund".to_string()));
+        assert_eq!(files[1], ("TC004-2.png".to_string(), "Refund".to_string()));
+        assert_eq!(files[2], ("TC004-3.png".to_string(), "Reversal".to_string()));
+    }
+
+    #[test]
+    fn extract_screen_capture_groups_nested_expand_storage() {
+        let html = r#"<table><tbody><tr><td><strong>Screen Capture</strong></td><td>
+          <ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">Click here to expand...</ac:parameter><ac:rich-text-body>
+            <ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">Refund</ac:parameter><ac:rich-text-body>
+              <p><ac:image><ri:attachment ri:filename="R1.png"/></ac:image></p>
+            </ac:rich-text-body></ac:structured-macro>
+            <ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">Reversal</ac:parameter><ac:rich-text-body>
+              <p><ac:image><ri:attachment ri:filename="V1.png"/></ac:image></p>
+            </ac:rich-text-body></ac:structured-macro>
+          </ac:rich-text-body></ac:structured-macro>
+        </td></tr></tbody></table>"#;
+        let files = extract_screen_capture_files_with_groups(html);
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0], ("R1.png".to_string(), "Refund".to_string()));
+        assert_eq!(files[1], ("V1.png".to_string(), "Reversal".to_string()));
+    }
+
+    #[test]
+    fn extract_screen_capture_group_single_default_expand_is_empty() {
+        let html = r#"<table><tbody>
+            <tr><td class="confluenceTd"><p><strong>Screen Capture</strong></p></td>
+            <td class="confluenceTd"><div class="expand-container"><div class="expand-control"><span class="expand-control-text conf-macro-render">Click here to expand...</span></div>
+            <div class="expand-content"><ol><li><ri:attachment ri:filename="TC001-1.png"/></li></ol></div></div></td></tr>
+        </tbody></table>"#;
+        let files = extract_screen_capture_files_with_groups(html);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0], ("TC001-1.png".to_string(), String::new()));
     }
 }
