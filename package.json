@@ -1,6 +1,6 @@
 {
   "name": "qa-buddy-desktop",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Desktop Jira and Confluence assistant for QA teams with local Ollama integration.",
   "main": "src-tauri/src/main.rs",
