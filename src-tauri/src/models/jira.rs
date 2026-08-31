@@ -163,6 +163,9 @@ pub struct ConfluenceTestImportEntry {
     pub source_table_index: Option<usize>,
     /// Attachment filenames extracted from the Screen Capture column (for image download)
     pub screen_capture_filenames: Vec<String>,
+    /// Expand group titles aligned by index with `screen_capture_filenames`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screen_capture_expand_groups: Vec<String>,
     /// Base64-encoded images downloaded from Confluence attachments
     pub images: Vec<ConfluenceEntryImage>,
 }
