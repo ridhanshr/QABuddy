@@ -34,6 +34,8 @@ export default function DocumentationSync() {
     loadConfPageAttachments,
     confPageLoading,
     confAttachmentHydrating,
+    confSyncProgress,
+    confSyncSteps,
     fetchConfSteps,
     confFetchingSteps,
     saveSettings,
@@ -152,6 +154,19 @@ export default function DocumentationSync() {
   const hoveredEntryId = useRef<string | null>(null);
   const handleImagePasteRef = useRef(handleImagePaste);
   useEffect(() => { handleImagePasteRef.current = handleImagePaste; }, [handleImagePaste]);
+
+  const syncStageMeta: Record<string, { icon: string; color: string }> = {
+    fetch_page: { icon: "cloud_download", color: "var(--on-surface-variant)" },
+    collect: { icon: "inventory_2", color: "var(--info)" },
+    upload_images: { icon: "upload_file", color: "var(--primary)" },
+    update_page: { icon: "save", color: "var(--tertiary)" },
+    done: { icon: "check_circle", color: "var(--success)" },
+    error: { icon: "error", color: "var(--error)" },
+  };
+  const syncStage = confSyncProgress?.stage ?? "";
+  const syncPercent = confSyncProgress && confSyncProgress.total > 0
+    ? Math.round((confSyncProgress.current / confSyncProgress.total) * 100)
+    : 0;
 
   useEffect(() => {
     const handler = (e: ClipboardEvent) => {
@@ -347,8 +362,20 @@ export default function DocumentationSync() {
             {normalizeConfAttachments(item.images).map((img: ConfAttachment) => {
               const isImage = img.data.startsWith("data:image/");
               return (
-                <div key={img.id} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const draggedId = draggedAttachment?.attachmentId || e.dataTransfer.getData("text/plain"); if (draggedId) moveConfAttachment(item.id, draggedId, img.id); setDraggedAttachment(null); }} onDragEnd={() => setDraggedAttachment(null)} style={{ position: 'relative', width: isImage ? 188 : 228, minHeight: isImage ? 232 : 168, borderRadius: 8, border: draggedAttachment?.attachmentId === img.id ? '1px solid var(--primary)' : '1px solid var(--outline-variant)', display: 'flex', alignItems: 'stretch', padding: 0, overflow: 'hidden', background: 'var(--surface-container)', boxShadow: 'var(--shadow-sm)', flexDirection: 'column' }}>
-                  <div draggable onDragStart={(e) => { e.dataTransfer.setData("text/plain", img.id); setDraggedAttachment({ entryId: item.id, attachmentId: img.id }); }} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', background: 'var(--surface-container-high)', cursor: 'grab', borderBottom: '1px solid var(--outline-variant)' }}>
+                <div
+                  key={img.id}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/plain", img.id);
+                    e.dataTransfer.effectAllowed = "move";
+                    setDraggedAttachment({ entryId: item.id, attachmentId: img.id });
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = "move"; }}
+                  onDrop={(e) => { e.preventDefault(); const draggedId = draggedAttachment?.attachmentId || e.dataTransfer.getData("text/plain"); if (draggedId) moveConfAttachment(item.id, draggedId, img.id); setDraggedAttachment(null); }}
+                  onDragEnd={() => setDraggedAttachment(null)}
+                  style={{ position: 'relative', width: isImage ? 188 : 228, minHeight: isImage ? 232 : 168, borderRadius: 8, border: draggedAttachment?.attachmentId === img.id ? '1px solid var(--primary)' : '1px solid var(--outline-variant)', display: 'flex', alignItems: 'stretch', padding: 0, overflow: 'hidden', background: 'var(--surface-container)', boxShadow: 'var(--shadow-sm)', flexDirection: 'column', cursor: 'grab' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', background: 'var(--surface-container-high)', cursor: 'grab', borderBottom: '1px solid var(--outline-variant)' }}>
                     <span className="material-symbols" style={{ fontSize: 14, color: 'var(--on-surface-variant)', cursor: 'grab' }}>drag_indicator</span>
                     <span style={{ fontSize: 11, fontWeight: 700, background: 'var(--primary)', color: 'white', borderRadius: 4, padding: '1px 6px' }}>#{img.order}</span>
                     <div style={{ flex: 1 }} />
@@ -364,14 +391,15 @@ export default function DocumentationSync() {
                       type="text"
                       value={img.expandGroup || ""}
                       onChange={(e) => updateConfAttachmentExpandGroup(item.id, img.id, e.target.value)}
+                      onMouseDown={(e) => e.stopPropagation()}
                       placeholder="Nama expand (kosong = 1 expand)"
                       style={{ width: '100%', boxSizing: 'border-box', fontSize: 11, borderRadius: 6, border: '1px solid var(--outline-variant)', background: 'var(--surface-container-high)', color: 'var(--on-surface)', padding: '4px 8px', height: 28 }}
                     />
-                    <textarea value={img.note || ""} onChange={(e) => updateConfAttachmentNote(item.id, img.id, e.target.value)} placeholder="Label / catatan di atas gambar" rows={2} style={{ width: '100%', resize: 'vertical', minHeight: 44, boxSizing: 'border-box', fontSize: 12, borderRadius: 6, border: '1px solid var(--outline-variant)', background: 'var(--surface)', color: 'var(--on-surface)', padding: '6px 8px' }} />
+                    <textarea value={img.note || ""} onChange={(e) => updateConfAttachmentNote(item.id, img.id, e.target.value)} onMouseDown={(e) => e.stopPropagation()} placeholder="Label / catatan di atas gambar" rows={2} style={{ width: '100%', resize: 'vertical', minHeight: 44, boxSizing: 'border-box', fontSize: 12, borderRadius: 6, border: '1px solid var(--outline-variant)', background: 'var(--surface)', color: 'var(--on-surface)', padding: '6px 8px' }} />
                   </div>
                   {isImage ? (
                     <>
-                      <img src={img.data} style={{ width: '100%', height: 118, objectFit: 'cover', flexShrink: 0 }} />
+                      <img src={img.data} draggable={false} style={{ width: '100%', height: 118, objectFit: 'cover', flexShrink: 0 }} />
                       <div style={{ width: '100%', padding: '6px 8px', background: 'rgba(0,0,0,0.72)', color: 'white', fontSize: 11, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{img.name}</div>
                     </>
                   ) : (
@@ -556,6 +584,46 @@ export default function DocumentationSync() {
           </div>
         </>
     </section>
+
+      {/* ── Live sync progress sidebar ──────────────────────────────── */}
+      {confSyncProgress && (
+        <div style={{ position: "fixed", right: 24, top: 90, width: 340, maxHeight: "calc(100vh - 120px)", display: "flex", flexDirection: "column", zIndex: 900, background: "var(--surface-container-lowest)", border: `1px solid ${confSyncProgress.stage === "error" ? "var(--error)" : "var(--outline-variant)"}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.22)", overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px 10px" }}>
+            <span className="material-symbols" style={{ fontSize: 20, color: (syncStageMeta[syncStage]?.color) ?? "var(--primary)", ...(syncStage === "upload_images" || syncStage === "fetch_page" || syncStage === "update_page" ? { animation: "spin 1.2s linear infinite" } : {}) }}>
+              {syncStageMeta[syncStage]?.icon ?? "cloud_upload"}
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Sync ke Confluence</div>
+              <div style={{ fontSize: 11, color: "var(--on-surface-variant)" }}>
+                {confSyncProgress.total > 0 ? `${confSyncProgress.current} / ${confSyncProgress.total}` : "Menyiapkan..."}{syncStage === "done" ? " — selesai" : ""}
+              </div>
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--primary)", fontFamily: "var(--font-mono)" }}>{syncPercent}%</span>
+          </div>
+          <div style={{ height: 6, margin: "0 16px", borderRadius: 999, background: "var(--surface-container-high)", overflow: "hidden" }}>
+            <div style={{ width: `${syncPercent}%`, height: "100%", borderRadius: 999, background: confSyncProgress.stage === "error" ? "var(--error)" : confSyncProgress.stage === "done" ? "var(--success)" : "var(--primary)", transition: "width 0.25s ease" }} />
+          </div>
+          <div style={{ padding: "10px 16px 14px", display: "flex", flexDirection: "column", gap: 6, minHeight: 0 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: confSyncProgress.stage === "error" ? "var(--error)" : "var(--on-surface)", display: "flex", alignItems: "center", gap: 6 }}>
+              {confSyncProgress.detail && confSyncProgress.stage === "upload_images" && <span className="material-symbols" style={{ fontSize: 14, color: "var(--error)" }}>error</span>}
+              {confSyncProgress.message}
+            </div>
+            {confSyncSteps.length > 0 && (
+              <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                {confSyncSteps.map((step, i) => {
+                  const failed = step.includes("(GAGAL)");
+                  return (
+                    <div key={`${i}-${step}`} style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: failed ? "var(--error)" : "var(--on-surface-variant)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4 }}>
+                      <span className="material-symbols" style={{ fontSize: 12, color: failed ? "var(--error)" : "var(--success)" }}>{failed ? "cancel" : "check"}</span>
+                      {step}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Confluence Sync Configuration Modal ─────────────────────── */}
       {syncConfigOpen && (

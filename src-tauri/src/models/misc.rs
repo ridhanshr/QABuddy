@@ -19,6 +19,23 @@ pub struct SyncToConfluenceResult {
     pub entry_count: u32,
     pub image_count: u32,
     pub attachment_count: u32,
+    /// Status upload setiap attachment per entry — dirender sebagai satu
+    /// card log dengan rincian sukses/gagal per tabel/gambar.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub upload_results: Vec<SyncUploadRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncUploadRecord {
+    pub entry_id: String,
+    pub test_case_no: String,
+    pub scenario: String,
+    pub image_name: String,
+    pub upload_name: String,
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +65,10 @@ pub struct ConfluenceParseProgress {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
+
+/// Same shape as parse progress — emitted on the "confluence-sync-progress"
+/// event while a sync_to_confluence run is in progress.
+pub type ConfluenceSyncProgress = ConfluenceParseProgress;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

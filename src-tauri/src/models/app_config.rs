@@ -24,6 +24,9 @@ pub struct ConfluenceConfig {
     pub target_page_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira_server_id: Option<String>,
+    /// Max width (px) for images uploaded to Confluence. None/0 = original.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_max_width: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -171,6 +174,7 @@ impl Default for AppConfig {
                 space_key: "QA".to_string(),
                 target_page_id: String::new(),
                 jira_server_id: None,
+                image_max_width: None,
             },
             ollama: OllamaConfig {
                 endpoint: "http://127.0.0.1:11434".to_string(),

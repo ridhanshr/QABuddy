@@ -56,6 +56,8 @@ export interface ConfluenceConfig extends AtlassianConnectionConfig {
   spaceKey: string;
   targetPageId: string;
   jiraServerId?: string;
+  /** Max width (px) untuk gambar yang diupload ke Confluence. 0/undefined = kirim resolusi asli. */
+  imageMaxWidth?: number;
 }
 
 export interface BitbucketConfig extends AtlassianConnectionConfig {
@@ -483,12 +485,23 @@ export interface RagIndexProgress {
   total: number;
 }
 
+export interface SyncUploadRecord {
+  entryId: string;
+  testCaseNo: string;
+  scenario: string;
+  imageName: string;
+  uploadName: string;
+  success: boolean;
+  error?: string;
+}
+
 export interface SyncToConfluenceResult {
   pageTitle: string;
   pageUrl: string;
   entryCount: number;
   imageCount: number;
   attachmentCount: number;
+  uploadResults?: SyncUploadRecord[];
 }
 
 export interface ParseConfluenceEntriesResult {
@@ -511,6 +524,14 @@ export interface ParseConfluenceEntriesOptions {
 
 export interface ConfluenceParseProgress {
   stage: "fetch_page" | "parse_tables" | "detect_jira" | "fetch_attachments" | "download_images" | "done" | "error";
+  message: string;
+  current: number;
+  total: number;
+  detail?: string;
+}
+
+export interface ConfluenceSyncProgress {
+  stage: "fetch_page" | "collect" | "upload_images" | "update_page" | "done" | "error";
   message: string;
   current: number;
   total: number;
@@ -701,6 +722,7 @@ export interface DesktopApi {
   ragClearBitbucket: () => Promise<{ removed: number; pruned: number }>;
   onRagProgress: (callback: (progress: RagIndexProgress) => void) => () => void;
   onConfluenceParseProgress: (callback: (progress: ConfluenceParseProgress) => void) => () => void;
+  onConfluenceSyncProgress: (callback: (progress: ConfluenceSyncProgress) => void) => () => void;
   getJiraProjects: () => Promise<JiraProject[]>;
   getJiraBoards: (projectKey: string) => Promise<JiraBoard[]>;
   getJiraSprints: (boardId: number) => Promise<JiraSprint[]>;

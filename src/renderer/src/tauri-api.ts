@@ -22,6 +22,7 @@ import type {
   ChatHistoryMessage,
   ChatResponse,
   ConfluenceParseProgress,
+  ConfluenceSyncProgress,
   ConfluenceTestImportEntry,
   ConnectionStatus,
   DashboardDigest,
@@ -214,6 +215,8 @@ const api = {
     on<RagIndexProgress>("rag-progress", callback),
   onConfluenceParseProgress: (callback: (progress: ConfluenceParseProgress) => void) =>
     on<ConfluenceParseProgress>("confluence-parse-progress", callback),
+  onConfluenceSyncProgress: (callback: (progress: ConfluenceSyncProgress) => void) =>
+    on<ConfluenceSyncProgress>("confluence-sync-progress", callback),
 
   // Jira metadata
   getJiraProjects: () => cmd<JiraProject[]>("get_jira_projects"),

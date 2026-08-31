@@ -383,41 +383,121 @@ impl ConfluenceClient {
     }
 
     /// Upload an attachment (raw bytes) to a page.
+    ///
+    /// Retries up to 2 times on transient 5xx responses — Confluence Server
+    /// frequently answers attachment uploads with HTTP 500 under concurrent
+    /// writes to the same page. The error message includes the response body
+    /// snippet so server-side causes are visible in the app log.
+    ///
+    /// If the server rejects the upload with "Cannot add a new attachment with
+    /// same file name as an existing attachment" (duplicate-handling set to
+    /// "fail" instead of "replace"), the existing attachment is DELETED and
+    /// the upload is retried so the new content always wins.
     pub async fn upload_attachment(
         &self,
         page_id: &str,
         filename: &str,
         data: Vec<u8>,
     ) -> Result<Value> {
-        // multipart form, requires X-Atlassian-Token: nocheck
-        let part = reqwest::multipart::Part::bytes(data)
-            .file_name(filename.to_string())
-            .mime_str("application/octet-stream")
-            .map_err(ServiceError::from)?;
-        let form = reqwest::multipart::Form::new()
-            .text("comment", "Uploaded via QA Buddy".to_string())
-            .part("file", part);
-
         let path = format!("/rest/api/content/{page_id}/child/attachment");
+        let max_attempts = 4;
+        let mut last_error = String::new();
+
+        for attempt in 1..=max_attempts {
+            // multipart form, requires X-Atlassian-Token: nocheck.
+            // The form (and its byte part) is rebuilt per attempt.
+            let part = reqwest::multipart::Part::bytes(data.clone())
+                .file_name(filename.to_string())
+                .mime_str("application/octet-stream")
+                .map_err(ServiceError::from)?;
+            let form = reqwest::multipart::Form::new()
+                .text("comment", "Uploaded via QA Buddy".to_string())
+                .part("file", part);
+
+            let resp = self
+                .http_client
+                .post(self.url(&path))
+                .header("X-Atlassian-Token", "nocheck")
+                .multipart(form)
+                .send()
+                .await
+                .map_err(ServiceError::from)?;
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+
+            if status.is_success() {
+                let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                return Ok(body
+                    .get("results")
+                    .and_then(|v| v.as_array())
+                    .and_then(|a| a.first())
+                    .cloned()
+                    .unwrap_or(Value::Null));
+            }
+
+            let snippet = if text.len() > 300 { &text[..300] } else { &text };
+            last_error = format!("HTTP {status}: {snippet}");
+
+            // Duplicate filename (server configured to reject duplicates):
+            // delete the existing attachment, then retry the upload.
+            if text.to_lowercase()
+                .contains("same file name as an existing attachment")
+            {
+                log::info!(
+                    "[upload_attachment] {filename} sudah ada di page — hapus attachment existing lalu upload ulang..."
+                );
+                if let Err(e) = self.delete_attachment_by_title(page_id, filename).await {
+                    log::warn!(
+                        "[upload_attachment] gagal menghapus attachment existing {filename}: {e}"
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                continue;
+            }
+
+            let transient = matches!(status.as_u16(), 500 | 502 | 503 | 504);
+            if transient && attempt < max_attempts {
+                log::warn!(
+                    "[upload_attachment] {filename} → {status} (percobaan {attempt}), retry..."
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(750 * attempt as u64)).await;
+                continue;
+            }
+            break;
+        }
+
+        Err(ServiceError::Api(format!("API error: {last_error}")))
+    }
+
+    /// Delete the attachment on `page_id` whose title equals `title`.
+    /// No-op if no attachment with that title exists.
+    pub async fn delete_attachment_by_title(&self, page_id: &str, title: &str) -> Result<()> {
+        let attachments = self.get_attachments(page_id).await?;
+        let Some(att) = attachments
+            .iter()
+            .find(|a| a["title"].as_str() == Some(title))
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let Some(id) = att["id"].as_str().map(|s| s.to_string()) else {
+            return Ok(());
+        };
+        let path = format!("/rest/api/content/{page_id}/child/attachment/{id}");
         let resp = self
             .http_client
-            .post(self.url(&path))
-            .header("X-Atlassian-Token", "nocheck")
-            .multipart(form)
+            .delete(self.url(&path))
             .send()
             .await
             .map_err(ServiceError::from)?;
         let status = resp.status();
-        let body: Value = resp.json().await.unwrap_or(Value::Null);
         if !status.is_success() {
-            return Err(ServiceError::Api(format!("HTTP {status}")));
+            let text = resp.text().await.unwrap_or_default();
+            let snippet = if text.len() > 200 { &text[..200] } else { &text };
+            return Err(ServiceError::Api(format!("HTTP {status}: {snippet}")));
         }
-        Ok(body
-            .get("results")
-            .and_then(|v| v.as_array())
-            .and_then(|a| a.first())
-            .cloned()
-            .unwrap_or(Value::Null))
+        log::info!("[delete_attachment] attachment '{title}' (id {id}) dihapus dari page {page_id}");
+        Ok(())
     }
 
     /// Resolve the Jira application-link server id via the applinks REST API.

@@ -5,6 +5,7 @@ import type {
   BulkOperationResult,
   ChatResponse,
   ConfluenceParseProgress,
+  ConfluenceSyncProgress,
   ConfluenceTestImportEntry,
   ConnectionStatus,
   ConnectionStatusItem,
@@ -395,7 +396,8 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
   const [confLoading, setConfLoading] = useState(false);
   const [confProgressHidden, setConfProgressHidden] = useState(false);
-  const confImageWidth = 450;
+  // Max width (px) gambar yang diupload ke Confluence. 0 = kirim resolusi asli.
+  const confImageWidth = Math.max(0, config.confluence.imageMaxWidth ?? 1920);
   const [confPageLoading, setConfPageLoading] = useState(false);
   const [confAttachmentHydrating, setConfAttachmentHydrating] = useState(false);
   const [confParseStatus, setConfParseStatus] = useState<ParseConfluenceEntriesResult | null>(null);
@@ -842,6 +844,37 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     return () => {
       if (confParseProgressClearTimer.current !== null) {
         window.clearTimeout(confParseProgressClearTimer.current);
+      }
+      cleanup();
+    };
+  }, []);
+
+  // ── Confluence Sync Progress (live sidebar during Sync to Confluence) ──
+  const [confSyncProgress, setConfSyncProgress] = useState<ConfluenceSyncProgress | null>(null);
+  const [confSyncSteps, setConfSyncSteps] = useState<string[]>([]);
+  const confSyncProgressClearTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    const cleanup = window.qaBuddy.onConfluenceSyncProgress((progress) => {
+      if (confSyncProgressClearTimer.current !== null) {
+        window.clearTimeout(confSyncProgressClearTimer.current);
+        confSyncProgressClearTimer.current = null;
+      }
+      setConfSyncProgress(progress);
+      if (progress.stage !== "fetch_page" && progress.stage !== "collect") {
+        setConfSyncSteps((steps) => [...steps.slice(-49), progress.message]);
+      }
+      if (progress.stage === "done" || progress.stage === "error") {
+        confSyncProgressClearTimer.current = window.setTimeout(() => {
+          setConfSyncProgress(null);
+          setConfSyncSteps([]);
+          confSyncProgressClearTimer.current = null;
+        }, 4000);
+      }
+    });
+    return () => {
+      if (confSyncProgressClearTimer.current !== null) {
+        window.clearTimeout(confSyncProgressClearTimer.current);
       }
       cleanup();
     };
@@ -2234,6 +2267,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   }
 
   async function resizeImageDataUri(dataUri: string, maxWidth: number): Promise<string> {
+    if (maxWidth <= 0) return dataUri;
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -2269,6 +2303,8 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
     setConfLoading(true);
     setConfProgressHidden(false);
+    setConfSyncProgress(null);
+    setConfSyncSteps([]);
     try {
       // Resize images to confImageWidth before uploading
       const resizedEntries = await Promise.all(
@@ -2340,11 +2376,41 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
           }));
         }
       }
+      // One log card per sync run — detail lists upload status of every
+      // attachment grouped per table entry (success and failures).
+      const uploadResults = result.uploadResults ?? [];
+      const failedCount = uploadResults.filter((r) => !r.success).length;
+      const okCount = uploadResults.length - failedCount;
+
+      let syncDetail = effectiveRefreshed.contentLoaded
+        ? `${result.imageCount} gambar, ${result.attachmentCount} lampiran diupload`
+        : effectiveRefreshed.error || "Content not loaded";
+      if (uploadResults.length > 0) {
+        const groups = new Map<string, { tc: string; scenario: string; rows: string[]; ok: number; fail: number }>();
+        for (const r of uploadResults) {
+          let g = groups.get(r.entryId);
+          if (!g) {
+            g = { tc: r.testCaseNo, scenario: r.scenario, rows: [], ok: 0, fail: 0 };
+            groups.set(r.entryId, g);
+          }
+          if (r.success) {
+            g.ok++;
+            g.rows.push(`  ✓ ${r.uploadName}`);
+          } else {
+            g.fail++;
+            g.rows.push(`  ✗ ${r.uploadName} — ${r.error ?? "unknown error"}`);
+          }
+        }
+        syncDetail = [...groups.values()]
+          .map((g) => `${g.tc} (${g.scenario}): ${g.ok}/${g.ok + g.fail} gambar sukses\n${g.rows.join("\n")}`)
+          .join("\n\n");
+      }
+
       setBanner(
         effectiveRefreshed.contentLoaded
           ? {
-              tone: "success",
-              text: `Berhasil sync ${result.entryCount} entry yang berubah (${result.imageCount} gambar, ${result.attachmentCount} lampiran) ke "${result.pageTitle}".`,
+              tone: failedCount > 0 ? "info" : "success",
+              text: `Berhasil sync ${result.entryCount} entry yang berubah (${okCount} gambar terupload${failedCount > 0 ? `, ${failedCount} gagal` : ""}) ke "${result.pageTitle}".${failedCount > 0 ? " Cek detail di menu Log." : ""}`,
             }
           : {
               tone: "error",
@@ -2353,13 +2419,11 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       );
       addLog(
         "Sync to Confluence",
-        effectiveRefreshed.contentLoaded ? "success" : "error",
+        effectiveRefreshed.contentLoaded ? (failedCount > 0 ? "error" : "success") : "error",
         effectiveRefreshed.contentLoaded
-          ? `Sync ${result.entryCount} entry yang berubah ke "${result.pageTitle}"`
+          ? `Sync ${result.entryCount} entry ke "${result.pageTitle}" — ${okCount}/${uploadResults.length} gambar sukses${failedCount > 0 ? `, ${failedCount} gagal` : ""}`
           : `Sync berhasil, tetapi page "${effectiveRefreshed.pageId}" tidak bisa dibaca ulang`,
-        effectiveRefreshed.contentLoaded
-          ? `${result.imageCount} gambar, ${result.attachmentCount} lampiran diupload`
-          : effectiveRefreshed.error || "Content not loaded"
+        syncDetail
       );
 
       // Auto-push ke Jira untuk setiap dirty entry yang punya issueKey
@@ -2630,7 +2694,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
             const data = e.target?.result as string;
             updateConfEntryImages(id, (images) => [
               ...images,
-              createConfAttachment(`image-${Date.now()}.png`, data, images.length + 1),
+              createConfAttachment(`image-${Date.now()}-${i}.png`, data, images.length + 1),
             ]);
           };
           reader.readAsDataURL(file);
@@ -3190,6 +3254,8 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     confAttachmentHydrating,
     confParseStatus,
     confParseProgress,
+    confSyncProgress,
+    confSyncSteps,
     confEntries,
     confSections,
     setConfEntries,

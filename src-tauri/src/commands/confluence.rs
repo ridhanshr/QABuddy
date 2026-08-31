@@ -30,13 +30,14 @@ pub async fn parse_confluence_entries(
 #[tauri::command]
 pub async fn sync_to_confluence(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     page_id: String,
     payload: SyncToConfluencePayload,
 ) -> Result<SyncToConfluenceResult, String> {
     let config = load_config(state.clone()).await?;
     let confluence_service = state.confluence_service.lock().await;
     confluence_service
-        .sync_to_confluence(&config.confluence, &page_id, &payload)
+        .sync_to_confluence(Some(&app_handle), &config.confluence, &page_id, &payload)
         .await
         .map_err(|e| e.to_string())
 }

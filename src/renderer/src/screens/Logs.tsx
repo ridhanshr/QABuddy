@@ -27,6 +27,16 @@ export default function Logs() {
 
   const [statusFilter, setStatusFilter] = useState<"all" | "success" | "error" | "info">("all");
   const [query, setQuery] = useState("");
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   if (loading || activeView !== "logs") {
     return null;
@@ -142,8 +152,16 @@ export default function Logs() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.map((log) => {
             const meta = statusMeta[log.status] ?? statusMeta.info;
+            const isExpanded = expandedIds.has(log.id);
+            const hasDetail = Boolean(log.detail || log.debug);
             return (
-              <div key={log.id} className="card" style={{ padding: "14px 16px", display: "flex", alignItems: "flex-start", gap: 14 }}>
+              <div
+                key={log.id}
+                className="card"
+                onClick={() => { if (hasDetail) toggleExpanded(log.id); }}
+                style={{ padding: "14px 16px", display: "flex", alignItems: "flex-start", gap: 14, cursor: hasDetail ? "pointer" : "default", userSelect: "none" }}
+                title={hasDetail ? (isExpanded ? "Klik untuk menyembunyikan detail" : "Klik untuk melihat detail") : undefined}
+              >
                 <span
                   style={{
                     width: 34,
@@ -172,13 +190,23 @@ export default function Logs() {
                     <span className={`uqa-badge uqa-badge-${log.status === "success" ? "done" : log.status === "error" ? "failed" : "in-progress"}`} style={{ justifyContent: "flex-start" }}>
                       {meta.label}
                     </span>
+                    {hasDetail && (
+                      <span style={{ fontSize: 11, color: "var(--on-surface-variant)", display: "inline-flex", alignItems: "center", gap: 2 }}>
+                        <span className="material-symbols" style={{ fontSize: 14 }}>{isExpanded ? "unfold_less" : "unfold_more"}</span>
+                        {isExpanded ? "Sembunyikan detail" : "Lihat detail"}
+                      </span>
+                    )}
                     <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--font-disabled)", fontFamily: "var(--font-mono)" }}>{log.time}</span>
                   </div>
                   <p style={{ fontSize: 13.5, color: "var(--on-surface)", margin: 0 }}>{log.message}</p>
-                  {log.detail && (
-                    <p style={{ fontSize: 12.5, color: "var(--on-surface-variant)", margin: "6px 0 0 0", lineHeight: 1.5 }}>{log.detail}</p>
+                  {hasDetail && isExpanded && (
+                    <>
+                      {log.detail && (
+                        <p style={{ fontSize: 12.5, color: "var(--on-surface-variant)", margin: "6px 0 0 0", lineHeight: 1.5, whiteSpace: "pre-line", fontFamily: "var(--font-mono)", userSelect: "text" }}>{log.detail}</p>
+                      )}
+                      {log.debug && <ConfluenceParseDebug report={log.debug} />}
+                    </>
                   )}
-                  {log.debug && <ConfluenceParseDebug report={log.debug} />}
                 </div>
               </div>
             );
