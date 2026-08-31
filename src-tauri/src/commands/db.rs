@@ -612,6 +612,7 @@ pub async fn sync_execution_tests_to_db(
     // Returns array of runs; we take the first one matching exec_key
     struct RunDetail {
         status: Option<String>,
+        assignee: Option<String>,
         executed_by: Option<String>,
         executed_at: Option<String>,
     }
@@ -645,10 +646,15 @@ pub async fn sync_execution_tests_to_db(
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
+        let assignee = run["assignee"]["displayName"].as_str()
+            .or_else(|| run["assignee"].as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
         let executed_by = run["executedBy"]["displayName"].as_str()
             .or_else(|| run["executedBy"].as_str())
-            .or_else(|| run["assignee"]["displayName"].as_str())
             .or_else(|| run["executor"]["displayName"].as_str())
+            .or_else(|| run["executor"].as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
@@ -658,7 +664,7 @@ pub async fn sync_execution_tests_to_db(
             .filter(|s| !s.is_empty())
             .map(|s| parse_datetime(s));
 
-        RunDetail { status, executed_by, executed_at }
+        RunDetail { status, assignee, executed_by, executed_at }
     }
 
     // ── 4. Upsert each TC ──
@@ -677,10 +683,14 @@ pub async fn sync_execution_tests_to_db(
             .map(|i| tc_key[..i].to_string());
 
         // Use status directly from TC list response (avoids 1 HTTP call per TC).
-        // The /testexec/{key}/test response already contains status, assignee, executedBy fields.
+        // The /testexec/{key}/test response already contains status, assignee, executedBy
+        // as sibling fields — assignee (who the test is assigned to) and executedBy (who
+        // actually ran it) are kept as separate columns, not folded into one fallback chain.
         let status_from_list = t["status"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
-        let executed_by_from_list = t["assignee"].as_str()
-            .or_else(|| t["executedBy"].as_str())
+        let assignee_from_list = t["assignee"].as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let executed_by_from_list = t["executedBy"].as_str()
             .or_else(|| t["executor"].as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
@@ -693,6 +703,7 @@ pub async fn sync_execution_tests_to_db(
         let detail = if status_from_list.is_some() {
             RunDetail {
                 status: status_from_list,
+                assignee: assignee_from_list,
                 executed_by: executed_by_from_list,
                 executed_at: executed_at_from_list,
             }
@@ -710,25 +721,32 @@ pub async fn sync_execution_tests_to_db(
                 ]).await.unwrap_or(serde_json::Value::Null)
             };
             if run_data.is_null() {
-                RunDetail { status: None, executed_by: executed_by_from_list, executed_at: executed_at_from_list }
+                RunDetail {
+                    status: None,
+                    assignee: assignee_from_list,
+                    executed_by: executed_by_from_list,
+                    executed_at: executed_at_from_list,
+                }
             } else {
                 extract_run_detail(&run_data, &exec_key)
             }
         };
 
         let test_run_status = detail.status.clone();
+        let assignee = detail.assignee.clone();
         let executed_by = detail.executed_by.clone();
         let executed_at = detail.executed_at.clone();
 
         sqlx::query(
             r#"
             INSERT INTO test_case
-                (tc_key, te_jira_key, title, id_jira_repo, test_run_status, executed_by, executed_at, last_sync)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+                (tc_key, te_jira_key, title, id_jira_repo, test_run_status, assignee, executed_by, executed_at, last_sync)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ON DUPLICATE KEY UPDATE
                 title           = COALESCE(VALUES(title), title),
                 id_jira_repo    = COALESCE(VALUES(id_jira_repo), id_jira_repo),
                 test_run_status = COALESCE(VALUES(test_run_status), test_run_status),
+                assignee        = COALESCE(VALUES(assignee), assignee),
                 executed_by     = COALESCE(VALUES(executed_by), executed_by),
                 executed_at     = COALESCE(VALUES(executed_at), executed_at),
                 last_sync       = NOW()
@@ -739,6 +757,7 @@ pub async fn sync_execution_tests_to_db(
         .bind(title.as_deref())
         .bind(id_jira_repo.as_deref())
         .bind(test_run_status.as_deref())
+        .bind(assignee.as_deref())
         .bind(executed_by.as_deref())
         .bind(executed_at.as_deref())
         .execute(&pool)
@@ -902,6 +921,7 @@ pub struct MonitoringTestCase {
     pub te_jira_key: String,
     pub title: Option<String>,
     pub test_run_status: Option<String>,
+    pub assignee: Option<String>,
     pub executed_by: Option<String>,
     pub executed_at: Option<String>,
 }
@@ -1027,8 +1047,15 @@ pub async fn get_my_test_cases_by_execution(
     state: State<'_, AppState>,
     te_jira_key: String,
     username: String,
+    display_name: Option<String>,
 ) -> Result<Vec<MonitoringTestCase>, String> {
     let pool = get_pool!(state);
+    // "Mine" means assigned to me in Xray — match on either PN/username or
+    // display name, since Xray's `assignee` field can surface either
+    // depending on how the instance is configured (e.g. "00400291" or
+    // "Mirza Raevan Faisal"). Falls back to matching username alone when no
+    // display name is available.
+    let display_name = display_name.filter(|s| !s.trim().is_empty());
     let rows = sqlx::query_as::<_, MonitoringTestCase>(
         r#"
         SELECT
@@ -1036,15 +1063,17 @@ pub async fn get_my_test_cases_by_execution(
             te_jira_key,
             title,
             test_run_status,
+            assignee,
             executed_by,
             DATE_FORMAT(executed_at, '%Y-%m-%d %H:%i:%s') AS executed_at
         FROM test_case
-        WHERE te_jira_key = ? AND executed_by = ?
+        WHERE te_jira_key = ? AND (assignee = ? OR assignee = ?)
         ORDER BY tc_key ASC
         "#,
     )
     .bind(&te_jira_key)
     .bind(&username)
+    .bind(display_name.as_deref().unwrap_or(&username))
     .fetch_all(&pool)
     .await
     .map_err(|e| format!("Gagal fetch test cases: {e}"))?;
@@ -1065,6 +1094,7 @@ pub async fn get_test_cases_by_te_key(
             te_jira_key,
             title,
             test_run_status,
+            assignee,
             executed_by,
             DATE_FORMAT(executed_at, '%Y-%m-%d %H:%i:%s') AS executed_at
         FROM test_case

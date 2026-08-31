@@ -89,12 +89,13 @@ export default function DocumentationSync() {
           ["TC_HAPPY", "TC_UNHAPPY", "TC_REGRESSION"].includes(l)
         ) ?? "TC_HAPPY";
         const browseUrl = jiraBaseUrl ? `${jiraBaseUrl}/browse/${d.issueKey}` : d.issueKey;
+        const scenarioLines = [d.summary, browseUrl].filter((s) => s && s.trim());
         return {
           id: crypto.randomUUID(),
           section: "",
           testCaseNo: `TC${String(startNo + idx + 1).padStart(3, "0")}`,
           functionName: d.functionName ?? d.summary ?? "",
-          scenario: d.summary ? `${d.summary}\n${browseUrl}` : browseUrl,
+          scenario: scenarioLines.join("\n"),
           category,
           inputData: d.inputData ?? "",
           steps: d.steps ?? "",
@@ -703,6 +704,7 @@ export default function DocumentationSync() {
             width: '90%',
             maxWidth: 620,
             maxHeight: '80vh',
+            overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
             gap: 16,
@@ -750,7 +752,7 @@ export default function DocumentationSync() {
 
             {/* TC list */}
             {importTcList.length > 0 && (
-              <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--outline-variant)', borderRadius: 10 }}>
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', border: '1px solid var(--outline-variant)', borderRadius: 10 }}>
                 {/* Select all header */}
                 <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--outline-variant)', background: 'var(--surface-container-low)' }}>
                   <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>

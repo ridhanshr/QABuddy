@@ -400,7 +400,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   const [confAttachmentHydrating, setConfAttachmentHydrating] = useState(false);
   const [confParseStatus, setConfParseStatus] = useState<ParseConfluenceEntriesResult | null>(null);
   const [confParseProgress, setConfParseProgress] = useState<ConfluenceParseProgress | null>(null);
-  const [confEntries, setConfEntries] = useState<any[]>([createEmptyConfEntry()]);
+  const [confEntries, setConfEntries] = useState<any[]>([{ ...createEmptyConfEntry(), testCaseNo: "TC001" }]);
   const [confFetchingSteps, setConfFetchingSteps] = useState<Set<string>>(new Set());
   const [confPushingSteps, setConfPushingSteps] = useState<Set<string>>(new Set());
   const [deletedConfTableIndices, setDeletedConfTableIndices] = useState<number[]>([]);
@@ -2502,12 +2502,12 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   const addConfEntry = (section?: string) => {
     setConfEntries((current) => [
       ...current,
-      createEmptyConfEntry(true, section || "")
+      { ...createEmptyConfEntry(true, section || ""), testCaseNo: `TC${String(current.length + 1).padStart(3, "0")}` },
     ]);
   };
 
   const clearConfEntries = async () => {
-    setConfEntries([createEmptyConfEntry()]);
+    setConfEntries([{ ...createEmptyConfEntry(), testCaseNo: "TC001" }]);
     // Clear All hanya mengosongkan tabel — config (Target Page ID, Jira Server ID) dipertahankan.
     setConfig({ ...config });
   };
@@ -2536,6 +2536,9 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       if (result) {
         const VALID_CATEGORIES = ["TC_HAPPY", "TC_UNHAPPY", "TC_REGRESSION"];
         const matchedCategory = result.labels?.find((l) => VALID_CATEGORIES.includes(l));
+        const jiraBaseUrl = config?.jira?.baseUrl?.replace(/\/$/, "") ?? "";
+        const browseUrl = jiraBaseUrl ? `${jiraBaseUrl}/browse/${issueKey}` : issueKey;
+        const scenarioLines = [result.summary, browseUrl].filter((s) => s && s.trim());
         setConfEntries((current) =>
           current.map((e) =>
             e.id === id
@@ -2543,9 +2546,10 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
                   ...e,
                   steps: result.steps,
                   expectedResult: result.expectedResult,
-                  // Preserve existing scenario/functionName so the table match
-                  // (and in-place sync) isn't broken by Xray folder/summary data.
-                  ...(e.scenario ? {} : { scenario: issueKey }),
+                  // Preserve an existing scenario the user already edited so
+                  // the table match (and in-place sync) isn't broken — but if
+                  // it's still empty, fill it with summary + Jira macro URL.
+                  ...(e.scenario ? {} : { scenario: scenarioLines.join("\n") }),
                   ...(matchedCategory ? { category: matchedCategory } : {}),
                   ...(e.functionName ? {} : (result.functionName ? { functionName: result.functionName } : {})),
                   isDirty: true,

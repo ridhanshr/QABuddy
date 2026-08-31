@@ -201,6 +201,10 @@ export default function ProjectManagement() {
   const [uqaError, setUqaError] = useState<string | null>(null);
   const uqaCacheRef = React.useRef<UqaTicket[] | null>(null);
 
+  // UQA filters — client-side, applied on top of the fetched list
+  const [uqaStatusFilter, setUqaStatusFilter] = useState<string>("");
+  const [uqaSearchQuery, setUqaSearchQuery] = useState("");
+
   // UQA DB sync
   const [uqaSyncing, setUqaSyncing] = useState(false);
   const [uqaSyncResult, setUqaSyncResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -251,6 +255,37 @@ export default function ProjectManagement() {
   // ── Fetch UQA ──
   const UQA_CACHE_KEY = `qabuddy_uqa_cache_${config.jira.username}`;
   const UQA_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+  const uqaAutoSyncRanRef = React.useRef(false);
+
+  // Force-sync every UQA ticket to the DB right after the page has fetched
+  // them, so last_sync always reflects the moment this page was visited —
+  // regardless of whether the ticket was already synced before. Runs at
+  // most once per screen visit (guarded by uqaAutoSyncRanRef).
+  const autoSyncUqa = useCallback(async (items: UqaTicket[]) => {
+    if (uqaAutoSyncRanRef.current) return;
+    if (items.length === 0) return;
+    uqaAutoSyncRanRef.current = true;
+    setUqaSyncing(true);
+    try {
+      const toSave: SaveUqaProjectInput[] = items.map((u) => ({
+        uqa_key: u.key,
+        project_name: u.summary,
+        assignee: u.assignee || undefined,
+        product_tester: u.productTester || undefined,
+        status: u.status || undefined,
+        start_sit: u.startSit ?? undefined,
+        finish_sit: u.finishSit ?? undefined,
+        start_uat: u.startUat ?? undefined,
+      }));
+      await window.qaBuddy.saveUqaProjects(toSave);
+      const inDb = await window.qaBuddy.checkUqaProjectsInDb(items.map((m) => m.key));
+      setUqaInDb(new Set(inDb));
+    } catch {
+      /* silent — manual "Sync ke Database" button remains available */
+    } finally {
+      setUqaSyncing(false);
+    }
+  }, []);
 
   const loadUqa = useCallback(async (force = false) => {
     // Try sessionStorage cache first for instant display
@@ -266,6 +301,7 @@ export default function ProjectManagement() {
             window.qaBuddy.checkUqaProjectsInDb(data.map((m) => m.key))
               .then((inDb) => setUqaInDb(new Set(inDb)))
               .catch(() => {});
+            void autoSyncUqa(data);
             return;
           }
         }
@@ -294,12 +330,13 @@ export default function ProjectManagement() {
       window.qaBuddy.checkUqaProjectsInDb(merged.map((m) => m.key))
         .then((inDb) => setUqaInDb(new Set(inDb)))
         .catch(() => {});
+      void autoSyncUqa(merged);
     } catch (e: any) {
       setUqaError(e?.message ?? String(e));
     } finally {
       setUqaLoading(false);
     }
-  }, []);
+  }, [autoSyncUqa]);
 
   // ── Load Test Repository ──
   const loadRepository = useCallback(async () => {
@@ -320,8 +357,8 @@ export default function ProjectManagement() {
   }, [subView, loadUqa, loadRepository]);
 
   // ── Fetch Test Plans ──
-  const loadPlans = useCallback(async (input: string) => {
-    if (!input) return;
+  const loadPlans = useCallback(async (input: string): Promise<{ fetched: TestPlanItem[]; inDb: Set<string> } | null> => {
+    if (!input) return null;
     setPlansLoading(true);
     setPlansError(null);
     setSelectedForSync(new Set());
@@ -341,19 +378,48 @@ export default function ProjectManagement() {
       }));
       setPlans(fetched);
       // In "auto" mode, check which plans already exist in DB
+      let inDb = new Set<string>();
       if (fetched.length > 0) {
         try {
-          const inDb = await window.qaBuddy.checkTestPlansInDb(fetched.map((p) => p.key));
-          setPlansInDb(new Set(inDb));
+          inDb = new Set(await window.qaBuddy.checkTestPlansInDb(fetched.map((p) => p.key)));
+          setPlansInDb(inDb);
         } catch {
           setPlansInDb(new Set());
         }
       }
+      return { fetched, inDb };
     } catch (e: any) {
       setPlansError(e?.message ?? String(e));
+      return null;
     } finally {
       setPlansLoading(false);
     }
+  }, []);
+
+  // ── Force-sync every Test Plan to the DB right after drilling into a
+  // UQA's plan list, so last_sync always reflects this visit — regardless
+  // of whether the plan was already synced before. saveUqaTestPlan has no
+  // bulk variant, so this awaits each save sequentially.
+  const autoSyncPlans = useCallback(async (fetched: TestPlanItem[], uqaKey: string) => {
+    if (fetched.length === 0) return;
+    setSyncingToDb(true);
+    let failed = 0;
+    for (const plan of fetched) {
+      try {
+        const input: SaveTestPlanInput = { uqa_key: uqaKey, tp_jira_key: plan.key, title: plan.summary };
+        await window.qaBuddy.saveUqaTestPlan(input);
+      } catch {
+        failed++;
+      }
+    }
+    try {
+      const inDbNow = await window.qaBuddy.checkTestPlansInDb(fetched.map((p) => p.key));
+      setPlansInDb(new Set(inDbNow));
+    } catch { /* ignore */ }
+    if (failed > 0) {
+      setSyncResult({ ok: false, msg: `Auto-sync: ${fetched.length - failed} berhasil, ${failed} gagal.` });
+    }
+    setSyncingToDb(false);
   }, []);
 
   // ── Validate manual input combination ──
@@ -620,7 +686,7 @@ export default function ProjectManagement() {
   }, [repoProjects, repoProjectsInDb]);
 
   // ── Fetch Test Executions ──
-  const loadExecutions = useCallback(async (planKey: string) => {
+  const loadExecutions = useCallback(async (planKey: string): Promise<{ base: TestExecutionItem[]; inDb: Set<string> } | null> => {
     setExecLoading(true);
     setExecError(null);
     try {
@@ -639,10 +705,14 @@ export default function ProjectManagement() {
       setExecSyncResult(null);
 
       // Check which executions already exist in DB
+      let inDb = new Set<string>();
       if (base.length > 0) {
-        window.qaBuddy.checkTestExecutionsInDb(base.map((e) => e.key))
-          .then((inDb) => setExecsInDb(new Set(inDb)))
-          .catch(() => setExecsInDb(new Set()));
+        try {
+          inDb = new Set(await window.qaBuddy.checkTestExecutionsInDb(base.map((e) => e.key)));
+          setExecsInDb(inDb);
+        } catch {
+          setExecsInDb(new Set());
+        }
       }
 
       // Fetch Xray details per item in parallel, update each as it resolves
@@ -672,11 +742,58 @@ export default function ProjectManagement() {
           );
         }
       });
+
+      return { base, inDb };
     } catch (e: any) {
       setExecError(e?.message ?? String(e));
       setExecLoading(false);
+      return null;
     }
   }, []);
+
+  // ── Force-sync every Test Execution to the DB, then force-sync their
+  // Test Cases, right after drilling into a Test Plan's execution list —
+  // so last_sync (on both the TE and its TCs) always reflects this visit,
+  // regardless of whether they were already synced before.
+  const autoSyncExecutions = useCallback(async (base: TestExecutionItem[], planKey: string) => {
+    if (base.length === 0) return;
+    setSyncingExecs(true);
+    const toSync: SaveTestExecutionInput[] = base.map((exec) => ({
+      te_jira_key: exec.key,
+      title: exec.summary,
+      tp_jira_key: planKey,
+      assignee: exec.assignee || undefined,
+      execution_status: normalizeTeStatus(exec.status),
+    }));
+    try {
+      await window.qaBuddy.saveTestExecutions(toSync);
+    } catch { /* fall through — manual sync buttons remain available */ }
+    try {
+      const inDbNow = await window.qaBuddy.checkTestExecutionsInDb(base.map((e) => e.key));
+      setExecsInDb(new Set(inDbNow));
+    } catch { /* ignore */ }
+    setSyncingExecs(false);
+
+    // Force-sync test cases for every TE, one at a time (mirrors the
+    // manual "Sync TC" button / syncingTcForExec guard).
+    for (const exec of base) {
+      await handleSyncTcForExec(exec.key);
+    }
+  }, [handleSyncTcForExec]);
+
+  // Re-load + force auto-sync executions for the currently known plan.
+  // Called every time the user lands on the Test Executions tab — both via
+  // drill-down from a Test Plan row and via clicking the tab directly in
+  // the tab bar (including repeat visits to the same plan) — so the DB is
+  // always refreshed the moment this level is entered.
+  const enterExecutionsTab = useCallback(
+    (planKey: string) => {
+      loadExecutions(planKey).then((result) => {
+        if (result) void autoSyncExecutions(result.base, planKey);
+      });
+    },
+    [loadExecutions, autoSyncExecutions]
+  );
 
   // ── Navigation helpers ──
   const goToPlans = useCallback(
@@ -687,9 +804,11 @@ export default function ProjectManagement() {
       setSubView("plans");
       // Pre-fill the UQA key so sync auto knows which UQA to associate
       if (fromUqaKey) setSyncUqaKey(fromUqaKey);
-      loadPlans(projectKey);
+      loadPlans(projectKey).then((result) => {
+        if (result) void autoSyncPlans(result.fetched, fromUqaKey || "");
+      });
     },
-    [loadPlans]
+    [loadPlans, autoSyncPlans]
   );
 
   const goToExecutions = useCallback(
@@ -697,9 +816,9 @@ export default function ProjectManagement() {
       setBreadcrumb((b) => ({ ...b, planKey: plan.key, planSummary: plan.summary }));
       setExecutions([]);
       setSubView("executions");
-      loadExecutions(plan.key);
+      enterExecutionsTab(plan.key);
     },
-    [loadExecutions]
+    [enterExecutionsTab]
   );
 
   const goBack = useCallback(() => {
@@ -755,6 +874,12 @@ export default function ProjectManagement() {
                 setPlans([]);
                 setPlanSearch("");
                 setBreadcrumb((b) => ({ ...b, planKey: undefined, planSummary: undefined }));
+              }
+              // Clicking "Test Executions" directly (not via drill-down from
+              // a Test Plan row) — re-sync every time using the last known
+              // plan, so this level always reflects fresh data on entry.
+              if (t.key === "executions" && breadcrumb.planKey) {
+                enterExecutionsTab(breadcrumb.planKey);
               }
               setSubView(t.key);
             }}
@@ -1045,7 +1170,7 @@ export default function ProjectManagement() {
                   </div>
                 )}
 
-                <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                <div className="card" style={{ padding: 0, overflowX: "auto" }}>
                   <table className="data-table">
                     <thead>
                       <tr>
@@ -1148,37 +1273,93 @@ export default function ProjectManagement() {
             )}
 
             {!uqaLoading && uqaItems.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 14px", background: "var(--surface-container)", borderRadius: 8, border: "1px solid var(--outline-variant)" }}>
-                <div style={{ fontSize: 13, color: "var(--on-surface-variant)" }}>
-                  {uqaItems.length} UQA ditemukan
-                  {uqaInDb.size > 0 && ` · ${uqaInDb.size} sudah di DB`}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "10px 14px", background: "var(--surface-container)", borderRadius: 8, border: "1px solid var(--outline-variant)", flexWrap: "wrap" }}>
+                <div style={{ position: "relative", flex: "1 1 220px", minWidth: 180 }}>
+                  <span className="material-symbols" style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", fontSize: 16, color: "var(--on-surface-variant)" }}>search</span>
+                  <input
+                    type="text"
+                    value={uqaSearchQuery}
+                    onChange={(e) => setUqaSearchQuery(e.target.value)}
+                    placeholder="Cari UQA Key, Judul, Project, Assignee..."
+                    style={{ width: "100%", boxSizing: "border-box", padding: "6px 10px 6px 30px", borderRadius: 6, border: "1px solid var(--outline-variant)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 12 }}
+                  />
                 </div>
-                <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-                  {uqaSyncResult && (
-                    <span style={{ fontSize: 12, color: uqaSyncResult.ok ? "var(--success)" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
-                      <span className="material-symbols" style={{ fontSize: 15 }}>{uqaSyncResult.ok ? "check_circle" : "error"}</span>
-                      {uqaSyncResult.msg}
-                    </span>
-                  )}
+                <select
+                  value={uqaStatusFilter}
+                  onChange={(e) => setUqaStatusFilter(e.target.value)}
+                  style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--outline-variant)", background: "var(--surface)", color: "var(--on-surface)", fontSize: 12 }}
+                >
+                  <option value="">Semua Status</option>
+                  {Array.from(new Set(uqaItems.map((i) => i.status).filter(Boolean))).sort().map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                {(uqaStatusFilter || uqaSearchQuery) && (
                   <button
                     type="button"
-                    className="button-primary"
-                    onClick={handleSyncUqaToDb}
-                    disabled={uqaSyncing}
-                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}
+                    onClick={() => { setUqaStatusFilter(""); setUqaSearchQuery(""); }}
+                    style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: "var(--on-surface-variant)", fontSize: 12, cursor: "pointer", padding: "4px 6px" }}
                   >
-                    <span className={`material-symbols${uqaSyncing ? " rotating" : ""}`} style={{ fontSize: 15 }}>
-                      {uqaSyncing ? "sync" : "cloud_upload"}
-                    </span>
-                    {uqaSyncing ? "Menyinkronkan..." : "Sync Semua ke DB"}
+                    <span className="material-symbols" style={{ fontSize: 15 }}>close</span>
+                    Reset filter
                   </button>
-                </div>
+                )}
               </div>
             )}
 
             {!uqaLoading && uqaItems.length > 0 && (() => {
-              const jiraItems = uqaItems.filter((i) => !isNonJiraProject(i.projectKey));
-              const nonJiraItems = uqaItems.filter((i) => isNonJiraProject(i.projectKey));
+              const q = uqaSearchQuery.trim().toLowerCase();
+              const visibleItems = uqaItems.filter((i) => {
+                if (uqaStatusFilter && i.status !== uqaStatusFilter) return false;
+                if (!q) return true;
+                return (
+                  i.key.toLowerCase().includes(q) ||
+                  i.summary.toLowerCase().includes(q) ||
+                  i.projectKey.toLowerCase().includes(q) ||
+                  (i.assignee || "").toLowerCase().includes(q)
+                );
+              });
+
+              if (visibleItems.length === 0) {
+                return (
+                  <div style={{ color: "var(--on-surface-variant)", fontSize: 13, padding: "32px 0", textAlign: "center" }}>
+                    Tidak ada UQA yang cocok dengan filter.
+                  </div>
+                );
+              }
+
+              const summaryBar = (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 14px", background: "var(--surface-container)", borderRadius: 8, border: "1px solid var(--outline-variant)" }}>
+                  <div style={{ fontSize: 13, color: "var(--on-surface-variant)" }}>
+                    {visibleItems.length} UQA ditampilkan
+                    {visibleItems.length !== uqaItems.length && ` dari ${uqaItems.length}`}
+                    {uqaInDb.size > 0 && ` · ${uqaInDb.size} sudah di DB`}
+                  </div>
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+                    {uqaSyncResult && (
+                      <span style={{ fontSize: 12, color: uqaSyncResult.ok ? "var(--success)" : "var(--error)", display: "flex", alignItems: "center", gap: 5 }}>
+                        <span className="material-symbols" style={{ fontSize: 15 }}>{uqaSyncResult.ok ? "check_circle" : "error"}</span>
+                        {uqaSyncResult.msg}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="button-primary"
+                      onClick={handleSyncUqaToDb}
+                      disabled={uqaSyncing}
+                      style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}
+                    >
+                      <span className={`material-symbols${uqaSyncing ? " rotating" : ""}`} style={{ fontSize: 15 }}>
+                        {uqaSyncing ? "sync" : "cloud_upload"}
+                      </span>
+                      {uqaSyncing ? "Menyinkronkan..." : "Sync Semua ke DB"}
+                    </button>
+                  </div>
+                </div>
+              );
+
+              const jiraItems = visibleItems.filter((i) => !isNonJiraProject(i.projectKey));
+              const nonJiraItems = visibleItems.filter((i) => isNonJiraProject(i.projectKey));
 
               const headers = ["UQA Key", "Judul UQA", "Jira Project", "Status", "Assignee", "Status DB"];
 
@@ -1288,13 +1469,14 @@ export default function ProjectManagement() {
 
               return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                  {summaryBar}
                   {jiraItems.length > 0 && (
                     <div>
                       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-variant)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
                         <span className="material-symbols" style={{ fontSize: 15, color: "var(--primary)" }}>link</span>
                         Project dengan Test Plan di Jira ({jiraItems.length})
                       </div>
-                      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                      <div className="card" style={{ padding: 0, overflowX: "auto" }}>
                         <table className="data-table">
                           <thead>
                             <tr>
@@ -1320,7 +1502,7 @@ export default function ProjectManagement() {
                           — NCM OPS, Support, ECM, dan sejenisnya tidak memiliki Jira project / Test Execution
                         </span>
                       </div>
-                      <div className="card" style={{ padding: 0, overflow: "hidden", opacity: 0.75 }}>
+                      <div className="card" style={{ padding: 0, overflowX: "auto", opacity: 0.75 }}>
                         <table className="data-table">
                           <thead>
                             <tr>
@@ -1476,7 +1658,7 @@ export default function ProjectManagement() {
                         </div>
                       )}
 
-                      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                      <div className="card" style={{ padding: 0, overflowX: "auto" }}>
                         <table className="data-table">
                           <thead>
                             <tr>
@@ -1648,7 +1830,7 @@ export default function ProjectManagement() {
                         </div>
                       )}
 
-                      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                      <div className="card" style={{ padding: 0, overflowX: "auto" }}>
                         <table className="data-table">
                           <thead>
                             <tr>

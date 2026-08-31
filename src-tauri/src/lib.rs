@@ -233,6 +233,7 @@ pub fn run() {
             commands::bitbucket_commands::get_bitbucket_pr_details,
             commands::bitbucket_commands::fetch_bitbucket_diff,
             commands::bitbucket_commands::generate_test_scenarios_from_bitbucket,
+            commands::bitbucket_commands::sync_bitbucket_scenarios_to_jira,
             commands::bitbucket_commands::explain_bitbucket_code,
         ])
         .run(tauri::generate_context!())

@@ -991,61 +991,63 @@ export default function ManualTestCaseScreen() {
         >
           <div
             className="card"
-            style={{ maxWidth: 520, width: '90%', padding: 32 }}
+            style={{ maxWidth: 520, width: '90%', padding: 32, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="material-symbols" style={{ color: 'var(--warning, #f59e0b)' }}>warning</span>
-              XRay Test Steps Confirmation
-            </h3>
-            <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 16 }}>
-              {stepConflictCheck.hasSteps.length} test(s) already have existing steps:
-            </p>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 24, color: 'var(--on-surface)' }}>
-              {stepConflictCheck.hasSteps.join(', ')}
-            </div>
-            <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 24 }}>
-              Pilih aksi untuk step yang sudah ada:
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <button
-                className="primary-button"
-                onClick={() => confirmStepConflictUpdate("replace")}
-                style={{ justifyContent: 'flex-start', padding: '12px 16px', height: 'auto', fontSize: 14, borderRadius: 8 }}
-              >
-                <span className="material-symbols" style={{ fontSize: 20 }}>swap_horiz</span>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ fontWeight: 600 }}>Replace</div>
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>Timpa semua step yang ada dengan data dari Confluence</div>
-                </div>
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => confirmStepConflictUpdate("skip")}
-                style={{ justifyContent: 'flex-start', padding: '12px 16px', height: 'auto', fontSize: 14, borderRadius: 8 }}
-              >
-                <span className="material-symbols" style={{ fontSize: 20 }}>skip_next</span>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ fontWeight: 600 }}>Skip</div>
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>Lewati test case yang sudah memiliki step</div>
-                </div>
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => confirmStepConflictUpdate("append")}
-                style={{ justifyContent: 'flex-start', padding: '12px 16px', height: 'auto', fontSize: 14, borderRadius: 8 }}
-              >
-                <span className="material-symbols" style={{ fontSize: 20 }}>add</span>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ fontWeight: 600 }}>Append</div>
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>Gabungkan step baru di akhir step yang sudah ada</div>
-                </div>
-              </button>
+            <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="material-symbols" style={{ color: 'var(--warning, #f59e0b)' }}>warning</span>
+                XRay Test Steps Confirmation
+              </h3>
+              <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 16 }}>
+                {stepConflictCheck.hasSteps.length} test(s) already have existing steps:
+              </p>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 24, color: 'var(--on-surface)' }}>
+                {stepConflictCheck.hasSteps.join(', ')}
+              </div>
+              <p style={{ fontSize: 14, color: 'var(--on-surface-variant)', marginBottom: 24 }}>
+                Pilih aksi untuk step yang sudah ada:
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <button
+                  className="primary-button"
+                  onClick={() => confirmStepConflictUpdate("replace")}
+                  style={{ justifyContent: 'flex-start', padding: '12px 16px', height: 'auto', fontSize: 14, borderRadius: 8 }}
+                >
+                  <span className="material-symbols" style={{ fontSize: 20 }}>swap_horiz</span>
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontWeight: 600 }}>Replace</div>
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>Timpa semua step yang ada dengan data dari Confluence</div>
+                  </div>
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={() => confirmStepConflictUpdate("skip")}
+                  style={{ justifyContent: 'flex-start', padding: '12px 16px', height: 'auto', fontSize: 14, borderRadius: 8 }}
+                >
+                  <span className="material-symbols" style={{ fontSize: 20 }}>skip_next</span>
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontWeight: 600 }}>Skip</div>
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>Lewati test case yang sudah memiliki step</div>
+                  </div>
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={() => confirmStepConflictUpdate("append")}
+                  style={{ justifyContent: 'flex-start', padding: '12px 16px', height: 'auto', fontSize: 14, borderRadius: 8 }}
+                >
+                  <span className="material-symbols" style={{ fontSize: 20 }}>add</span>
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontWeight: 600 }}>Append</div>
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>Gabungkan step baru di akhir step yang sudah ada</div>
+                  </div>
+                </button>
+              </div>
             </div>
             <button
               className="secondary-button"
               onClick={() => setStepConflictCheck(null)}
-              style={{ width: '100%', marginTop: 16, padding: '10px', borderRadius: 8, fontSize: 14 }}
+              style={{ width: '100%', marginTop: 16, padding: '10px', borderRadius: 8, fontSize: 14, flexShrink: 0 }}
             >
               Cancel
             </button>

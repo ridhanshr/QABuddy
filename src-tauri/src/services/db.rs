@@ -1,4 +1,4 @@
-use sqlx::{mysql::MySqlPoolOptions, MySql, Pool};
+use sqlx::{mysql::MySqlPoolOptions, Executor, MySql, Pool};
 use std::time::Duration;
 
 pub type DbPool = Pool<MySql>;
@@ -64,9 +64,19 @@ pub async fn create_pool() -> Result<DbPool, DbError> {
 
     let url = resolve_database_url()?;
 
+    // Every session on this pool uses GMT+7 (Asia/Jakarta) for its
+    // connection-local time zone, so MySQL's NOW() — used everywhere in
+    // this app for last_sync/executed_at timestamps — writes local time
+    // instead of the MySQL server's own time zone (previously UTC/GMT+0).
     let pool = MySqlPoolOptions::new()
         .max_connections(max_conn)
         .acquire_timeout(Duration::from_secs(timeout_secs))
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                conn.execute("SET time_zone = '+07:00'").await?;
+                Ok(())
+            })
+        })
         .connect(&url)
         .await?;
 

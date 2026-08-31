@@ -42,6 +42,7 @@ import type {
   BRDGenerationResult,
   BRDTestCase,
   BrdChunkProgress,
+  BitbucketGenerateProgress,
   ExecutionMonitoringData,
   JiraProject,
   JiraProjectSource,
@@ -270,6 +271,8 @@ const api = {
     on<string>("extraction-progress", callback),
   onBrdChunkProgress: (callback: (progress: BrdChunkProgress) => void) =>
     on<BrdChunkProgress>("brd-chunk-progress", callback),
+  onBitbucketGenerateProgress: (callback: (progress: BitbucketGenerateProgress) => void) =>
+    on<BitbucketGenerateProgress>("bitbucket-generate-progress", callback),
 
   // ── BRD / Test Case Manager ─────────────────────────────────────────
   generateTestCasesFromBRD: (request: BRDGenerationRequest) =>
@@ -374,7 +377,7 @@ const api = {
   getMyUqaProjects: (username: string, displayName: string) => cmd<import("@shared/types").MonitoringUqaProject[]>("get_my_uqa_projects", { username, displayName }),
   getMyTestExecutions: (username: string, displayName: string) => cmd<import("@shared/types").MonitoringTestExecution[]>("get_my_test_executions", { username, displayName }),
   getTeByProjectPrefix: (projectPrefix: string) => cmd<import("@shared/types").MonitoringTestExecution[]>("get_te_by_project_prefix", { projectPrefix }),
-  getMyTestCasesByExecution: (teJiraKey: string, username: string) => cmd<import("@shared/types").MonitoringTestCase[]>("get_my_test_cases_by_execution", { teJiraKey, username }),
+  getMyTestCasesByExecution: (teJiraKey: string, username: string, displayName?: string) => cmd<import("@shared/types").MonitoringTestCase[]>("get_my_test_cases_by_execution", { teJiraKey, username, displayName }),
   getTestCasesByTeKey: (teJiraKey: string) => cmd<import("@shared/types").MonitoringTestCase[]>("get_test_cases_by_te_key", { teJiraKey }),
   fetchTcDetailsBatch: (tcKeys: string[]) => cmd<FetchTestStepsResult[]>("fetch_tc_details_batch", { tcKeys }),
   updateTestRunStatus: (teKey: string, tcKey: string, status: string) => cmd<void>("update_test_run_status", { teKey, tcKey, status }),
@@ -421,6 +424,8 @@ const api = {
     cmd<string>("fetch_bitbucket_diff", { prUrlOrId }),
   generateTestScenariosFromBitbucket: (request: import("@shared/types").BitbucketGenerateRequest) =>
     cmd<import("@shared/types").BitbucketGenerateResponse>("generate_test_scenarios_from_bitbucket", { request }),
+  syncBitbucketScenariosToJira: (request: import("@shared/types").BitbucketSyncScenariosRequest) =>
+    cmd<import("@shared/types").BitbucketSyncScenariosResponse>("sync_bitbucket_scenarios_to_jira", { request }),
   explainBitbucketCode: (request: import("@shared/types").BitbucketExplainRequest) =>
     cmd<import("@shared/types").BitbucketExplainResponse>("explain_bitbucket_code", { request }),
 };

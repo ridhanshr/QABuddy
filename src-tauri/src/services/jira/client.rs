@@ -242,8 +242,12 @@ impl JiraClient {
             self.xray.get_json_or_none(&path, &[]),
             self.fetch_issue_meta(issue_key),
         );
-        let data = step_data?;
-        let arr = data.as_array().filter(|a| !a.is_empty())?;
+        // Issue metadata (summary/labels/folder) is independent of whether
+        // Xray steps exist — a TC with no test steps still has a summary,
+        // so don't discard it just because the steps array is empty/absent.
+        let arr: Vec<Value> = step_data
+            .and_then(|d| d.as_array().cloned())
+            .unwrap_or_default();
         let extract_raw = |v: &Value| -> String {
             if let Some(s) = v.as_str() {
                 return s.to_string();
@@ -268,9 +272,6 @@ impl JiraClient {
             .map(|s| strip_xray_bullet_prefixes(&extract_raw(&s["data"])))
             .filter(|s| !s.is_empty())
             .collect();
-        if steps.is_empty() && results.is_empty() {
-            return None;
-        }
         Some((steps, results, input_data, vec![summary], labels, folder))
     }
 

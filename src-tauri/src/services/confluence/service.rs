@@ -445,7 +445,6 @@ impl ConfluenceService {
             let test_case_no = entry["testCaseNo"].as_str().unwrap_or("").to_string();
             let function_name = entry["functionName"].as_str().unwrap_or("").to_string();
             let scenario = entry["scenario"].as_str().unwrap_or("").to_string();
-            let category = Self::category_label(entry["category"].as_str().unwrap_or(""));
             let input_data = entry["inputData"].as_str().unwrap_or("").to_string();
             let steps = entry["steps"].as_str().unwrap_or("").to_string();
             let expected = entry["expectedResult"].as_str().unwrap_or("").to_string();
@@ -460,7 +459,6 @@ impl ConfluenceService {
             html.push_str(&format!("<tr><th class=\"confluenceTh\">No. Test Case</th><td class=\"confluenceTd\"><p>{}</p></td></tr>", escape_html(&test_case_no)));
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Function</th><td class=\"confluenceTd\"><p>{}</p></td></tr>", escape_html(&function_name)));
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Scenario</th><td class=\"confluenceTd\">{scenario_html}</td></tr>"));
-            html.push_str(&format!("<tr><th class=\"confluenceTh\">Kategori</th><td class=\"confluenceTd\"><p>{}</p></td></tr>", escape_html(category)));
             html.push_str(&format!("<tr><th class=\"confluenceTh\">Input Data</th><td class=\"confluenceTd\">{}</td></tr>", text_to_list_html(&input_data)));
             html.push_str(&format!(
                 "<tr><th class=\"confluenceTh\">Steps</th><td class=\"confluenceTd\">{}</td></tr>",

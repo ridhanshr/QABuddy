@@ -71,18 +71,56 @@ function Badge({ label, style }: { label: string; style?: React.CSSProperties })
   );
 }
 
-function ScenarioCard({ sc, num }: { sc: import("@shared/types").BitbucketTestScenario; num: number }) {
+function ScenarioCard({ sc, num, selected, onToggleSelect, syncedJiraKey, onUpdateSteps }: {
+  sc: import("@shared/types").BitbucketTestScenario;
+  num: number;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  syncedJiraKey?: string;
+  onUpdateSteps?: (steps: import("@shared/types").TestStepItem[]) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftSteps, setDraftSteps] = useState<import("@shared/types").TestStepItem[]>([]);
+
+  const startEditing = () => {
+    setDraftSteps(sc.steps.map((st, i) => ({ ...st, step: st.step || i + 1 })));
+    setEditing(true);
+  };
+
+  const saveEditing = () => {
+    onUpdateSteps?.(draftSteps);
+    setEditing(false);
+  };
+
+  const updateDraftStep = (idx: number, field: "action" | "expected", value: string) => {
+    setDraftSteps((prev) => prev.map((st, i) => (i === idx ? { ...st, [field]: value } : st)));
+  };
+
   const riskStyle =
     sc.riskLevel === "High" ? { bg: "var(--error-container)", color: "var(--on-error-container)" }
     : sc.riskLevel === "Medium" ? { bg: "color-mix(in srgb, var(--warning) 15%, transparent)", color: "var(--warning)", border: "1px solid currentColor" }
     : { bg: "var(--success-container, color-mix(in srgb, var(--success) 15%, transparent))", color: "var(--success)", border: "1px solid currentColor" };
 
   return (
-    <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 14, background: "var(--surface)" }}>
+    <div style={{ border: selected ? "1px solid var(--primary)" : "1px solid var(--outline-variant)", borderRadius: 10, padding: 14, background: "var(--surface)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={onToggleSelect}
+              style={{ width: 16, height: 16, cursor: "pointer", accentColor: "var(--primary)", flexShrink: 0 }}
+            />
+          )}
           <span style={{ fontWeight: 700, fontSize: 13, color: "var(--on-surface-variant)" }}>#{num}</span>
           <h5 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{sc.scenario}</h5>
+          {syncedJiraKey && (
+            <span className="badge" style={{ background: "var(--success-container)", color: "var(--success)", fontSize: 11 }}>
+              <span className="material-symbols" style={{ fontSize: 12, verticalAlign: "middle", marginRight: 2 }}>check_circle</span>
+              {syncedJiraKey}
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{
@@ -95,6 +133,16 @@ function ScenarioCard({ sc, num }: { sc: import("@shared/types").BitbucketTestSc
           </span>
           <span className="badge" style={{ background: "var(--surface-container-high)", fontSize: 11 }}>{sc.scenarioType}</span>
           <span className="badge" style={{ ...riskStyle }}>{sc.riskLevel}</span>
+          {onUpdateSteps && !editing && (
+            <button
+              type="button"
+              onClick={startEditing}
+              title="Edit Steps & Expected Result"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 2, display: "inline-flex" }}
+            >
+              <span className="material-symbols" style={{ fontSize: 16 }}>edit</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -108,7 +156,40 @@ function ScenarioCard({ sc, num }: { sc: import("@shared/types").BitbucketTestSc
         </div>
       )}
 
-       {sc.steps.length > 0 && (
+       {editing ? (
+        <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginTop: 4 }}>
+          <strong>Steps &amp; Expected Result (edit):</strong>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 6 }}>
+            {draftSteps.map((st, sIdx) => (
+              <div key={sIdx} style={{ border: "1px solid var(--outline-variant)", borderRadius: 6, padding: 8 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Step {st.step || sIdx + 1}</div>
+                <label style={{ display: "block", fontSize: 11, marginBottom: 2 }}>Aksi (Test Step)</label>
+                <textarea
+                  value={st.action}
+                  onChange={(e) => updateDraftStep(sIdx, "action", e.target.value)}
+                  rows={2}
+                  style={{ width: "100%", boxSizing: "border-box", fontSize: 12, padding: 6, borderRadius: 4, border: "1px solid var(--outline-variant)", background: "var(--surface)", color: "var(--on-surface)", resize: "vertical" }}
+                />
+                <label style={{ display: "block", fontSize: 11, margin: "6px 0 2px" }}>Expected Result</label>
+                <textarea
+                  value={st.expected}
+                  onChange={(e) => updateDraftStep(sIdx, "expected", e.target.value)}
+                  rows={2}
+                  style={{ width: "100%", boxSizing: "border-box", fontSize: 12, padding: 6, borderRadius: 4, border: "1px solid var(--outline-variant)", background: "var(--surface)", color: "var(--on-surface)", resize: "vertical" }}
+                />
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button type="button" className="primary-button" onClick={saveEditing} style={{ fontSize: 12, padding: "5px 12px", height: 30 }}>
+              Simpan Perubahan
+            </button>
+            <button type="button" className="secondary-button" onClick={() => setEditing(false)} style={{ fontSize: 12, padding: "5px 12px", height: 30 }}>
+              Batal
+            </button>
+          </div>
+        </div>
+      ) : sc.steps.length > 0 && (
         <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginTop: 4 }}>
           <strong>Steps &amp; Expected Result:</strong>
           <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
@@ -450,10 +531,20 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [bitbucketSummary, setBitbucketSummary] = useState<import("@shared/types").BitbucketDiffSummary | null>(null);
   const [bitbucketGenerateResult, setBitbucketGenerateResult] = useState<import("@shared/types").BitbucketGenerateResponse | null>(null);
   const [bitbucketError, setBitbucketError] = useState("");
+  const [bitbucketProgress, setBitbucketProgress] = useState<import("@shared/types").BitbucketGenerateProgress | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [fileFilter, setFileFilter] = useState<string>("All");
   const [minConfidence, setMinConfidence] = useState<number>(0);
   const [filterRisk, setFilterRisk] = useState<string>("All");
+
+  // ── Bitbucket → Jira sync state ──
+  const [selectedScenarioIndices, setSelectedScenarioIndices] = useState<Set<number>>(new Set());
+  const [bitbucketSyncProject, setBitbucketSyncProject] = useState("");
+  const [bitbucketSyncFolder, setBitbucketSyncFolder] = useState("");
+  const [bitbucketSyncFolders, setBitbucketSyncFolders] = useState<{ label: string; value: string }[]>([]);
+  const [bitbucketSyncFoldersLoading, setBitbucketSyncFoldersLoading] = useState(false);
+  const [bitbucketSyncing, setBitbucketSyncing] = useState(false);
+  const [bitbucketSyncResult, setBitbucketSyncResult] = useState<import("@shared/types").BitbucketSyncScenariosResponse | null>(null);
 
   const handleFetchBitbucketPr = useCallback(async () => {
     if (!bitbucketPrUrl.trim()) return;
@@ -477,6 +568,12 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     if (!bitbucketPrUrl.trim()) return;
     setBitbucketGenerating(true);
     setBitbucketError("");
+    setBitbucketProgress(null);
+    setSelectedScenarioIndices(new Set());
+    setBitbucketSyncResult(null);
+    const unlisten = window.qaBuddy.onBitbucketGenerateProgress((progress) => {
+      setBitbucketProgress(progress);
+    });
     try {
       const res = await window.qaBuddy.generateTestScenariosFromBitbucket({
         prUrlOrId: bitbucketPrUrl,
@@ -487,7 +584,9 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     } catch (e: any) {
       setBitbucketError(e?.message || String(e));
     } finally {
+      unlisten();
       setBitbucketGenerating(false);
+      setBitbucketProgress(null);
     }
   }, [bitbucketPrUrl, selectedFiles]);
 
@@ -591,6 +690,72 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     fetchXrayFolders(projectKey);
   }, [fetchXrayFolders]);
 
+  const handleBitbucketSyncProjectChange = useCallback(async (projectKey: string) => {
+    setBitbucketSyncProject(projectKey);
+    setBitbucketSyncFolder("");
+    setBitbucketSyncFolders([]);
+    if (!projectKey) return;
+    setBitbucketSyncFoldersLoading(true);
+    try {
+      const tree = await window.qaBuddy.getXrayFolders(projectKey);
+      setBitbucketSyncFolders(flattenFolders(tree));
+    } catch {
+      setBitbucketSyncFolders([]);
+    } finally {
+      setBitbucketSyncFoldersLoading(false);
+    }
+  }, []);
+
+  const toggleScenarioSelected = useCallback((idx: number) => {
+    setSelectedScenarioIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }, []);
+
+  const updateScenarioSteps = useCallback((idx: number, steps: import("@shared/types").TestStepItem[]) => {
+    setBitbucketGenerateResult((prev) => {
+      if (!prev) return prev;
+      const scenarios = prev.scenarios.map((s, i) => (i === idx ? { ...s, steps } : s));
+      return { ...prev, scenarios };
+    });
+  }, []);
+
+  const handleSyncBitbucketScenariosToJira = useCallback(async () => {
+    if (!bitbucketGenerateResult || !bitbucketSyncProject || selectedScenarioIndices.size === 0) return;
+    setBitbucketSyncing(true);
+    setBitbucketSyncResult(null);
+    try {
+      const scenarios = Array.from(selectedScenarioIndices)
+        .sort((a, b) => a - b)
+        .map((idx) => bitbucketGenerateResult.scenarios[idx])
+        .filter(Boolean);
+      const res = await window.qaBuddy.syncBitbucketScenariosToJira({
+        projectKey: bitbucketSyncProject,
+        folderPath: bitbucketSyncFolder || undefined,
+        scenarios,
+      });
+      setBitbucketSyncResult(res);
+      // Deselect only the scenarios that synced successfully — failed ones
+      // stay checked so the user can retry without re-picking them.
+      const succeededScenarios = new Set(res.results.filter(r => r.success).map(r => r.scenario));
+      setSelectedScenarioIndices((prev) => {
+        const next = new Set(prev);
+        Array.from(next).forEach((idx) => {
+          const sc = bitbucketGenerateResult.scenarios[idx];
+          if (sc && succeededScenarios.has(sc.scenario)) next.delete(idx);
+        });
+        return next;
+      });
+    } catch (e: any) {
+      setBitbucketSyncResult({ results: [{ scenario: "", success: false, error: e?.message || String(e) }] });
+    } finally {
+      setBitbucketSyncing(false);
+    }
+  }, [bitbucketGenerateResult, bitbucketSyncProject, bitbucketSyncFolder, selectedScenarioIndices]);
+
   const handleGenerate = useCallback(async () => {
     setSyncResult(null);
     await handleBrdGenerate(confluencePageId, generationProject);
@@ -644,17 +809,19 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
 
   return (
     <div>
-      <div className="page-header" style={{ marginBottom: 20 }}>
-        <div className="page-header-left">
-          <div className="screen-icon">
-            <span className="material-symbols filled" style={{ fontSize: 22 }}>assignment</span>
-          </div>
-          <div>
-            <h2 className="text-display" style={{ margin: 0 }}>Test Case Search</h2>
-            <p className="text-body-lg" style={{ marginTop: 2 }}>Cari test scenario dari Jira Xray.</p>
+      {!initialTab && (
+        <div className="page-header" style={{ marginBottom: 20 }}>
+          <div className="page-header-left">
+            <div className="screen-icon">
+              <span className="material-symbols filled" style={{ fontSize: 22 }}>assignment</span>
+            </div>
+            <div>
+              <h2 className="text-display" style={{ margin: 0 }}>Test Case Search</h2>
+              <p className="text-body-lg" style={{ marginTop: 2 }}>Cari test scenario dari Jira Xray.</p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {!initialTab && (
         <div className="doc-sync-tabs" style={{ marginBottom: 20 }}>
@@ -1124,6 +1291,19 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                 </>
               )}
 
+              {bitbucketGenerating && (
+                <div style={{ borderRadius: 8, overflow: "hidden", border: "1px solid var(--secondary)", marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "var(--secondary-container)" }}>
+                    <span className="material-symbols rotating" style={{ color: "var(--secondary)", flexShrink: 0 }}>sync</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ margin: 0, fontWeight: 600, fontSize: 13 }}>
+                        {bitbucketProgress?.message ?? "Memulai proses generate..."}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Impact & Gap Analysis Section */}
               {bitbucketGenerateResult && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
@@ -1214,6 +1394,83 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                     </div>
                   </div>
 
+                  {/* Send Selected to Jira */}
+                  <div style={{ border: "1px solid var(--outline-variant)", borderRadius: 10, padding: 14, background: "var(--surface-container-lowest)", marginBottom: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <span className="material-symbols" style={{ fontSize: 17, color: "var(--primary)" }}>send</span>
+                      <h5 style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>Send to Jira Test Repository</h5>
+                      <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
+                        {selectedScenarioIndices.size} dari {bitbucketGenerateResult.scenarios.length} skenario dipilih
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+                      <div style={{ flex: 1, minWidth: 200 }}>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--on-surface-variant)" }}>
+                          Jira Project
+                        </label>
+                        <SearchableSelect
+                          value={bitbucketSyncProject}
+                          onChange={handleBitbucketSyncProjectChange}
+                          options={testRepositoryProjects.map((p) => ({ value: p.key, label: `${p.key} - ${p.name}` }))}
+                          placeholder="Select target project..."
+                        />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 200 }}>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--on-surface-variant)" }}>
+                          Xray Test Repository Folder
+                          {bitbucketSyncFoldersLoading && (
+                            <span style={{ marginLeft: 8, fontSize: 11, color: "var(--primary)" }}>Loading folders...</span>
+                          )}
+                        </label>
+                        {bitbucketSyncProject ? (
+                          <SearchableSelect
+                            value={bitbucketSyncFolder}
+                            onChange={setBitbucketSyncFolder}
+                            options={[{ value: "", label: "— Tidak ada folder (root) —" }, ...bitbucketSyncFolders]}
+                            placeholder="Pilih folder Xray..."
+                          />
+                        ) : (
+                          <p style={{ margin: 0, fontSize: 12, color: "var(--on-surface-variant)" }}>Pilih project terlebih dahulu.</p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={handleSyncBitbucketScenariosToJira}
+                        disabled={bitbucketSyncing || !bitbucketSyncProject || selectedScenarioIndices.size === 0}
+                        style={{ height: 38 }}
+                      >
+                        <span className="material-symbols" style={{ fontSize: 17 }}>upload</span>
+                        {bitbucketSyncing ? "Syncing..." : `Send Selected to Jira (${selectedScenarioIndices.size})`}
+                      </button>
+                    </div>
+
+                    {bitbucketSyncResult && (
+                      <div style={{ marginTop: 10, fontSize: 12 }}>
+                        {(() => {
+                          const succeeded = bitbucketSyncResult.results.filter(r => r.success).length;
+                          const failed = bitbucketSyncResult.results.filter(r => !r.success).length;
+                          return (
+                            <div style={{
+                              padding: "8px 12px", borderRadius: 6,
+                              background: failed === 0 ? "var(--success-container)" : "var(--error-container)",
+                              color: failed === 0 ? "var(--success)" : "var(--on-error-container)",
+                            }}>
+                              {succeeded} berhasil dikirim ke Jira{failed > 0 ? `, ${failed} gagal` : ""}.
+                              {failed > 0 && (
+                                <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+                                  {bitbucketSyncResult.results.filter(r => !r.success).map((r, i) => (
+                                    <li key={i}>{r.scenario || "(unknown)"}: {r.error}</li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+
                   {(() => {
                     const filtered = bitbucketGenerateResult.scenarios.filter(
                       s => s.confidence >= minConfidence && (fileFilter === "All" || (attributeScenarioToFile(s, [fileFilter], selectedFiles.length === 1 ? selectedFiles[0] : undefined) === fileFilter))
@@ -1221,6 +1478,12 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                     if (filtered.length === 0) {
                       return <div className="empty-state" style={{ fontSize: 13 }}>Tidak ada scenario yang cocok dengan filter.</div>;
                     }
+                    const allScenarios = bitbucketGenerateResult.scenarios;
+                    const syncedKeyByScenario = new Map(
+                      (bitbucketSyncResult?.results || [])
+                        .filter(r => r.success && r.jiraKey)
+                        .map(r => [r.scenario, r.jiraKey as string])
+                    );
                     const groupFiles = fileFilter === "All" ? (bitbucketSummary?.files || []).filter(f => f.explainable !== false).map(f => f.path) : [fileFilter];
                      const groups = groupFiles.map(path => ({ path, scenarios: filtered.filter(s => attributeScenarioToFile(s, [path], selectedFiles.length === 1 ? selectedFiles[0] : undefined) === path) }))
                       .filter(g => g.scenarios.length > 0);
@@ -1236,9 +1499,20 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                               <span className="badge" style={{ background: "var(--primary-container)", color: "var(--on-primary-container)" }}>{group.scenarios.length}</span>
                             </div>
                             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                              {group.scenarios.map((sc, idx) => (
-                                <ScenarioCard key={idx} sc={sc} num={idx + 1} />
-                              ))}
+                              {group.scenarios.map((sc, idx) => {
+                                const globalIdx = allScenarios.indexOf(sc);
+                                return (
+                                  <ScenarioCard
+                                    key={idx}
+                                    sc={sc}
+                                    num={idx + 1}
+                                    selected={selectedScenarioIndices.has(globalIdx)}
+                                    onToggleSelect={() => toggleScenarioSelected(globalIdx)}
+                                    onUpdateSteps={(steps) => updateScenarioSteps(globalIdx, steps)}
+                                    syncedJiraKey={syncedKeyByScenario.get(sc.scenario)}
+                                  />
+                                );
+                              })}
                             </div>
                           </div>
                         ))}
@@ -1251,9 +1525,20 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                               <span className="badge" style={{ background: "var(--surface-container-high)" }}>{ungrouped.length}</span>
                             </div>
                             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                              {ungrouped.map((sc, idx) => (
-                                <ScenarioCard key={idx} sc={sc} num={idx + 1} />
-                              ))}
+                              {ungrouped.map((sc, idx) => {
+                                const globalIdx = allScenarios.indexOf(sc);
+                                return (
+                                  <ScenarioCard
+                                    key={idx}
+                                    sc={sc}
+                                    num={idx + 1}
+                                    selected={selectedScenarioIndices.has(globalIdx)}
+                                    onToggleSelect={() => toggleScenarioSelected(globalIdx)}
+                                    onUpdateSteps={(steps) => updateScenarioSteps(globalIdx, steps)}
+                                    syncedJiraKey={syncedKeyByScenario.get(sc.scenario)}
+                                  />
+                                );
+                              })}
                             </div>
                           </div>
                         )}

@@ -123,6 +123,50 @@ pub struct BitbucketGenerateResponse {
     pub scenarios: Vec<BitbucketTestScenario>,
 }
 
+/// Progress update emitted while `generate_scenarios` runs, so the UI can
+/// show which stage of the pipeline is currently in flight (there is no
+/// natural per-item percentage — this is a single-shot LLM call, not a
+/// per-feature loop like the BRD generator).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BitbucketGenerateProgress {
+    /// Machine-readable stage id, e.g. "fetch_pr", "fetch_diff", "impact",
+    /// "rag_context", "calling_ai", "done".
+    pub stage: String,
+    /// Human-readable message (Bahasa Indonesia) shown to the user.
+    pub message: String,
+}
+
+/// Request to sync a set of user-selected Bitbucket-generated scenarios into
+/// a Jira/Xray Test Repository project (optionally into a specific folder),
+/// and cache them in the local `test_case` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BitbucketSyncScenariosRequest {
+    pub project_key: String,
+    #[serde(default)]
+    pub folder_path: Option<String>,
+    pub scenarios: Vec<BitbucketTestScenario>,
+}
+
+/// Result of syncing one scenario to Jira.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BitbucketSyncScenarioResult {
+    pub scenario: String,
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jira_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BitbucketSyncScenariosResponse {
+    pub results: Vec<BitbucketSyncScenarioResult>,
+}
+
 /// Request to explain what a piece of Bitbucket PR code does (AI Code Explainer).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

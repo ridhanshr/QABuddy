@@ -422,14 +422,14 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
     setTcSearch("");
     setLoadingTC(true);
     try {
-      const tcs = await window.qaBuddy.getMyTestCasesByExecution(te.te_jira_key, username);
+      const tcs = await window.qaBuddy.getMyTestCasesByExecution(te.te_jira_key, username, displayName);
       setTestCases(tcs);
     } catch (e: any) {
       setErrorTC(e?.message || String(e));
     } finally {
       setLoadingTC(false);
     }
-  }, [username]);
+  }, [username, displayName]);
 
   async function handleChangeTeStatus(te: MonitoringTestExecution, newStatus: string) {
     // Update DB
@@ -741,27 +741,28 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
           <div style={{ overflowX: "auto", borderRadius: 10, border: "1px solid var(--outline-variant)" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
               <colgroup>
-                <col style={{ width: "14%" }} />
-                <col style={{ width: "40%" }} />
-                <col style={{ width: "14%" }} />
-                <col style={{ width: "18%" }} />
-                <col style={{ width: "14%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "32%" }} />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "15%" }} />
+                <col style={{ width: "15%" }} />
+                <col style={{ width: "13%" }} />
               </colgroup>
               <thead>
                 <tr>
-                  {["TC Key", "Title", "Status Run", "Executed By", "Executed At"].map(h => (
+                  {["TC Key", "Title", "Status Run", "Assignee", "Executed By", "Executed At"].map(h => (
                     <th key={h} style={{ ...header, whiteSpace: "nowrap" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {loadingTC ? (
-                  <tr><td colSpan={5} style={{ ...cell, textAlign: "center", color: "var(--on-surface-variant)" }}>
+                  <tr><td colSpan={6} style={{ ...cell, textAlign: "center", color: "var(--on-surface-variant)" }}>
                     <span className="material-symbols spin" style={{ fontSize: 18, verticalAlign: "middle", marginRight: 6 }}>progress_activity</span>
                     Memuat Test Cases...
                   </td></tr>
                 ) : filteredTestCases.length === 0 ? (
-                  <tr><td colSpan={5} style={{ ...cell, textAlign: "center", color: "var(--on-surface-variant)" }}>
+                  <tr><td colSpan={6} style={{ ...cell, textAlign: "center", color: "var(--on-surface-variant)" }}>
                     {tcSearchLower ? <>Tidak ada TC yang cocok dengan "<strong>{tcSearch}</strong>"</> : <>Tidak ada test case yang dieksekusi oleh <strong>{displayName || username}</strong> pada TE ini</>}
                   </td></tr>
                 ) : filteredTestCases.map(tc => (
@@ -789,6 +790,7 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
                         onSelect={(s) => handleChangeTcStatus(tc, s)}
                       />
                     </td>
+                    <td style={cell}>{tc.assignee || "—"}</td>
                     <td style={cell}>{tc.executed_by || "—"}</td>
                     <td style={{ ...cell, fontSize: 12, color: "var(--on-surface-variant)" }}>{tc.executed_at || "—"}</td>
                   </tr>

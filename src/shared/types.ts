@@ -145,6 +145,23 @@ export interface BitbucketGenerateResponse {
   scenarios: BitbucketTestScenario[];
 }
 
+export interface BitbucketSyncScenariosRequest {
+  projectKey: string;
+  folderPath?: string;
+  scenarios: BitbucketTestScenario[];
+}
+
+export interface BitbucketSyncScenarioResult {
+  scenario: string;
+  success: boolean;
+  jiraKey?: string;
+  error?: string;
+}
+
+export interface BitbucketSyncScenariosResponse {
+  results: BitbucketSyncScenarioResult[];
+}
+
 export interface BitbucketExplainRequest {
   prUrlOrId: string;
   filePath: string;
@@ -724,6 +741,7 @@ export interface DesktopApi {
   cancelRequest: (requestId: string) => void;
   onExtractionProgress: (callback: (msg: string) => void) => () => void;
   onBrdChunkProgress: (callback: (progress: BrdChunkProgress) => void) => () => void;
+  onBitbucketGenerateProgress: (callback: (progress: BitbucketGenerateProgress) => void) => () => void;
   getUqaField: () => Promise<{ id: string; name: string; type: string; isCustom: boolean } | null>;
   updateUqaSchedule: (config: UqaConfig) => Promise<void>;
   getUqaSchedule: () => Promise<UqaConfig>;
@@ -753,7 +771,7 @@ export interface DesktopApi {
   getMyUqaProjects: (username: string, displayName: string) => Promise<MonitoringUqaProject[]>;
   getMyTestExecutions: (username: string, displayName: string) => Promise<MonitoringTestExecution[]>;
   getTeByProjectPrefix: (projectPrefix: string) => Promise<MonitoringTestExecution[]>;
-  getMyTestCasesByExecution: (teJiraKey: string, username: string) => Promise<MonitoringTestCase[]>;
+  getMyTestCasesByExecution: (teJiraKey: string, username: string, displayName?: string) => Promise<MonitoringTestCase[]>;
   getTestCasesByTeKey: (teJiraKey: string) => Promise<MonitoringTestCase[]>;
   fetchTcDetailsBatch: (tcKeys: string[]) => Promise<FetchTestStepsResult[]>;
   updateTestRunStatus: (teKey: string, tcKey: string, status: string) => Promise<void>;
@@ -809,6 +827,7 @@ export interface DesktopApi {
   getBitbucketPrDetails: (prUrlOrId: string) => Promise<BitbucketDiffSummary>;
   fetchBitbucketDiff: (prUrlOrId: string) => Promise<string>;
   generateTestScenariosFromBitbucket: (request: BitbucketGenerateRequest) => Promise<BitbucketGenerateResponse>;
+  syncBitbucketScenariosToJira: (request: BitbucketSyncScenariosRequest) => Promise<BitbucketSyncScenariosResponse>;
   explainBitbucketCode: (request: BitbucketExplainRequest) => Promise<BitbucketExplainResponse>;
 }
 
@@ -1259,6 +1278,11 @@ export interface BrdChunkProgress {
   testExecutionId: string;
 }
 
+export interface BitbucketGenerateProgress {
+  stage: string;
+  message: string;
+}
+
 export interface TestPlan {
   id: string;
   jiraTestPlanKey: string | null;
@@ -1334,6 +1358,7 @@ export interface MonitoringTestCase {
   te_jira_key: string;
   title: string | null;
   test_run_status: string | null;
+  assignee: string | null;
   executed_by: string | null;
   executed_at: string | null;
 }

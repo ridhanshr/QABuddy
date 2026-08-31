@@ -15,6 +15,7 @@ use crate::services::rag::{
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 
 const BITBUCKET_TIMEOUT_SECS: u64 = 60;
 const CHANGES_PAGE_SIZE: u32 = 200;
@@ -595,12 +596,23 @@ impl BitbucketService {
             .join("/")
     }
 
+    fn emit_generate_progress(app_handle: Option<&AppHandle>, stage: &str, message: impl Into<String>) {
+        if let Some(handle) = app_handle {
+            let _ = handle.emit(
+                "bitbucket-generate-progress",
+                BitbucketGenerateProgress { stage: stage.to_string(), message: message.into() },
+            );
+        }
+    }
+
     pub async fn generate_scenarios(
         &self,
         req: BitbucketGenerateRequest,
         ollama: OllamaClient,
         rag: RagService,
+        app_handle: Option<&AppHandle>,
     ) -> Result<BitbucketGenerateResponse, String> {
+        Self::emit_generate_progress(app_handle, "fetch_pr", "Mengambil detail Pull Request...");
         let pr_summary = self.fetch_pr_details(&req.pr_url_or_id).await?;
         let cache_key = BitbucketCacheService::make_key(
             SCENARIO_SCHEMA_VERSION,
@@ -621,6 +633,7 @@ impl BitbucketService {
         }
         log::info!(target: "Bitbucket", "generate_scenarios: cache miss — generating for {}", cache_key);
 
+        Self::emit_generate_progress(app_handle, "fetch_diff", "Mengambil code diff dari Bitbucket...");
         let raw_diff = self
             .fetch_raw_diff(
                 &pr_summary.project_key,
@@ -682,6 +695,7 @@ impl BitbucketService {
         let section_by_path: HashMap<String, String> = sections.iter().cloned().collect();
 
         // 1. Dependency & Impact Analysis (changelog + binary files excluded)
+        Self::emit_generate_progress(app_handle, "impact", "Menganalisis Change Impact...");
         let impact_files: Vec<BitbucketFileChange> = pr_summary
             .files
             .iter()
@@ -691,6 +705,7 @@ impl BitbucketService {
         let impact = ImpactAnalyzer::analyze(&impact_files, &filtered_diff);
 
         // 2. Existing Test Search & Gap Analysis
+        Self::emit_generate_progress(app_handle, "gap", "Memfilter Existing Tests (Gap Analysis)...");
         let gap = GapAnalyzer::analyze(pr_summary.jira_ticket_key.as_deref(), &impact, 0);
 
         // 3. Always use the Active Model configured in Settings.
@@ -708,6 +723,7 @@ impl BitbucketService {
             "{}:{}:{}",
             pr_summary.project_key, pr_summary.repo_slug, pr_summary.latest_commit_hash
         );
+        Self::emit_generate_progress(app_handle, "rag_context", "Mengindeks perubahan kode ke Knowledge Base...");
         let (context_block, covered) = self
             .build_rag_context(
                 &rag,
@@ -826,6 +842,11 @@ Output JSON format:
             } else {
                 (retry_system_prompt.as_str(), Some(0.2_f64))
             };
+            Self::emit_generate_progress(
+                app_handle,
+                "calling_ai",
+                format!("Menghasilkan skenario dengan AI (percobaan {}/3)...", attempt + 1),
+            );
             let ai_raw_response = ollama
                 .chat_json_schema(
                     sp,
@@ -885,7 +906,99 @@ Output JSON format:
             log::warn!(target: "Bitbucket", "generate_scenarios: 0 scenarios — result NOT cached so a retry can regenerate");
         }
 
+        Self::emit_generate_progress(app_handle, "done", "Selesai.");
         Ok(response)
+    }
+
+    /// Create a Jira/Xray "Test" issue for each selected scenario (title,
+    /// steps and expected result carried over from the AI-generated
+    /// scenario), then optionally move all successfully-created issues into
+    /// the chosen Xray Test Repository folder. Mirrors the BRD generator's
+    /// `sync_test_cases_to_jira`, minus the local JSON store bookkeeping
+    /// (Bitbucket scenarios aren't persisted server-side between calls —
+    /// the frontend sends back exactly the scenarios the user selected).
+    pub async fn sync_scenarios_to_jira(
+        &self,
+        req: &BitbucketSyncScenariosRequest,
+    ) -> Result<Vec<(String, bool, Option<String>, Option<String>)>, String> {
+        if req.scenarios.is_empty() {
+            return Err("Tidak ada skenario yang dipilih.".to_string());
+        }
+
+        let jira = crate::services::jira::JiraService::new();
+        let mut jira_cfg = self.config.jira.clone();
+        if !req.project_key.is_empty() {
+            jira_cfg.project_key = req.project_key.clone();
+        }
+
+        let assignee_account_id: Option<String> = match jira.client(&jira_cfg) {
+            Ok(client) => match client.get_current_user().await {
+                Ok(user) => user["accountId"].as_str().map(str::to_string),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        // (scenario title, success, jira_key, error)
+        let mut results: Vec<(String, bool, Option<String>, Option<String>)> = Vec::new();
+        let mut synced_keys: Vec<String> = Vec::new();
+
+        for sc in &req.scenarios {
+            let steps_lines: String = sc
+                .steps
+                .iter()
+                .map(|s| format!("{}. {}", s.step, s.action))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let expected_lines: String = sc
+                .steps
+                .iter()
+                .map(|s| format!("{}. {}", s.step, s.expected))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let preconditions = sc.preconditions.join("\n");
+            let mut description = String::new();
+            if !preconditions.is_empty() {
+                description.push_str(&format!("Preconditions\n{preconditions}\n\n"));
+            }
+            description.push_str(&format!("Test Steps\n{steps_lines}\n\nExpected Result\n{expected_lines}"));
+
+            let mut fields = serde_json::json!({
+                "project":   { "key": jira_cfg.project_key },
+                "summary":   sc.scenario,
+                "issuetype": { "name": "Test" },
+                "description": description,
+                "labels": [sc.scenario_type.clone()],
+            });
+            if let Some(ref account_id) = assignee_account_id {
+                fields["assignee"] = serde_json::json!({ "accountId": account_id });
+            }
+            let body = serde_json::json!({ "fields": fields });
+
+            match jira.client(&jira_cfg) {
+                Err(e) => results.push((sc.scenario.clone(), false, None, Some(format!("Client error: {e}")))),
+                Ok(client) => match client.api.post_json("/issue", &body).await {
+                    Ok(resp) => {
+                        let key = resp["key"].as_str().unwrap_or("").to_string();
+                        synced_keys.push(key.clone());
+                        results.push((sc.scenario.clone(), true, Some(key), None));
+                    }
+                    Err(e) => results.push((sc.scenario.clone(), false, None, Some(e.to_string()))),
+                },
+            }
+        }
+
+        if let Some(fp) = req.folder_path.as_deref() {
+            if !fp.is_empty() && !synced_keys.is_empty() {
+                if let Ok(client) = jira.client(&jira_cfg) {
+                    if let Err(e) = client.move_tests_to_folder(&jira_cfg.project_key, fp, &synced_keys).await {
+                        log::warn!(target: "Bitbucket", "sync_scenarios_to_jira: folder assignment failed (non-fatal): {e}");
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     /// Explain what a piece of Bitbucket PR code does, in plain language for a

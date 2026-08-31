@@ -8,6 +8,7 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root: "src/renderer",
+  envDir: rootDir,
   plugins: [react()],
   resolve: {
     alias: {
@@ -39,7 +40,9 @@ export default defineConfig({
       ? { protocol: "ws", host, port: 1421 }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/target/**", "**/node_modules/**", "**/.git/**"],
+      ignored: ["**/src-tauri/**", "**/node_modules/**", "**/.git/**", "**/dist/**"],
+      stabilityThreshold: 1000,
+      pollInterval: 1000,
     },
   },
   envPrefix: ["VITE_", "TAURI_"],

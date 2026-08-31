@@ -309,9 +309,12 @@ export default function App() {
   };
 
   // Login form only applies to production (built) builds. In development the
-  // app opens directly with a placeholder user so you can iterate faster.
+  // app opens directly as VITE_DEV_PN (set in .env) so features that filter
+  // by PN/username behave the same as a real login, without needing to
+  // log in manually on every `npm run dev`. Falls back to "dev" if unset.
   const isDev = import.meta.env.DEV;
-  const activeUser = loggedInUser ?? (isDev ? "dev" : null);
+  const devPn = (import.meta.env.VITE_DEV_PN as string | undefined) || "dev";
+  const activeUser = loggedInUser ?? (isDev ? devPn : null);
 
   if (!activeUser) {
     return <Login onLogin={handleLogin} />;
