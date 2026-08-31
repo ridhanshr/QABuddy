@@ -41,8 +41,10 @@ export default defineConfig({
       : undefined,
     watch: {
       ignored: ["**/src-tauri/**", "**/node_modules/**", "**/.git/**", "**/dist/**"],
-      stabilityThreshold: 1000,
-      pollInterval: 1000,
+      awaitWriteFinish: {
+        stabilityThreshold: 1000,
+        pollInterval: 1000,
+      },
     },
   },
   envPrefix: ["VITE_", "TAURI_"],
