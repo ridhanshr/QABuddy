@@ -487,6 +487,30 @@ impl JiraClient {
         self.append_to_description(issue_key, date, activity, notes).await
     }
 
+    /// Create an issue link between two issues via POST /issueLink.
+    /// `link_type` must match a configured Jira issue link type name exactly
+    /// (fetch valid names via `get_issue_link_types`).
+    pub async fn create_issue_link(
+        &self,
+        link_type: &str,
+        inward_key: &str,
+        outward_key: &str,
+    ) -> Result<()> {
+        let body = serde_json::json!({
+            "type": { "name": link_type },
+            "inwardIssue": { "key": inward_key },
+            "outwardIssue": { "key": outward_key },
+        });
+        self.api.post_json_void("/issueLink", &body).await
+    }
+
+    /// Fetch all issue link types configured on this Jira instance
+    /// (GET /issueLinkType) — returns raw {id, name, inward, outward} objects.
+    pub async fn get_issue_link_types(&self) -> Result<Vec<Value>> {
+        let v: Value = self.api.get_json("/issueLinkType", &[]).await?;
+        Ok(v["issueLinkTypes"].as_array().cloned().unwrap_or_default())
+    }
+
     /// Fetch issue links, filtering for Test Execution type.
     pub async fn get_issue_links(&self, issue_key: &str) -> Result<Vec<Value>> {
         let path = format!("/issue/{issue_key}");
@@ -564,6 +588,22 @@ impl JiraClient {
         // Fallback: JSON body form (Xray Cloud / newer Raven).
         let path = format!("/testrun/{run_id}/status");
         let body = serde_json::json!({ "status": status });
+        self.xray.put_json_void(&path, &body).await
+    }
+
+    /// Update a single test run's assignee via Xray PUT /testrun/{id}/assignee.
+    /// Xray Raven v1 (Server/DC) reads assignee as a query param, keyed by username.
+    pub async fn update_test_run_assignee(&self, run_id: u32, assignee: &str) -> Result<()> {
+        // Try query-param form first (Xray Raven v1).
+        let path_with_query = format!("/testrun/{run_id}/assignee?assignee={assignee}");
+        let empty = serde_json::json!({});
+        match self.xray.put_json_void(&path_with_query, &empty).await {
+            Ok(()) => return Ok(()),
+            Err(_) => {}
+        }
+        // Fallback: JSON body form.
+        let path = format!("/testrun/{run_id}/assignee");
+        let body = serde_json::json!({ "assignee": assignee });
         self.xray.put_json_void(&path, &body).await
     }
 }

@@ -94,6 +94,8 @@ pub struct DefectCreateDraft {
     pub component: String,
     pub version: String,
     pub severity: String,
+    #[serde(default)]
+    pub tp_jira_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

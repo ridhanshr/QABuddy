@@ -26,7 +26,8 @@ interface QuickUpdateDialogProps {
 
 function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogProps) {
   const [activity, setActivity] = useState("");
-  const [phase, setPhase] = useState<"SIT" | "UAT" | "DT">("SIT");
+  const [phase, setPhase] = useState<"SIT" | "UAT" | "DT" | "Others">("SIT");
+  const [customPhase, setCustomPhase] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [transitions, setTransitions] = useState<UqaTransition[]>([]);
   const [selectedTransition, setSelectedTransition] = useState("");
@@ -50,13 +51,16 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
 
   const handleSubmit = useCallback(async () => {
     if (!activity.trim()) return;
+    const phaseLabel = phase === "Others" ? customPhase.trim() : phase;
+    if (!phaseLabel) return;
     setSubmitting(true);
     setMessage(null);
     try {
       const today = new Date().toISOString().slice(0, 10);
-      // Date=today, Activity=phase (SIT/UAT/DT), Notes=user's activity text
-      await window.qaBuddy.appendUqaEntry(issue.issueKey, today, phase, activity.trim());
+      // Date=today, Activity=phase (SIT/UAT/DT/custom), Notes=user's activity text
+      await window.qaBuddy.appendUqaEntry(issue.issueKey, today, phaseLabel, activity.trim());
       setActivity("");
+      setCustomPhase("");
       setMessage({ type: "success", text: "Aktivitas berhasil dicatat!" });
       onSubmitted(issue.issueKey);
     } catch (err: any) {
@@ -64,7 +68,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
     } finally {
       setSubmitting(false);
     }
-  }, [activity, phase, issue.issueKey, onSubmitted]);
+  }, [activity, phase, customPhase, issue.issueKey, onSubmitted]);
 
   const handleTransition = useCallback(async () => {
     if (!selectedTransition) return;
@@ -294,7 +298,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
                 <label style={{ fontSize: 13, fontWeight: 600, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>
                   Fase:
                 </label>
-                {(["SIT", "UAT", "DT"] as const).map((p) => (
+                {(["SIT", "UAT", "DT", "Others"] as const).map((p) => (
                   <button
                     key={p}
                     type="button"
@@ -312,6 +316,16 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
                   </button>
                 ))}
               </div>
+              {phase === "Others" && (
+                <input
+                  className="input"
+                  value={customPhase}
+                  onChange={(e) => setCustomPhase(e.target.value)}
+                  placeholder="Sebutkan fase/kategori aktivitas..."
+                  disabled={submitting}
+                  style={{ marginBottom: 8 }}
+                />
+              )}
               <textarea
                 className="input uqa-textarea"
                 value={activity}
@@ -323,7 +337,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
               <button
                 className="primary-button"
                 onClick={handleSubmit}
-                disabled={!activity.trim() || submitting}
+                disabled={!activity.trim() || (phase === "Others" && !customPhase.trim()) || submitting}
                 type="button"
                 style={{ marginTop: 8, alignSelf: "flex-start" }}
               >
@@ -361,11 +375,6 @@ export default function DailyUQA() {
     const s = new Set(uqaIssues.map((i) => i.status));
     return Array.from(s).sort();
   }, [uqaIssues]);
-
-  const noActivityCount = useMemo(
-    () => uqaIssues.filter((issue) => lastEntryDate(issue.entries) == null).length,
-    [uqaIssues],
-  );
 
   const processedIssues = useMemo(() => {
     let result = [...uqaIssues];
@@ -411,14 +420,6 @@ export default function DailyUQA() {
 
     return result;
   }, [uqaIssues, searchQuery, statusFilter, sortKey, sortDir]);
-
-  const needUpdateCount = uqaIssues.filter((i) => i.needsUpdate).length;
-
-  const tableStats = useMemo(() => [
-    { label: "Visible", value: processedIssues.length },
-    { label: "Need update", value: needUpdateCount },
-    { label: "No activity", value: noActivityCount },
-  ], [noActivityCount, needUpdateCount, processedIssues.length]);
 
   const handleSort = (key: string) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -641,14 +642,6 @@ export default function DailyUQA() {
                 <div className="uqa-table-hero-copy">
                 <h4>Daily Activities board</h4>
                 <p>Prioritizes issues that need attention today and keeps the latest activity easy to scan.</p>
-              </div>
-              <div className="uqa-table-metrics">
-                {tableStats.map((item) => (
-                  <div key={item.label} className="uqa-table-metric">
-                    <span className="uqa-table-metric-label">{item.label}</span>
-                    <strong className="uqa-table-metric-value">{item.value}</strong>
-                  </div>
-                ))}
               </div>
             </div>
 

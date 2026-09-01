@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
-import type { JiraProjectSource, DuplicateCandidate, DefectCreateDraft, BugFormDraft, BugPreview } from "@shared/types";
+import type { JiraProjectSource, DuplicateCandidate, DefectCreateDraft, BugFormDraft, BugPreview, DbTestPlan } from "@shared/types";
 
 const duplicateCandidateThreshold = 20;
 const defectIssueTypeOptions = ["Bug", "Task", "Defect"] as const;
@@ -41,6 +41,62 @@ function createEmptySourceDraft(source?: JiraProjectSource | null): JiraProjectS
   };
 }
 
+function SyncedBadge({ onClick, syncing, justSynced }: { onClick?: () => void; syncing?: boolean; justSynced?: boolean } = {}) {
+  const [hovered, setHovered] = React.useState(false);
+  const interactive = !!onClick;
+  const isSuccess = justSynced && !syncing;
+  const color = syncing ? "var(--success)" : isSuccess ? "var(--on-primary)" : hovered ? "var(--success)" : "var(--success)";
+  const bg = syncing ? "color-mix(in srgb, var(--success) 16%, transparent)" : isSuccess ? "var(--success)" : hovered ? "color-mix(in srgb, var(--success) 16%, transparent)" : "color-mix(in srgb, var(--success) 9%, transparent)";
+  const border = syncing ? "color-mix(in srgb, var(--success) 50%, transparent)" : isSuccess ? "var(--success)" : hovered ? "color-mix(in srgb, var(--success) 50%, transparent)" : "color-mix(in srgb, var(--success) 25%, transparent)";
+  return (
+    <span
+      onClick={!syncing ? onClick : undefined}
+      onMouseEnter={() => interactive && !syncing && setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600,
+        color, background: bg, border: `1px solid ${border}`,
+        borderRadius: 6, padding: "6px 12px",
+        cursor: interactive && !syncing ? "pointer" : "default",
+        transition: "all 0.2s", userSelect: "none",
+      }}
+    >
+      <span className={`material-symbols${syncing ? " rotating" : ""}`} style={{ fontSize: 15 }}>
+        {syncing ? "sync" : isSuccess ? "task_alt" : hovered ? "sync" : "check_circle"}
+      </span>
+      {syncing ? "Syncing..." : isSuccess ? "Berhasil!" : hovered ? "Re-sync All" : "Synced to DB"}
+    </span>
+  );
+}
+
+function RowSyncedBadge({ onClick, syncing }: { onClick: (e: React.MouseEvent) => void; syncing?: boolean }) {
+  const [hovered, setHovered] = React.useState(false);
+  const color = syncing ? "var(--success)" : "var(--success)";
+  const bg = syncing || hovered ? "color-mix(in srgb, var(--success) 16%, transparent)" : "color-mix(in srgb, var(--success) 9%, transparent)";
+  const border = syncing || hovered ? "color-mix(in srgb, var(--success) 50%, transparent)" : "color-mix(in srgb, var(--success) 25%, transparent)";
+  return (
+    <button
+      type="button"
+      onClick={syncing ? undefined : onClick}
+      onMouseEnter={() => !syncing && setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      disabled={syncing}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600,
+        color, background: bg, border: `1px solid ${border}`,
+        borderRadius: 4, padding: "3px 8px",
+        cursor: syncing ? "default" : "pointer",
+        transition: "all 0.2s", userSelect: "none",
+      }}
+    >
+      <span className={`material-symbols${syncing ? " rotating" : ""}`} style={{ fontSize: 13 }}>
+        {syncing ? "sync" : hovered ? "sync" : "check_circle"}
+      </span>
+      {syncing ? "..." : hovered ? "Re-sync" : "Synced"}
+    </button>
+  );
+}
+
 function createEmptyDraft(projectKey = ""): DefectCreateDraft {
   return {
     projectKey,
@@ -56,6 +112,7 @@ function createEmptyDraft(projectKey = ""): DefectCreateDraft {
     component: "",
     version: "",
     severity: "",
+    tpJiraKey: "",
   };
 }
 
@@ -107,10 +164,14 @@ export default function DefectRepository() {
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [syncingDefectToDb, setSyncingDefectToDb] = useState<Set<string>>(new Set());
   const [defectDbSyncResult, setDefectDbSyncResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  const [syncingAllDefects, setSyncingAllDefects] = useState(false);
+  const [allDefectsSynced, setAllDefectsSynced] = useState(false);
+  const [defectsInDb, setDefectsInDb] = useState<Set<string>>(new Set());
+  const [tpOptions, setTpOptions] = useState<DbTestPlan[]>([]);
+  const [loadingTpOptions, setLoadingTpOptions] = useState(false);
 
   useEffect(() => {
     app.loadDefectSources();
-    app.loadDefectStats();
   }, []);
 
   useEffect(() => {
@@ -133,13 +194,34 @@ export default function DefectRepository() {
   }, [app.defectSources, createDraft.projectKey, showCreateDefect]);
 
   useEffect(() => {
+    if (!showCreateDefect || !createDraft.projectKey.trim()) {
+      setTpOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingTpOptions(true);
+    window.qaBuddy.getTestPlansByProjectPrefix(createDraft.projectKey.trim())
+      .then((plans) => { if (!cancelled) setTpOptions(plans); })
+      .catch(() => { if (!cancelled) setTpOptions([]); })
+      .finally(() => { if (!cancelled) setLoadingTpOptions(false); });
+    return () => { cancelled = true; };
+  }, [showCreateDefect, createDraft.projectKey]);
+
+  useEffect(() => {
     if (app.defectTab === "repository" && app.defectSearchResults.length === 0 && !app.defectSearching) {
       app.loadAllDefects();
     }
-    if (app.defectTab === "stats") {
-      app.loadDefectStats();
-    }
   }, [app.defectTab]);
+
+  useEffect(() => {
+    if (app.defectSearchResults.length === 0) {
+      setDefectsInDb(new Set());
+      return;
+    }
+    window.qaBuddy.checkDefectsInDb(app.defectSearchResults.map(d => d.sourceIssueKey))
+      .then(keys => setDefectsInDb(new Set(keys)))
+      .catch(() => {});
+  }, [app.defectSearchResults]);
 
   const defectProjectOptions = [...new Map(app.defectSources.map((source) => [source.projectKey, source])).values()]
     .filter((source) => source.projectKey.trim().length > 0)
@@ -258,10 +340,37 @@ export default function DefectRepository() {
     try {
       await window.qaBuddy.syncDefectToDb(defectKey, judulDefect);
       setDefectDbSyncResult(prev => ({ ...prev, [defectKey]: { ok: true, msg: "Tersimpan" } }));
+      setDefectsInDb(prev => new Set(prev).add(defectKey));
     } catch (err: any) {
       setDefectDbSyncResult(prev => ({ ...prev, [defectKey]: { ok: false, msg: err?.message || String(err) } }));
     } finally {
       setSyncingDefectToDb(prev => { const s = new Set(prev); s.delete(defectKey); return s; });
+    }
+  };
+
+  const handleSyncAllDefectsToDb = async () => {
+    if (syncingAllDefects) return;
+    const targets = app.defectSearchResults;
+    if (targets.length === 0) return;
+    setSyncingAllDefects(true);
+    setAllDefectsSynced(false);
+    setSyncingDefectToDb(new Set(targets.map(d => d.sourceIssueKey)));
+    try {
+      for (const d of targets) {
+        try {
+          await window.qaBuddy.syncDefectToDb(d.sourceIssueKey, d.normalizedTitle);
+          setDefectDbSyncResult(prev => ({ ...prev, [d.sourceIssueKey]: { ok: true, msg: "Tersimpan" } }));
+          setDefectsInDb(prev => new Set(prev).add(d.sourceIssueKey));
+        } catch (err: any) {
+          setDefectDbSyncResult(prev => ({ ...prev, [d.sourceIssueKey]: { ok: false, msg: err?.message || String(err) } }));
+        } finally {
+          setSyncingDefectToDb(prev => { const s = new Set(prev); s.delete(d.sourceIssueKey); return s; });
+        }
+      }
+      setAllDefectsSynced(true);
+      setTimeout(() => setAllDefectsSynced(false), 2000);
+    } finally {
+      setSyncingAllDefects(false);
     }
   };
 
@@ -376,6 +485,16 @@ export default function DefectRepository() {
       setShowDuplicateWarning(false);
       setCreateDuplicateCandidates([]);
       setShowCreateDefect(false);
+      try {
+        await window.qaBuddy.syncDefectToDb(result.key, summary);
+        setDefectsInDb(prev => new Set(prev).add(result.key));
+      } catch (dbErr: any) {
+        console.warn(`[submitCreateDefect] Gagal sync ${result.key} ke DB:`, dbErr);
+        app.setBanner({
+          tone: "error",
+          text: `Defect ${result.key} berhasil dibuat, tapi gagal sync ke DB: ${dbErr?.message || dbErr}. Gunakan tombol "Sync DB" pada tabel.`,
+        });
+      }
       await app.handleDefectSync(createDraft.projectKey);
       app.setDefectTab("repository");
     } catch (error: any) {
@@ -785,148 +904,6 @@ export default function DefectRepository() {
     );
   }
 
-  if (app.defectTab === "stats") {
-    const stats = app.defectStats;
-    return (
-      <section className="defect-repo-section">
-        {/* Page Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: "var(--on-surface)", lineHeight: "28px" }}>Test Defect Management Statistics</h2>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button
-              className="ghost-button"
-              onClick={() => app.loadDefectStats()}
-              disabled={app.defectSearching}
-              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-              type="button"
-            >
-              <span className={`material-symbols${app.defectSearching ? " rotating" : ""}`} style={{ fontSize: 16 }}>refresh</span>
-              Refresh
-            </button>
-            <button
-              className="ghost-button"
-              onClick={() => app.setDefectTab("repository")}
-              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-              type="button"
-            >
-              <span className="material-symbols" style={{ fontSize: 16 }}>arrow_back</span>
-              Back
-            </button>
-          </div>
-        </div>
-
-        {!stats ? (
-          <div style={{ padding: "48px 0", textAlign: "center", color: "var(--on-surface-variant)" }}>Loading stats...</div>
-        ) : (
-          <>
-            {/* KPI Cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 24, marginBottom: 24 }}>
-              {[
-                { label: "Total Defects", value: stats.totalDefects, icon: "bug_report", color: "var(--primary)" },
-                { label: "Total Duplicates", value: stats.totalDuplicates, icon: "content_copy", color: "var(--on-surface-variant)" },
-                { label: "Projects", value: stats.defectsPerProject.length, icon: "folder_open", color: "var(--tertiary)" },
-                { label: "Components", value: stats.topComponents.length, icon: "widgets", color: "var(--primary)" },
-              ].map(card => (
-                <div
-                  key={card.label}
-                  className="card"
-                  style={{ padding: 20 }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                    <span style={{ fontSize: 12, fontWeight: 500, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{card.label}</span>
-                    <span className="material-symbols" style={{ fontSize: 20, color: card.color }}>{card.icon}</span>
-                  </div>
-                  <div style={{ fontSize: 32, fontWeight: 700, color: "var(--on-surface)", lineHeight: 1 }}>{card.value.toLocaleString()}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Data Grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24 }}>
-              {/* Issue Types - Bar Chart */}
-              <div className="card" style={{ padding: 20 }}>
-                <h4 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600, color: "var(--on-surface)", borderBottom: "1px solid var(--outline-variant)", paddingBottom: 10 }}>Issue Types</h4>
-                <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                  {stats.topIssueTypes.map((item) => {
-                    const total = stats.totalDefects || 1;
-                    const pct = Math.round((item.count / total) * 100);
-                    const color = getTypeDotColor(item.issueType);
-                    return (
-                      <div key={item.issueType}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                          <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--on-surface)" }}>
-                            <span style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0 }}></span>
-                            {item.issueType}
-                          </span>
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>{item.count.toLocaleString()}</span>
-                        </div>
-                        <div className="rag-progress-bar">
-                          <div className="rag-progress-fill" style={{ width: `${pct}%`, background: color }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Defects per Project */}
-              <div className="card" style={{ padding: 20 }}>
-                <h4 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 600, color: "var(--on-surface)", borderBottom: "1px solid var(--outline-variant)", paddingBottom: 10 }}>Defects per Project</h4>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {stats.defectsPerProject.map((item, i) => {
-                    const isTop = i === 0;
-                    return (
-                      <div
-                        key={item.projectKey}
-                        style={{
-                          display: "flex", justifyContent: "space-between", alignItems: "center",
-                          padding: "10px 14px",
-                          borderRadius: "var(--radius-md)",
-                          background: "var(--surface-container-low)"
-                        }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <span className="material-symbols" style={{ fontSize: 20, color: isTop ? "var(--primary)" : "var(--on-surface-variant)" }}>folder</span>
-                          <span style={{ fontSize: 14, fontWeight: 500 }}>{item.projectKey}</span>
-                        </div>
-                        <span className="case-tag">
-                          {item.count.toLocaleString()}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Top Components */}
-              <div className="card" style={{ padding: 20, display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, borderBottom: "1px solid var(--outline-variant)", paddingBottom: 10 }}>
-                  <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "var(--on-surface)" }}>Top Components</h4>
-                  <span className="material-symbols" style={{ fontSize: 18, color: "var(--font-disabled)" }}>sort</span>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", overflow: "auto", maxHeight: 300 }}>
-                  {stats.topComponents.length === 0 ? (
-                    <div style={{ color: "var(--on-surface-variant)", fontSize: 13, padding: "12px 0" }}>No components found.</div>
-                  ) : (
-                    stats.topComponents.map((item, i) => (
-                      <div key={item.component}>
-                        {i > 0 && <div style={{ height: 1, background: "var(--outline-variant)", margin: "12px 0" }}></div>}
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontSize: 14, color: "var(--on-surface)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 16 }}>{item.component}</span>
-                          <span style={{ fontFamily: "monospace", fontSize: 13, color: "var(--on-surface-variant)", flexShrink: 0 }}>{item.count}</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-    );
-  }
-
   return (
     <section className="defect-repo-section">
       {/* Page Header */}
@@ -940,7 +917,20 @@ export default function DefectRepository() {
             <p className="text-body-lg" style={{ marginTop: 2 }}>Manage and track all system anomalies and test failures.</p>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {app.defectSearchResults.length > 0 && app.defectSearchResults.every(d => defectsInDb.has(d.sourceIssueKey)) && !syncingAllDefects ? (
+            <SyncedBadge onClick={handleSyncAllDefectsToDb} syncing={syncingAllDefects} justSynced={allDefectsSynced} />
+          ) : (
+            <button
+              className="secondary-button"
+              onClick={handleSyncAllDefectsToDb}
+              disabled={syncingAllDefects || app.defectSearchResults.length === 0}
+              type="button"
+            >
+              <span className={`material-symbols${syncingAllDefects ? " rotating" : ""}`} style={{ fontSize: 18 }}>sync</span>
+              {syncingAllDefects ? "Syncing All..." : "Sync All Defect to DB"}
+            </button>
+          )}
           <button
             className="secondary-button"
             onClick={() => { app.loadAllDefects(); }}
@@ -964,17 +954,14 @@ export default function DefectRepository() {
 
       {/* Secondary Navigation (Tabs) */}
       <div className="doc-sync-tabs" style={{ marginBottom: 20 }}>
-        {(["repository", "sources", "stats"] as const).map(tab => (
+        {(["repository", "sources"] as const).map(tab => (
           <button
             key={tab}
-            onClick={() => {
-              app.setDefectTab(tab);
-              if (tab === "stats") app.loadDefectStats();
-            }}
+            onClick={() => app.setDefectTab(tab)}
             className={`doc-sync-tab ${(app.defectTab as string) === tab ? "active" : ""}`}
             type="button"
           >
-            {tab === "repository" ? "Repository" : tab === "sources" ? "Sources" : "Stats"}
+            {tab === "repository" ? "Repository" : "Sources"}
           </button>
         ))}
       </div>
@@ -1152,20 +1139,28 @@ export default function DefectRepository() {
                       {(() => {
                         const syncing = syncingDefectToDb.has(d.sourceIssueKey);
                         const res = defectDbSyncResult[d.sourceIssueKey];
+                        const isInDb = defectsInDb.has(d.sourceIssueKey);
                         return (
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                            <button
-                              type="button"
-                              className="ghost-button"
-                              onClick={e => handleSyncDefectToDb(d.sourceIssueKey, d.normalizedTitle, e)}
-                              disabled={syncing}
-                              style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "3px 8px" }}
-                            >
-                              <span className={`material-symbols${syncing ? " rotating" : ""}`} style={{ fontSize: 13 }}>
-                                {syncing ? "sync" : "save"}
-                              </span>
-                              {syncing ? "..." : "Sync DB"}
-                            </button>
+                            {isInDb ? (
+                              <RowSyncedBadge
+                                syncing={syncing}
+                                onClick={(e) => handleSyncDefectToDb(d.sourceIssueKey, d.normalizedTitle, e)}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="ghost-button"
+                                onClick={e => handleSyncDefectToDb(d.sourceIssueKey, d.normalizedTitle, e)}
+                                disabled={syncing}
+                                style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "3px 8px" }}
+                              >
+                                <span className={`material-symbols${syncing ? " rotating" : ""}`} style={{ fontSize: 13 }}>
+                                  {syncing ? "sync" : "save"}
+                                </span>
+                                {syncing ? "..." : "Sync DB"}
+                              </button>
+                            )}
                             {res && (
                               <span style={{ fontSize: 10, color: res.ok ? "var(--success)" : "var(--error)" }}>
                                 {res.ok ? "✓" : "✗"} {res.msg}
@@ -1312,7 +1307,7 @@ export default function DefectRepository() {
                     <select
                       className="input"
                       value={createDraft.projectKey}
-                      onChange={(e) => setCreateDraft((prev) => ({ ...prev, projectKey: e.target.value }))}
+                      onChange={(e) => setCreateDraft((prev) => ({ ...prev, projectKey: e.target.value, tpJiraKey: "" }))}
                       required
                     >
                       <option value="">Select source project</option>
@@ -1320,6 +1315,29 @@ export default function DefectRepository() {
                         <option key={source.projectKey} value={source.projectKey}>
                           {source.projectKey}{source.projectName ? ` - ${source.projectName}` : ""}
                           {source.isActive ? "" : " (inactive)"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="defect-field defect-field-wide">
+                    <span>Test Plan (optional)</span>
+                    <select
+                      className="input"
+                      value={createDraft.tpJiraKey || ""}
+                      onChange={(e) => setCreateDraft((prev) => ({ ...prev, tpJiraKey: e.target.value }))}
+                      disabled={!createDraft.projectKey.trim() || loadingTpOptions}
+                    >
+                      <option value="">
+                        {loadingTpOptions
+                          ? "Memuat test plan..."
+                          : tpOptions.length === 0
+                            ? "Tidak ada test plan untuk project ini"
+                            : "Tanpa Test Plan (tidak di-link)"}
+                      </option>
+                      {tpOptions.map((tp) => (
+                        <option key={tp.tp_jira_key} value={tp.tp_jira_key}>
+                          {tp.tp_jira_key}{tp.title ? ` - ${tp.title}` : ""}
                         </option>
                       ))}
                     </select>
@@ -1414,45 +1432,6 @@ export default function DefectRepository() {
                     </select>
                   </label>
 
-                  <label className="defect-field">
-                    <span>Severity</span>
-                    <input
-                      className="input"
-                      value={createDraft.severity}
-                      onChange={(e) => setCreateDraft((prev) => ({ ...prev, severity: e.target.value }))}
-                      placeholder="Critical, Major, Minor..."
-                    />
-                  </label>
-
-                  <label className="defect-field">
-                    <span>Component</span>
-                    <input
-                      className="input"
-                      value={createDraft.component}
-                      onChange={(e) => setCreateDraft((prev) => ({ ...prev, component: e.target.value }))}
-                      placeholder="Payment, Login, API..."
-                    />
-                  </label>
-
-                  <label className="defect-field">
-                    <span>Version</span>
-                    <input
-                      className="input"
-                      value={createDraft.version}
-                      onChange={(e) => setCreateDraft((prev) => ({ ...prev, version: e.target.value }))}
-                      placeholder="v1.2.3"
-                    />
-                  </label>
-
-                  <label className="defect-field defect-field-wide">
-                    <span>Labels</span>
-                    <input
-                      className="input"
-                      value={createDraft.labels}
-                      onChange={(e) => setCreateDraft((prev) => ({ ...prev, labels: e.target.value }))}
-                      placeholder="qa-buddy, urgent, release-2026-06"
-                    />
-                  </label>
                 </div>
 
                 {polishPreview && (

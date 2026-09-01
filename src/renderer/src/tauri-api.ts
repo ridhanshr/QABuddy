@@ -373,6 +373,7 @@ const api = {
   getDefectStats: () => cmd<DefectRepositoryStats>("get_defect_stats"),
   reindexAllDefects: () => cmd<void>("reindex_all_defects"),
   syncDefectToDb: (defectKey: string, judulDefect: string) => cmd<void>("sync_defect_to_db", { defectKey, judulDefect }),
+  checkDefectsInDb: (defectKeys: string[]) => cmd<string[]>("check_defects_in_db", { defectKeys }),
   getCurrentUser: () => cmd<Record<string, unknown>>("get_current_user", {}),
   loginUser: (pn: string, password: string) => cmd<{ success: boolean; role: string | null; jira_api_token: string | null; confluence_api_token: string | null; message: string }>("login_user", { pn, password }),
   registerUser: (pn: string, password: string, role: string) => cmd<{ success: boolean; role: string | null; message: string }>("register_user", { pn, password, role }),
@@ -385,6 +386,8 @@ const api = {
   fetchTcDetailsBatch: (tcKeys: string[]) => cmd<FetchTestStepsResult[]>("fetch_tc_details_batch", { tcKeys }),
   updateTestRunStatus: (teKey: string, tcKey: string, status: string) => cmd<void>("update_test_run_status", { teKey, tcKey, status }),
   updateTestCaseRunStatus: (tcKey: string, teJiraKey: string, testRunStatus: string, executedBy: string) => cmd<void>("update_test_case_run_status", { tcKey, teJiraKey, testRunStatus, executedBy }),
+  updateTestRunAssignee: (teKey: string, tcKey: string, assignee: string) => cmd<void>("update_test_run_assignee", { teKey, tcKey, assignee }),
+  updateTestCaseAssignee: (tcKey: string, teJiraKey: string, assignee: string) => cmd<void>("update_test_case_assignee", { tcKey, teJiraKey, assignee }),
   updateTestExecutionStatus: (teJiraKey: string, executionStatus: string) => cmd<void>("update_test_execution_status", { teJiraKey, executionStatus }),
   getTestCaseTitles: (tcKeys: string[]) => cmd<Record<string, string>>("get_test_case_titles", { tcKeys }),
 
@@ -397,6 +400,7 @@ const api = {
   saveUqaTestPlan: (input: SaveTestPlanInput) =>
     cmd<void>("save_uqa_test_plan", { input }),
   getDbTestPlans: () => cmd<DbTestPlan[]>("get_db_test_plans"),
+  getTestPlansByProjectPrefix: (projectKey: string) => cmd<DbTestPlan[]>("get_test_plans_by_project_prefix", { projectKey }),
   checkTestPlansInDb: (tpKeys: string[]) =>
     cmd<string[]>("check_test_plans_in_db", { tpKeys }),
   saveTestExecutions: (executions: SaveTestExecutionInput[]) =>

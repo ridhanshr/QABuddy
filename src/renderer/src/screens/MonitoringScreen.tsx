@@ -381,6 +381,7 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
   const [uqaProjects, setUqaProjects] = useState<MonitoringUqaProject[]>([]);
   const [testExecutions, setTestExecutions] = useState<MonitoringTestExecution[]>([]);
   const [testCases, setTestCases] = useState<MonitoringTestCase[]>([]);
+  const [assigningTcKey, setAssigningTcKey] = useState<string | null>(null);
   const [selectedTE, setSelectedTE] = useState<MonitoringTestExecution | null>(null);
   const [selectedTc, setSelectedTc] = useState<MonitoringTestCase | null>(null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
@@ -422,14 +423,16 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
     setTcSearch("");
     setLoadingTC(true);
     try {
-      const tcs = await window.qaBuddy.getMyTestCasesByExecution(te.te_jira_key, username, displayName);
+      // Show every TC in the TE — no assignee filter — so the user can find
+      // and update any test case, not just ones assigned to them.
+      const tcs = await window.qaBuddy.getTestCasesByTeKey(te.te_jira_key);
       setTestCases(tcs);
     } catch (e: any) {
       setErrorTC(e?.message || String(e));
     } finally {
       setLoadingTC(false);
     }
-  }, [username, displayName]);
+  }, []);
 
   async function handleChangeTeStatus(te: MonitoringTestExecution, newStatus: string) {
     // Update DB
@@ -475,6 +478,27 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
         : t
       )
     );
+  }
+
+  async function handleAssignToMe(tc: MonitoringTestCase) {
+    if (assigningTcKey) return;
+    setAssigningTcKey(`${tc.tc_key}-${tc.te_jira_key}`);
+    try {
+      await Promise.all([
+        window.qaBuddy.updateTestRunAssignee(tc.te_jira_key, tc.tc_key, username),
+        window.qaBuddy.updateTestCaseAssignee(tc.tc_key, tc.te_jira_key, username),
+      ]);
+      setTestCases(prev =>
+        prev.map(t => t.tc_key === tc.tc_key && t.te_jira_key === tc.te_jira_key
+          ? { ...t, assignee: username }
+          : t
+        )
+      );
+    } catch (e: any) {
+      window.alert(e?.message || String(e));
+    } finally {
+      setAssigningTcKey(null);
+    }
   }
 
   const teSearchLower = teSearch.toLowerCase().trim();
@@ -697,7 +721,7 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
               Test Cases — {selectedTE.te_jira_key}
             </h3>
             <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
-              dieksekusi oleh <strong>{displayName || username}</strong>
+              {testCases.length} test case
             </span>
             <button
               onClick={() => { setSelectedTE(null); setTestCases([]); setTcSearch(""); }}
@@ -763,7 +787,7 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
                   </td></tr>
                 ) : filteredTestCases.length === 0 ? (
                   <tr><td colSpan={6} style={{ ...cell, textAlign: "center", color: "var(--on-surface-variant)" }}>
-                    {tcSearchLower ? <>Tidak ada TC yang cocok dengan "<strong>{tcSearch}</strong>"</> : <>Tidak ada test case yang dieksekusi oleh <strong>{displayName || username}</strong> pada TE ini</>}
+                    {tcSearchLower ? <>Tidak ada TC yang cocok dengan "<strong>{tcSearch}</strong>"</> : <>Tidak ada test case ditemukan pada TE ini</>}
                   </td></tr>
                 ) : filteredTestCases.map(tc => (
                   <tr
@@ -790,7 +814,35 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
                         onSelect={(s) => handleChangeTcStatus(tc, s)}
                       />
                     </td>
-                    <td style={cell}>{tc.assignee || "—"}</td>
+                    <td style={cell} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>{tc.assignee || "—"}</span>
+                        {tc.assignee !== username && (
+                          <button
+                            type="button"
+                            onClick={() => handleAssignToMe(tc)}
+                            disabled={assigningTcKey === `${tc.tc_key}-${tc.te_jira_key}`}
+                            title="Assign ke saya"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 22,
+                              height: 22,
+                              borderRadius: 6,
+                              border: "1px solid var(--outline-variant)",
+                              background: "var(--surface-container-low)",
+                              cursor: assigningTcKey ? "default" : "pointer",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {assigningTcKey === `${tc.tc_key}-${tc.te_jira_key}`
+                              ? <span className="material-symbols spin" style={{ fontSize: 14 }}>progress_activity</span>
+                              : <span className="material-symbols" style={{ fontSize: 14 }}>person_add</span>}
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td style={cell}>{tc.executed_by || "—"}</td>
                     <td style={{ ...cell, fontSize: 12, color: "var(--on-surface-variant)" }}>{tc.executed_at || "—"}</td>
                   </tr>

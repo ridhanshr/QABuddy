@@ -620,25 +620,69 @@ impl JiraService {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        self.create_issue(
-            config,
-            &draft.project_key,
-            if draft.issue_type.is_empty() {
-                "Bug"
-            } else {
-                &draft.issue_type
-            },
-            &draft.summary,
-            &draft.description,
-            Some(if draft.priority.is_empty() {
-                "Medium"
-            } else {
-                &draft.priority
-            }),
-            Some(&labels),
-            Some(&draft.environment),
-        )
-        .await
+        let created = self
+            .create_issue(
+                config,
+                &draft.project_key,
+                if draft.issue_type.is_empty() {
+                    "Bug"
+                } else {
+                    &draft.issue_type
+                },
+                &draft.summary,
+                &draft.description,
+                Some(if draft.priority.is_empty() {
+                    "Medium"
+                } else {
+                    &draft.priority
+                }),
+                Some(&labels),
+                Some(&draft.environment),
+            )
+            .await?;
+
+        if let Some(tp_key) = draft.tp_jira_key.as_deref().filter(|k| !k.is_empty()) {
+            let client = self.client(config)?;
+            match client.get_issue_link_types().await {
+                Ok(link_types) => {
+                    let picked = link_types.iter().find_map(|lt| {
+                        let name = lt["name"].as_str().unwrap_or("");
+                        let inward = lt["inward"].as_str().unwrap_or("");
+                        let outward = lt["outward"].as_str().unwrap_or("");
+                        let matches = |s: &str| {
+                            let s = s.to_lowercase();
+                            s.contains("contain") || s.contains("test")
+                        };
+                        if matches(name) || matches(inward) || matches(outward) {
+                            Some(name.to_string())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(link_type) = picked {
+                        if let Err(e) = client
+                            .create_issue_link(&link_type, &created.key, tp_key)
+                            .await
+                        {
+                            eprintln!(
+                                "[create_defect_issue] Gagal link {} ke TP {} (type={link_type}): {e}",
+                                created.key, tp_key
+                            );
+                        }
+                    } else {
+                        eprintln!(
+                            "[create_defect_issue] Tidak ada issue link type yang cocok untuk {} → TP {}",
+                            created.key, tp_key
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[create_defect_issue] Gagal ambil issue link types: {e}");
+                }
+            }
+        }
+
+        Ok(created)
     }
 
     pub async fn create_issue(
@@ -1231,6 +1275,26 @@ impl JiraService {
                 format!("TC {tc_key} not found in TE {te_key}"),
             ))?;
         client.update_test_run_status(run.id, status).await
+    }
+
+    /// Find the test run ID for `tc_key` inside `te_key`, then update its assignee.
+    pub async fn update_test_run_assignee_for_tc(
+        &self,
+        config: &JiraConfig,
+        te_key: &str,
+        tc_key: &str,
+        assignee: &str,
+    ) -> Result<()> {
+        self.assert_configured(config)?;
+        let client = self.client(config)?;
+        let runs = client.get_xray_test_execution_tests(te_key).await?;
+        let run = runs
+            .iter()
+            .find(|r| r.key.eq_ignore_ascii_case(tc_key))
+            .ok_or_else(|| crate::services::error::ServiceError::NotFound(
+                format!("TC {tc_key} not found in TE {te_key}"),
+            ))?;
+        client.update_test_run_assignee(run.id, assignee).await
     }
 
     pub async fn update_test_cases_from_confluence(

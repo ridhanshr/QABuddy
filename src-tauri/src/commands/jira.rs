@@ -274,6 +274,27 @@ pub async fn update_test_run_status(
     result.map_err(|e| e.to_string())
 }
 
+/// Update the Xray test run assignee for a TC inside a TE.
+#[tauri::command]
+pub async fn update_test_run_assignee(
+    state: State<'_, AppState>,
+    te_key: String,
+    tc_key: String,
+    assignee: String,
+) -> Result<(), String> {
+    let config = load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    let result = jira_service
+        .update_test_run_assignee_for_tc(&config.jira, &te_key, &tc_key, &assignee)
+        .await;
+    if let Err(ref e) = result {
+        eprintln!("[update_test_run_assignee] FAILED te={te_key} tc={tc_key} assignee={assignee}: {e}");
+    } else {
+        eprintln!("[update_test_run_assignee] OK te={te_key} tc={tc_key} assignee={assignee}");
+    }
+    result.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn push_entry_to_jira(
     state: State<'_, AppState>,

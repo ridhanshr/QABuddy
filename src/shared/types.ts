@@ -397,6 +397,7 @@ export interface DefectCreateDraft {
   component: string;
   version: string;
   severity: string;
+  tpJiraKey?: string;
 }
 
 export interface ExtractedTestCase {
@@ -788,6 +789,7 @@ export interface DesktopApi {
   getDefectStats: () => Promise<DefectRepositoryStats>;
   reindexAllDefects: () => Promise<void>;
   syncDefectToDb: (defectKey: string, judulDefect: string) => Promise<void>;
+  checkDefectsInDb: (defectKeys: string[]) => Promise<string[]>;
   getCurrentUser: () => Promise<Record<string, unknown>>;
   loginUser: (pn: string, password: string) => Promise<{ success: boolean; role: string | null; jira_api_token: string | null; confluence_api_token: string | null; message: string }>;
   registerUser: (pn: string, password: string, role: string) => Promise<{ success: boolean; role: string | null; message: string }>;
@@ -800,6 +802,8 @@ export interface DesktopApi {
   fetchTcDetailsBatch: (tcKeys: string[]) => Promise<FetchTestStepsResult[]>;
   updateTestRunStatus: (teKey: string, tcKey: string, status: string) => Promise<void>;
   updateTestCaseRunStatus: (tcKey: string, teJiraKey: string, testRunStatus: string, executedBy: string) => Promise<void>;
+  updateTestRunAssignee: (teKey: string, tcKey: string, assignee: string) => Promise<void>;
+  updateTestCaseAssignee: (tcKey: string, teJiraKey: string, assignee: string) => Promise<void>;
   updateTestExecutionStatus: (teJiraKey: string, executionStatus: string) => Promise<void>;
   getTestCaseTitles: (tcKeys: string[]) => Promise<Record<string, string>>;
   // BRD / Test Management
@@ -836,6 +840,7 @@ export interface DesktopApi {
   checkDbConnection: () => Promise<string>;
   saveUqaTestPlan: (input: SaveTestPlanInput) => Promise<void>;
   getDbTestPlans: () => Promise<DbTestPlan[]>;
+  getTestPlansByProjectPrefix: (projectKey: string) => Promise<DbTestPlan[]>;
   checkTestPlansInDb: (tpKeys: string[]) => Promise<string[]>;
   saveTestExecutions: (executions: SaveTestExecutionInput[]) => Promise<void>;
   checkTestExecutionsInDb: (teKeys: string[]) => Promise<string[]>;

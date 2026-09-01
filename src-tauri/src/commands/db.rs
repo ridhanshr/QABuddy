@@ -128,6 +128,52 @@ pub async fn get_db_test_plans(state: State<'_, AppState>) -> Result<Vec<DbTestP
     Ok(result)
 }
 
+/// Fetch Test Plans whose key is prefixed by the given Jira project key
+/// (e.g. project "CCSERKKBVI" → test plans like "CCSERKKBVI-123").
+#[tauri::command]
+pub async fn get_test_plans_by_project_prefix(
+    state: State<'_, AppState>,
+    project_key: String,
+) -> Result<Vec<DbTestPlan>, String> {
+    let prefix = project_key.trim();
+    if prefix.is_empty() {
+        return Ok(vec![]);
+    }
+    let pool = get_pool!(state);
+    let like_pattern = format!("{prefix}-%");
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            tp_jira_key,
+            title,
+            uqa_key,
+            assignee,
+            DATE_FORMAT(last_sync, '%Y-%m-%d %H:%i:%s') AS last_sync
+        FROM test_plan
+        WHERE tp_jira_key LIKE ?
+        ORDER BY tp_jira_key ASC
+        "#,
+    )
+    .bind(&like_pattern)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Gagal mengambil test_plan untuk project {prefix}: {e}"))?;
+
+    let result = rows
+        .into_iter()
+        .map(|row| DbTestPlan {
+            tp_jira_key: row.get("tp_jira_key"),
+            title: row.get("title"),
+            uqa_key: row.get("uqa_key"),
+            assignee: row.get("assignee"),
+            last_sync: row.get("last_sync"),
+        })
+        .collect();
+
+    Ok(result)
+}
+
 // ── Save Test Executions to DB ───────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -850,6 +896,7 @@ pub async fn sync_defect_to_db(
                 let outward = link["type"]["outward"].as_str().unwrap_or("").to_lowercase();
 
                 let is_contained = link_type.contains("test")
+                    || link_type.contains("contained")
                     || inward.contains("contained")
                     || outward.contains("contained")
                     || inward.contains("test plan")
@@ -887,6 +934,39 @@ pub async fn sync_defect_to_db(
     .map_err(|e| format!("Gagal upsert defect {defect_key}: {e}"))?;
 
     Ok(())
+}
+
+/// Check which defect keys already exist in the `defect` table.
+#[tauri::command]
+pub async fn check_defects_in_db(
+    state: State<'_, AppState>,
+    defect_keys: Vec<String>,
+) -> Result<Vec<String>, String> {
+    if defect_keys.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let pool = get_pool!(state);
+    let placeholders = defect_keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT id_jira_defect FROM defect WHERE id_jira_defect IN ({})",
+        placeholders
+    );
+
+    let mut q = sqlx::query(&sql);
+    for k in &defect_keys {
+        q = q.bind(k);
+    }
+
+    let rows = q
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("Gagal cek defect di DB: {e}"))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| row.get::<String, _>("id_jira_defect"))
+        .collect())
 }
 
 // ── Monitoring screen queries ──────────────────────────────────────────────
@@ -1248,6 +1328,29 @@ pub async fn update_test_case_run_status(
     .execute(&pool)
     .await
     .map_err(|e| format!("Gagal update test_run_status: {e}"))?;
+    Ok(())
+}
+
+/// Update assignee and last_sync for a specific TC in the DB.
+#[tauri::command]
+pub async fn update_test_case_assignee(
+    state: State<'_, AppState>,
+    tc_key: String,
+    te_jira_key: String,
+    assignee: String,
+) -> Result<(), String> {
+    let pool = get_pool!(state);
+    sqlx::query(
+        r#"UPDATE test_case
+           SET assignee = ?, last_sync = NOW()
+           WHERE tc_key = ? AND te_jira_key = ?"#,
+    )
+    .bind(&assignee)
+    .bind(&tc_key)
+    .bind(&te_jira_key)
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Gagal update assignee: {e}"))?;
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "qa-buddy"
-version = "1.1.1"
+version = "1.1.2"
 description = "Desktop Jira and Confluence assistant for QA teams with local Ollama integration."
 authors = ["QA Buddy Team"]
 license = "MIT"
