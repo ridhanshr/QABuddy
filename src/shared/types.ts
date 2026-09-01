@@ -933,6 +933,7 @@ export interface SaveTestCaseInput {
   te_jira_key: string;
   title?: string;
   id_jira_repo?: string;
+  assignee?: string;
 }
 
 export interface JiraProject {

@@ -475,6 +475,7 @@ pub struct SaveTestCaseInput {
     pub te_jira_key: String,
     pub title: Option<String>,
     pub id_jira_repo: Option<String>,
+    pub assignee: Option<String>,
 }
 
 #[tauri::command]
@@ -492,11 +493,12 @@ pub async fn save_test_cases(
 
         sqlx::query(
             r#"
-            INSERT INTO test_case (tc_key, te_jira_key, title, id_jira_repo, last_sync)
-            VALUES (?, ?, ?, ?, NOW())
+            INSERT INTO test_case (tc_key, te_jira_key, title, id_jira_repo, assignee, last_sync)
+            VALUES (?, ?, ?, ?, ?, NOW())
             ON DUPLICATE KEY UPDATE
                 title        = COALESCE(VALUES(title), title),
                 id_jira_repo = COALESCE(VALUES(id_jira_repo), id_jira_repo),
+                assignee     = COALESCE(VALUES(assignee), assignee),
                 last_sync    = NOW()
             "#,
         )
@@ -504,6 +506,7 @@ pub async fn save_test_cases(
         .bind(&tc.te_jira_key)
         .bind(tc.title.as_deref())
         .bind(id_jira_repo.as_deref())
+        .bind(tc.assignee.as_deref())
         .execute(&pool)
         .await
         .map_err(|e| format!("Gagal upsert test_case {}/{}: {e}", tc.tc_key, tc.te_jira_key))?;

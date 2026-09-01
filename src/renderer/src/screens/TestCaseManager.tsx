@@ -478,14 +478,21 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
       const keys = Array.from(selectedResultKeys);
       // 1. Add TCs to TE in Jira (Xray API)
       await window.qaBuddy.addTestsToExecution(reuseTeKey, keys);
-      // 2. Fetch TC titles from Jira for DB enrichment
+      // 2. Assign each test run to the current user (fire-and-forget per TC)
+      if (config.jira.username) {
+        await Promise.allSettled(
+          keys.map((k) => window.qaBuddy.updateTestRunAssignee(reuseTeKey, k, config.jira.username))
+        );
+      }
+      // 3. Fetch TC titles from Jira for DB enrichment
       const titleMap = await window.qaBuddy.getTestCaseTitles(keys).catch(() => ({} as Record<string, string>));
-      // 3. Save to DB with title and id_jira_repo (prefix before last '-')
+      // 4. Save to DB with title and id_jira_repo (prefix before last '-'), assignee = current user
       await window.qaBuddy.saveTestCases(keys.map((k) => ({
         tc_key: k,
         te_jira_key: reuseTeKey,
         title: titleMap[k] || undefined,
         id_jira_repo: k.includes("-") ? k.substring(0, k.lastIndexOf("-")) : undefined,
+        assignee: config.jira.username || undefined,
       })));
       setReuseResult({ ok: true, msg: `${keys.length} test case berhasil ditambahkan ke ${reuseTeKey}` });
     } catch (e: any) {

@@ -1532,12 +1532,28 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         .filter((_, i) => attachResults[i].status === "rejected")
         .map(([k]) => k);
 
+      // Assign each newly attached test run to the current user (fire-and-forget)
+      if (config.jira.username) {
+        const attachedExecKeys = new Set(
+          execEntries.filter((_, i) => attachResults[i].status === "fulfilled").map(([k]) => k)
+        );
+        const assigneePairs = execEntries
+          .filter(([execKey]) => attachedExecKeys.has(execKey))
+          .flatMap(([execKey, testKeys]) => testKeys.map(tcKey => [execKey, tcKey] as const));
+        await Promise.allSettled(
+          assigneePairs.map(([execKey, tcKey]) =>
+            window.qaBuddy.updateTestRunAssignee(execKey, tcKey, config.jira.username)
+          )
+        );
+      }
+
       // Save to DB — fire and forget, don't block UX on DB availability
       try {
         const dbPayload = result.created.map((created, idx) => ({
           tc_key: created.key,
           te_jira_key: (manualCases[idx]?.testExecutionKey || "").trim(),
           title: manualCases[idx]?.title || created.key,
+          assignee: config.jira.username || undefined,
         }));
         await window.qaBuddy.saveTestCases(dbPayload);
       } catch {
