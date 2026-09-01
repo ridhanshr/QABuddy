@@ -123,7 +123,9 @@ export interface TestStepItem {
 
 export interface BitbucketTestScenario {
   scenario: string;
-  filePath?: string;
+  /** Always present: backend defaults to "" via serde and validates it is one
+   *  of the PR's selected changed files before returning scenarios. */
+  filePath: string;
   confidence: number;
   reason: string;
   scenarioType: string;
@@ -1430,10 +1432,16 @@ export const uqaConfigSchema = z.object({
   projectKeys: z.array(z.string()),
 });
 
+export const bitbucketConfigSchema = atlassianConnectionConfigSchema.extend({
+  defaultProjectKey: z.string().optional(),
+  defaultRepoSlug: z.string().optional(),
+});
+
 export const appConfigSchema = z.object({
   jira: jiraConfigSchema,
   confluence: confluenceConfigSchema,
   ollama: ollamaConfigSchema,
+  bitbucket: bitbucketConfigSchema,
   preferences: z.object({
     theme: themeSchema,
     language: z.string(),

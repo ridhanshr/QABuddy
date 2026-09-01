@@ -227,11 +227,15 @@ impl OllamaClient {
             None,
         )
         .await
+        .ok()
     }
 
     /// Like [`chat`](Self::chat) but sends Ollama's `"format": "json"` option so
     /// the model is constrained to emit a valid JSON object, which avoids
     /// "Model response was not valid JSON" errors in structured tasks.
+    /// Returns `Err` with a descriptive message on transport/HTTP/parse
+    /// failures so callers can surface the real cause instead of mistaking it
+    /// for an empty model response.
     pub async fn chat_json(
         &self,
         system_prompt: &str,
@@ -239,7 +243,7 @@ impl OllamaClient {
         history: &[ChatHistoryMessage],
         temperature: Option<f64>,
         model_override: Option<&str>,
-    ) -> Option<String> {
+    ) -> std::result::Result<String, String> {
         self.chat_inner(
             system_prompt,
             user_message,
@@ -257,6 +261,9 @@ impl OllamaClient {
     /// exact object shape — e.g. a top-level `scenarios` array. This is far more
     /// reliable than `"format": "json"` for small instruction-following models.
     /// `num_ctx` (if provided) is sent under the generation `options`.
+    /// Returns `Err` with a descriptive message on transport/HTTP/parse
+    /// failures so callers can surface the real cause instead of mistaking it
+    /// for an empty model response.
     pub async fn chat_json_schema(
         &self,
         system_prompt: &str,
@@ -266,7 +273,7 @@ impl OllamaClient {
         model_override: Option<&str>,
         schema: &serde_json::Value,
         num_ctx: Option<u32>,
-    ) -> Option<String> {
+    ) -> std::result::Result<String, String> {
         self.chat_inner(
             system_prompt,
             user_message,
@@ -288,7 +295,7 @@ impl OllamaClient {
         model_override: Option<&str>,
         format: Option<serde_json::Value>,
         num_ctx: Option<u32>,
-    ) -> Option<String> {
+    ) -> std::result::Result<String, String> {
         let modeled = model_override.unwrap_or(&self.model);
         let url = format!("{}/api/chat", self.endpoint);
         let client = match self.long_client() {
@@ -297,7 +304,7 @@ impl OllamaClient {
                 let msg = format!("[OllamaClient] chat: failed to create HTTP client: {e}");
                 eprintln!("{msg}");
                 log::warn!("{msg}");
-                return None;
+                return Err(msg);
             }
         };
         let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
@@ -338,7 +345,7 @@ impl OllamaClient {
                 let msg = format!("[OllamaClient] chat: HTTP request failed: {e}");
                 eprintln!("{msg}");
                 log::warn!("{msg}");
-                return None;
+                return Err(msg);
             }
         };
         let status = resp.status();
@@ -348,22 +355,25 @@ impl OllamaClient {
                 format!("[OllamaClient] chat: HTTP {status} for model={modeled}: {body_text}");
             eprintln!("{msg}");
             log::warn!("{msg}");
-            return None;
+            return Err(msg);
         }
         match serde_json::from_str::<ChatResponse>(&body_text) {
-            Ok(parsed) => parsed.message.and_then(|m| {
-                let t = m.content.trim().to_string();
-                if t.is_empty() {
-                    None
-                } else {
-                    Some(t)
+            Ok(parsed) => match parsed.message.map(|m| m.content.trim().to_string()) {
+                Some(t) if !t.is_empty() => Ok(t),
+                _ => {
+                    let msg = format!(
+                        "[OllamaClient] chat: model={modeled} returned an empty response"
+                    );
+                    eprintln!("{msg}");
+                    log::warn!("{msg}");
+                    Err(msg)
                 }
-            }),
+            },
             Err(e) => {
                 let msg = format!("[OllamaClient] chat: failed to parse response for model={modeled}: {e}. Body: {body_text}");
                 eprintln!("{msg}");
                 log::warn!("{msg}");
-                None
+                Err(msg)
             }
         }
     }

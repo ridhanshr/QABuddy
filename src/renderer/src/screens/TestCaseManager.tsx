@@ -19,25 +19,6 @@ const scenarioTypeStyle: Record<string, { bg: string; color: string }> = {
   Regression: { bg: "color-mix(in srgb, var(--severity-epic) 12%, transparent)", color: "var(--severity-epic)" },
 };
 
-/** Best-effort: attribute a generated scenario to the file it cites in its
- *  reasoning text. Matches the full path or its basename (case-insensitive). */
-function attributeScenarioToFile(
-  scenario: import("@shared/types").BitbucketTestScenario,
-  files: string[],
-  fallbackFile?: string,
-): string | null {
-  if (!files.length) return null;
-  const sorted = [...files].sort((a, b) => b.length - a.length);
-  const findMatch = (value: string) => sorted.find(f => {
-    const base = (f.split("/").pop() || f).toLowerCase();
-    const candidate = value.toLowerCase();
-    return candidate === f.toLowerCase() || candidate === base || candidate.includes(f.toLowerCase()) || candidate.includes(base);
-  });
-  return (scenario.filePath && findMatch(scenario.filePath))
-    || findMatch(scenario.reason || "")
-    || (fallbackFile && files.includes(fallbackFile) ? fallbackFile : null);
-}
-
 /** Flatten an Xray folder tree into a list of { path, id } */
 function flattenFolders(folders: XrayFolder[], prefix = ""): { label: string; value: string }[] {
   return folders.flatMap(f => {
@@ -81,19 +62,36 @@ function ScenarioCard({ sc, num, selected, onToggleSelect, syncedJiraKey, onUpda
 }) {
   const [editing, setEditing] = useState(false);
   const [draftSteps, setDraftSteps] = useState<import("@shared/types").TestStepItem[]>([]);
+  const [editError, setEditError] = useState("");
 
   const startEditing = () => {
     setDraftSteps(sc.steps.map((st, i) => ({ ...st, step: st.step || i + 1 })));
+    setEditError("");
     setEditing(true);
   };
 
   const saveEditing = () => {
+    // Mirror the backend validation (Jira sync rejects scenarios with blank
+    // action/expected or oversized fields) so the user gets immediate
+    // field-level feedback instead of a sync failure later.
+    const invalid = draftSteps.findIndex(st => !st.action.trim() || !st.expected.trim());
+    if (invalid >= 0) {
+      setEditError(`Step ${invalid + 1}: Aksi dan Expected Result wajib diisi.`);
+      return;
+    }
+    const tooLong = draftSteps.findIndex(st => st.action.length > 500 || st.expected.length > 500);
+    if (tooLong >= 0) {
+      setEditError(`Step ${tooLong + 1}: Aksi / Expected maksimal 500 karakter.`);
+      return;
+    }
+    setEditError("");
     onUpdateSteps?.(draftSteps);
     setEditing(false);
   };
 
   const updateDraftStep = (idx: number, field: "action" | "expected", value: string) => {
     setDraftSteps((prev) => prev.map((st, i) => (i === idx ? { ...st, [field]: value } : st)));
+    if (editError) setEditError("");
   };
 
   const riskStyle =
@@ -180,13 +178,16 @@ function ScenarioCard({ sc, num, selected, onToggleSelect, syncedJiraKey, onUpda
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button type="button" className="primary-button" onClick={saveEditing} style={{ fontSize: 12, padding: "5px 12px", height: 30 }}>
               Simpan Perubahan
             </button>
             <button type="button" className="secondary-button" onClick={() => setEditing(false)} style={{ fontSize: 12, padding: "5px 12px", height: 30 }}>
               Batal
             </button>
+            {editError && (
+              <span style={{ fontSize: 12, color: "var(--error)", fontWeight: 600 }}>{editError}</span>
+            )}
           </div>
         </div>
       ) : sc.steps.length > 0 && (
@@ -545,6 +546,10 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [bitbucketSyncFoldersLoading, setBitbucketSyncFoldersLoading] = useState(false);
   const [bitbucketSyncing, setBitbucketSyncing] = useState(false);
   const [bitbucketSyncResult, setBitbucketSyncResult] = useState<import("@shared/types").BitbucketSyncScenariosResponse | null>(null);
+  /** Maps a scenario index (position in bitbucketGenerateResult.scenarios) to
+   *  the Jira issue key created for it. Index-based identity: scenario titles
+   *  are NOT unique, so title-based maps broke duplicate handling. */
+  const [bitbucketSyncedKeys, setBitbucketSyncedKeys] = useState<Map<number, string>>(new Map());
 
   const handleFetchBitbucketPr = useCallback(async () => {
     if (!bitbucketPrUrl.trim()) return;
@@ -552,6 +557,10 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     setBitbucketError("");
     setBitbucketSummary(null);
     setBitbucketGenerateResult(null);
+    // New PR → previous sync bookkeeping is meaningless (indices refer to a
+    // different scenario array).
+    setBitbucketSyncResult(null);
+    setBitbucketSyncedKeys(new Map());
     try {
       const summary = await window.qaBuddy.getBitbucketPrDetails(bitbucketPrUrl);
       setBitbucketSummary(summary);
@@ -571,6 +580,9 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     setBitbucketProgress(null);
     setSelectedScenarioIndices(new Set());
     setBitbucketSyncResult(null);
+    // Fresh generation → clear sync bookkeeping so stale Jira keys from the
+    // previous result can never attach to the new scenario array.
+    setBitbucketSyncedKeys(new Map());
     const unlisten = window.qaBuddy.onBitbucketGenerateProgress((progress) => {
       setBitbucketProgress(progress);
     });
@@ -605,6 +617,16 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     try {
       const startLine = explainStartLine ? Number(explainStartLine) : undefined;
       const endLine = explainEndLine ? Number(explainEndLine) : undefined;
+      // Front-end guard mirroring the backend rule: positive, ordered, finite.
+      const invalidRange =
+        (startLine !== undefined && (!Number.isFinite(startLine) || startLine < 1)) ||
+        (endLine !== undefined && (!Number.isFinite(endLine) || endLine < 1)) ||
+        (startLine !== undefined && endLine !== undefined && startLine > endLine);
+      if (invalidRange) {
+        setBitbucketError("Rentang baris tidak valid: nomor baris harus > 0 dan start <= end.");
+        setExplainLoading(false);
+        return;
+      }
       const res = await window.qaBuddy.explainBitbucketCode({
         prUrlOrId: bitbucketPrUrl,
         filePath: explainFile,
@@ -728,24 +750,42 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     setBitbucketSyncing(true);
     setBitbucketSyncResult(null);
     try {
-      const scenarios = Array.from(selectedScenarioIndices)
+      // Pair each selected index with its scenario; res.results aligns
+      // positionally with the request order, so we can map results back to
+      // indices without relying on (non-unique) scenario titles.
+      const selectedPairs = Array.from(selectedScenarioIndices)
         .sort((a, b) => a - b)
-        .map((idx) => bitbucketGenerateResult.scenarios[idx])
-        .filter(Boolean);
+        .map((idx) => [idx, bitbucketGenerateResult.scenarios[idx]] as const)
+        .filter(([, sc]) => !!sc);
+      const scenarios = selectedPairs.map(([, sc]) => sc);
       const res = await window.qaBuddy.syncBitbucketScenariosToJira({
         projectKey: bitbucketSyncProject,
         folderPath: bitbucketSyncFolder || undefined,
         scenarios,
       });
       setBitbucketSyncResult(res);
+      // MERGE into the existing map: previously-synced scenarios keep their
+      // Jira keys across repeated syncs, so the UI never loses track of what
+      // has already been created (and the user doesn't re-sync duplicates).
+      setBitbucketSyncedKeys((prev) => {
+        const next = new Map(prev);
+        res.results.forEach((r, i) => {
+          const idx = selectedPairs[i]?.[0];
+          if (idx !== undefined && r.jiraKey) next.set(idx, r.jiraKey);
+        });
+        return next;
+      });
       // Deselect only the scenarios that synced successfully — failed ones
       // stay checked so the user can retry without re-picking them.
-      const succeededScenarios = new Set(res.results.filter(r => r.success).map(r => r.scenario));
+      const succeededIdx = new Set(
+        res.results
+          .map((r, i) => (r.success ? selectedPairs[i]?.[0] : undefined))
+          .filter((idx): idx is number => idx !== undefined)
+      );
       setSelectedScenarioIndices((prev) => {
         const next = new Set(prev);
         Array.from(next).forEach((idx) => {
-          const sc = bitbucketGenerateResult.scenarios[idx];
-          if (sc && succeededScenarios.has(sc.scenario)) next.delete(idx);
+          if (succeededIdx.has(idx)) next.delete(idx);
         });
         return next;
       });
@@ -1472,22 +1512,40 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   </div>
 
                   {(() => {
+                    // Exact filePath match — the backend already validates
+                    // that every scenario's filePath is one of the selected
+                    // changed files, so no fuzzy matching is needed.
                     const filtered = bitbucketGenerateResult.scenarios.filter(
-                      s => s.confidence >= minConfidence && (fileFilter === "All" || (attributeScenarioToFile(s, [fileFilter], selectedFiles.length === 1 ? selectedFiles[0] : undefined) === fileFilter))
+                      s => s.confidence >= minConfidence && (fileFilter === "All" || s.filePath === fileFilter)
                     );
                     if (filtered.length === 0) {
                       return <div className="empty-state" style={{ fontSize: 13 }}>Tidak ada scenario yang cocok dengan filter.</div>;
                     }
                     const allScenarios = bitbucketGenerateResult.scenarios;
-                    const syncedKeyByScenario = new Map(
-                      (bitbucketSyncResult?.results || [])
-                        .filter(r => r.success && r.jiraKey)
-                        .map(r => [r.scenario, r.jiraKey as string])
-                    );
-                    const groupFiles = fileFilter === "All" ? (bitbucketSummary?.files || []).filter(f => f.explainable !== false).map(f => f.path) : [fileFilter];
-                     const groups = groupFiles.map(path => ({ path, scenarios: filtered.filter(s => attributeScenarioToFile(s, [path], selectedFiles.length === 1 ? selectedFiles[0] : undefined) === path) }))
+                    const groupFiles = fileFilter === "All"
+                      ? (bitbucketSummary?.files || []).filter(f => f.explainable !== false).map(f => f.path)
+                      : [fileFilter];
+                    const groups = groupFiles.map(path => ({ path, scenarios: filtered.filter(s => s.filePath === path) }))
                       .filter(g => g.scenarios.length > 0);
-                     const ungrouped = filtered.filter(s => !groupFiles.some(path => attributeScenarioToFile(s, [path], selectedFiles.length === 1 ? selectedFiles[0] : undefined) === path));
+                    // Anything not in a known group is a legacy cached result
+                    // with an out-of-scope filePath — keep it visible instead
+                    // of silently dropping it.
+                    const ungrouped = filtered.filter(s => !groupFiles.includes(s.filePath));
+
+                    const renderCard = (sc: import("@shared/types").BitbucketTestScenario, cardIdx: number) => {
+                      const globalIdx = allScenarios.indexOf(sc);
+                      return (
+                        <ScenarioCard
+                          key={`${globalIdx}-${cardIdx}`}
+                          sc={sc}
+                          num={cardIdx + 1}
+                          selected={selectedScenarioIndices.has(globalIdx)}
+                          onToggleSelect={() => toggleScenarioSelected(globalIdx)}
+                          onUpdateSteps={(steps) => updateScenarioSteps(globalIdx, steps)}
+                          syncedJiraKey={bitbucketSyncedKeys.get(globalIdx) || undefined}
+                        />
+                      );
+                    };
 
                     return (
                       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1499,20 +1557,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                               <span className="badge" style={{ background: "var(--primary-container)", color: "var(--on-primary-container)" }}>{group.scenarios.length}</span>
                             </div>
                             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                              {group.scenarios.map((sc, idx) => {
-                                const globalIdx = allScenarios.indexOf(sc);
-                                return (
-                                  <ScenarioCard
-                                    key={idx}
-                                    sc={sc}
-                                    num={idx + 1}
-                                    selected={selectedScenarioIndices.has(globalIdx)}
-                                    onToggleSelect={() => toggleScenarioSelected(globalIdx)}
-                                    onUpdateSteps={(steps) => updateScenarioSteps(globalIdx, steps)}
-                                    syncedJiraKey={syncedKeyByScenario.get(sc.scenario)}
-                                  />
-                                );
-                              })}
+                              {group.scenarios.map((sc, idx) => renderCard(sc, idx))}
                             </div>
                           </div>
                         ))}
@@ -1525,20 +1570,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                               <span className="badge" style={{ background: "var(--surface-container-high)" }}>{ungrouped.length}</span>
                             </div>
                             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                              {ungrouped.map((sc, idx) => {
-                                const globalIdx = allScenarios.indexOf(sc);
-                                return (
-                                  <ScenarioCard
-                                    key={idx}
-                                    sc={sc}
-                                    num={idx + 1}
-                                    selected={selectedScenarioIndices.has(globalIdx)}
-                                    onToggleSelect={() => toggleScenarioSelected(globalIdx)}
-                                    onUpdateSteps={(steps) => updateScenarioSteps(globalIdx, steps)}
-                                    syncedJiraKey={syncedKeyByScenario.get(sc.scenario)}
-                                  />
-                                );
-                              })}
+                              {ungrouped.map((sc, idx) => renderCard(sc, idx))}
                             </div>
                           </div>
                         )}

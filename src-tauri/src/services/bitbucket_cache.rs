@@ -19,6 +19,7 @@ impl BitbucketCacheService {
 
     pub fn make_key(
         schema_version: &str,
+        server_base_url: &str,
         project_key: &str,
         repo_slug: &str,
         pr_id: u64,
@@ -30,19 +31,25 @@ impl BitbucketCacheService {
         // different models/selections don't serve each other's cached result.
         // `schema_version` ensures results from an older prompt/schema are
         // never served once the generation prompt or JSON schema changes.
+        // `server_base_url` prevents collisions across Bitbucket installations
+        // that share project/repo/PR identifiers. The key is a canonical JSON
+        // object (serde_json maps are alphabetically ordered) so fields
+        // containing `:` or `,` can never collide the way a delimiter-joined
+        // string could.
         let mut file_part: Vec<String> = files.to_vec();
         file_part.sort();
         file_part.dedup();
-        format!(
-            "{}:{}:{}:PR_{}:{}:{}:{}",
-            schema_version,
-            project_key.to_lowercase(),
-            repo_slug.to_lowercase(),
-            pr_id,
-            commit_hash,
-            model.trim(),
-            file_part.join(",")
-        )
+        serde_json::json!({
+            "schema": schema_version,
+            "server": server_base_url.trim().trim_end_matches('/').to_lowercase(),
+            "project": project_key.to_lowercase(),
+            "repo": repo_slug.to_lowercase(),
+            "pr": pr_id,
+            "commit": commit_hash,
+            "model": model.trim(),
+            "files": file_part,
+        })
+        .to_string()
     }
 
     pub fn get(&self, cache_key: &str) -> Option<BitbucketGenerateResponse> {
@@ -100,6 +107,7 @@ impl BitbucketExplainCacheService {
     }
 
     pub fn make_key(
+        server_base_url: &str,
         namespace: &str,
         file_path: &str,
         start_line: Option<usize>,
@@ -107,11 +115,18 @@ impl BitbucketExplainCacheService {
         mode: &str,
         model: &str,
     ) -> String {
-        format!(
-            "{namespace}:{file_path}:{start:?}:{end:?}:{mode}:{model}",
-            start = start_line,
-            end = end_line
-        )
+        // Canonical JSON object key — collision-safe for fields that contain
+        // the historical `:` delimiter.
+        serde_json::json!({
+            "server": server_base_url.trim().trim_end_matches('/').to_lowercase(),
+            "namespace": namespace,
+            "file": file_path,
+            "start": start_line,
+            "end": end_line,
+            "mode": mode,
+            "model": model,
+        })
+        .to_string()
     }
 
     pub fn get(&self, cache_key: &str) -> Option<BitbucketExplainResponse> {

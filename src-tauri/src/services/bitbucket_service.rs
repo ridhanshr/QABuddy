@@ -32,7 +32,7 @@ const MAX_RETRIEVED_CHUNKS: usize = 30;
 const MAX_EXPLAIN_FALLBACK_LINES: usize = 1200;
 /// Bumps whenever the scenario prompt / JSON schema changes, so cached results
 /// from an older prompt version are never served for a newer one.
-const SCENARIO_SCHEMA_VERSION: &str = "v5";
+const SCENARIO_SCHEMA_VERSION: &str = "v7";
 
 /// Build the Ollama JSON Schema that constrains the model to emit exactly a
 /// top-level `scenarios` array. Passing this as `format` (instead of the
@@ -47,31 +47,35 @@ fn scenario_schema() -> serde_json::Value {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "scenario": { "type": "string" },
-                        "filePath": { "type": "string" },
-                        "confidence": { "type": "integer" },
-                        "reason": { "type": "string" },
-                        "scenarioType": { "type": "string" },
-                        "riskLevel": { "type": "string" },
-                        "preconditions": { "type": "array", "items": { "type": "string" } },
+                        "scenario":      { "type": "string", "maxLength": 200 },
+                        "filePath":      { "type": "string", "maxLength": 500 },
+                        "confidence":    { "type": "integer", "minimum": 0, "maximum": 100 },
+                        "reason":        { "type": "string", "maxLength": 500 },
+                        "scenarioType":  { "type": "string", "enum": ["Positive", "Negative", "Edge Case", "Regression", "Security"] },
+                        "riskLevel":     { "type": "string", "enum": ["High", "Medium", "Low"] },
+                        "preconditions": { "type": "array", "items": { "type": "string", "maxLength": 300 } },
                         "steps": {
                             "type": "array",
+                            "minItems": 1,
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "step": { "type": "integer" },
-                                    "action": { "type": "string" },
-                                    "expected": { "type": "string" }
+                                    "step":     { "type": "integer", "minimum": 1 },
+                                    "action":   { "type": "string", "maxLength": 500, "minLength": 1 },
+                                    "expected": { "type": "string", "maxLength": 500, "minLength": 1 }
                                 },
-                                "required": ["step", "action", "expected"]
+                                "required": ["step", "action", "expected"],
+                                "additionalProperties": false
                             }
                         }
                     },
-                    "required": ["scenario", "filePath", "confidence", "reason", "scenarioType", "riskLevel", "preconditions", "steps"]
+                    "required": ["scenario", "filePath", "confidence", "reason", "scenarioType", "riskLevel", "preconditions", "steps"],
+                    "additionalProperties": false
                 }
             }
         },
-        "required": ["scenarios"]
+        "required": ["scenarios"],
+        "additionalProperties": false
     })
 }
 
@@ -82,6 +86,19 @@ pub struct BitbucketService {
 impl BitbucketService {
     pub fn new(config: AppConfig) -> Self {
         Self { config }
+    }
+
+    /// Effective Ollama model: the configured model, or the documented
+    /// fallback when Settings has none. Cache keys MUST use this (not the raw
+    /// config value) so the key reflects the model that actually produced the
+    /// cached result.
+    fn effective_model(&self) -> String {
+        let m = self.config.ollama.model.trim();
+        if m.is_empty() {
+            "qwen2.5:7b".to_string()
+        } else {
+            m.to_string()
+        }
     }
 
     fn create_client(&self) -> Result<reqwest::Client, String> {
@@ -351,13 +368,16 @@ impl BitbucketService {
             .map_err(|e| format!("Failed to parse Bitbucket diff response: {e}"))?;
 
         // The `/diff` response is normally a top-level array. Some server
-        // versions wrap it in an object under "diffs".
+        // versions wrap it in an object under "diffs". A well-formed but
+        // EMPTY array is a valid answer (a PR with no textual diff), not an
+        // API failure — return zero counts instead of an error.
         let files: Vec<&serde_json::Value> = json
             .as_array()
             .map(|a| a.iter().collect())
             .or_else(|| json["diffs"].as_array().map(|a| a.iter().collect()))
             .unwrap_or_default();
-        if files.is_empty() {
+        if files.is_empty() && json.as_array().is_none() && json["diffs"].as_array().is_none() {
+            // Neither shape matched: the response structure is unexpected.
             return Err(format!("Bitbucket diff response contained no file diffs"));
         }
 
@@ -614,13 +634,17 @@ impl BitbucketService {
     ) -> Result<BitbucketGenerateResponse, String> {
         Self::emit_generate_progress(app_handle, "fetch_pr", "Mengambil detail Pull Request...");
         let pr_summary = self.fetch_pr_details(&req.pr_url_or_id).await?;
+        // Effective model first: the cache key must record the model that
+        // actually produced the result, not the raw (possibly empty) config.
+        let active_model = self.effective_model();
         let cache_key = BitbucketCacheService::make_key(
             SCENARIO_SCHEMA_VERSION,
+            &self.config.bitbucket.base_url,
             &pr_summary.project_key,
             &pr_summary.repo_slug,
             pr_summary.pr_id,
             &pr_summary.latest_commit_hash,
-            &self.config.ollama.model,
+            &active_model,
             &req.selected_files,
         );
 
@@ -655,28 +679,35 @@ impl BitbucketService {
                 true
             }
         };
+        // Non-ignored, non-binary files from the authoritative PR change list.
         let non_ignored: Vec<String> = pr_summary
             .files
             .iter()
             .filter(|f| keep_file(f, &mut skipped_binary))
             .map(|f| f.path.clone())
             .collect();
-        let filter_list = if req.selected_files.is_empty() {
+
+        // Resolve the user's selection against the PR's actual changed files.
+        // Paths not part of this PR are dropped so the AI context can never
+        // include unrelated files; if nothing valid remains, fail loudly
+        // instead of silently widening the scope.
+        let filter_list: Vec<String> = if req.selected_files.is_empty() {
             non_ignored.clone()
         } else {
-            req.selected_files
+            let selected: HashSet<&str> =
+                req.selected_files.iter().map(|s| s.as_str()).collect();
+            non_ignored
                 .iter()
-                .filter(|f| !Self::is_ignored_file(f) && !Self::is_binary_file(f))
+                .filter(|p| selected.contains(p.as_str()))
                 .cloned()
-                .collect::<Vec<_>>()
+                .collect()
         };
-        // If the user selected only ignored/binary files, fall back to all
-        // analyzable (non-ignored, non-binary) ones.
-        let filter_list = if filter_list.is_empty() {
-            non_ignored.clone()
-        } else {
-            filter_list
-        };
+        if filter_list.is_empty() {
+            return Err(
+                "Tidak ada file yang valid untuk dianalisis. Pastikan file yang dipilih termasuk dalam perubahan PR."
+                    .to_string(),
+            );
+        }
 
         if skipped_binary > 0 {
             log::info!(target: "Bitbucket", "generate_scenarios: excluded {skipped_binary} binary file(s) from scenario generation");
@@ -694,12 +725,14 @@ impl BitbucketService {
             .join("\n");
         let section_by_path: HashMap<String, String> = sections.iter().cloned().collect();
 
-        // 1. Dependency & Impact Analysis (changelog + binary files excluded)
+        // 1. Dependency & Impact Analysis — restricted to the same file scope
+        //    as scenario generation, so impact notes and the diff presented to
+        //    the model never contradict each other.
         Self::emit_generate_progress(app_handle, "impact", "Menganalisis Change Impact...");
         let impact_files: Vec<BitbucketFileChange> = pr_summary
             .files
             .iter()
-            .filter(|f| !Self::is_ignored_file(&f.path) && !Self::is_binary_file(&f.path))
+            .filter(|f| filter_list.iter().any(|path| path == &f.path))
             .cloned()
             .collect();
         let impact = ImpactAnalyzer::analyze(&impact_files, &filtered_diff);
@@ -707,13 +740,6 @@ impl BitbucketService {
         // 2. Existing Test Search & Gap Analysis
         Self::emit_generate_progress(app_handle, "gap", "Memfilter Existing Tests (Gap Analysis)...");
         let gap = GapAnalyzer::analyze(pr_summary.jira_ticket_key.as_deref(), &impact, 0);
-
-        // 3. Always use the Active Model configured in Settings.
-        let active_model = if self.config.ollama.model.is_empty() {
-            "qwen2.5:7b".to_string()
-        } else {
-            self.config.ollama.model.clone()
-        };
 
         // 4. Index changed source files into the RAG store (Bitbucket PR
         //    namespace) and retrieve the changed + related chunks for the prompt.
@@ -769,6 +795,16 @@ impl BitbucketService {
             prompt.push_str(&diff_blocks.join("\n"));
         }
 
+        // Give the model the exact allowed paths as a numbered list. Small
+        // SLMs tend to answer with the basename only (e.g.
+        // `OCEAN.ReportPostTrx.task.xml`); the parser resolves unique
+        // basenames back to the full path, but stating the list explicitly
+        // prevents the drift in the first place.
+        prompt.push_str("\n=== ALLOWED FILE PATHS (filePath WAJIB disalin PERSIS salah satu dari daftar ini) ===\n");
+        for (n, p) in filter_list.iter().enumerate() {
+            prompt.push_str(&format!("{}. {}\n", n + 1, p));
+        }
+
         // Re-state the required output shape as the LAST instruction, right
         // after the (possibly large) code context, so small SLM models don't
         // drift toward an unrelated schema by the end of the prompt.
@@ -776,7 +812,7 @@ impl BitbucketService {
 
         let user_prompt = prompt;
 
-        let system_prompt = r#"You are a Senior QA Engineer performing Code Audit & Shift-Left Test Case Generation.
+        let system_prompt = r###"You are a Senior QA Engineer performing Code Audit & Shift-Left Test Case Generation.
 
 LANGUAGE (important):
 - Write ALL scenario text in Bahasa Indonesia: "scenario", "reason", every "preconditions" item, and each step's "action" and "expected".
@@ -786,6 +822,8 @@ GROUND RULES (important):
 - Generate scenarios ONLY from the provided diff and full-code context. Never invent functions, APIs, variables, classes, or behaviors that are not present in the code.
 - Commit messages are hints about developer intent, NOT ground truth. Always verify every scenario against the actual diff / full-code context; never treat a vague or missing commit message as evidence of a feature.
 - Every scenario must trace back to an actual change. In the "reason" field, cite the specific file / function / changed line it is based on.
+- NEVER copy raw code, SQL queries, XML/HTML tags, diff hunks, or code blocks into any output field. All free-text fields (scenario, reason, preconditions, action, expected) must be short human-readable summaries written in Bahasa Indonesia (max 2-3 sentences each).
+- "filePath" MUST be copied EXACTLY from one of the '### File: path' headers or diff file paths shown in the context. Never invent or abbreviate a path.
 - Keep scenarios VARIED across scenarioType (Positive, Negative, Edge Case, Regression, Security) and riskLevel (High, Medium, Low), but always stay within the actual behavior of the code shown.
 - If the changes are trivial (formatting, docs, or very small), return fewer scenarios — or an empty "scenarios" array — with lower confidence instead of fabricating coverage.
 - "expected" must be grounded in what the code actually does. Never assert behavior you cannot infer from the diff / full code.
@@ -817,7 +855,7 @@ Output JSON format:
       ]
     }
   ]
-}"#;
+}"###;
 
         let empty_history: Vec<ChatHistoryMessage> = vec![];
         log::info!(target: "Bitbucket", "generate_scenarios: calling Ollama with active model '{}'", active_model);
@@ -827,15 +865,26 @@ Output JSON format:
         // models tend to echo an unrelated schema (e.g. a "steps"/"id"/"class"
         // shape), so we forbid those keys and demand ONLY the exact template.
         let retry_system_prompt = format!(
-            "{system_prompt}\n\nINSTRUKSI KOREKSI WAJIB: Output kamu sebelumnya SALAH. Kamu HARUS mengembalikan JSON objek yang hanya memiliki SATU kunci 'scenarios' yang berisi array. Setiap item WAJIB memiliki scenario, filePath, confidence, reason, scenarioType, riskLevel, preconditions, dan steps. filePath HARUS persis salah satu path file yang diberikan. Field reason, preconditions, steps, action, dan expected boleh kosong, tetapi field-fieldnya tetap harus ada. DILARANG memakai kunci 'id', 'class', 'totalResults', 'sql_script' pada level atas. DILARANG menambahkan teks lain. Hanya output JSON."
+            "{system_prompt}\n\nINSTRUKSI KOREKSI WAJIB: Output kamu sebelumnya SALAH. Kamu HARUS mengembalikan JSON objek yang hanya memiliki SATU kunci 'scenarios' yang berisi array. Setiap item WAJIB memiliki scenario, filePath, confidence, reason, scenarioType, riskLevel, preconditions, dan steps. filePath HARUS persis salah satu path dari daftar 'ALLOWED FILE PATHS' (path lengkap, DILARANG basename/nama file saja). scenarioType HANYA boleh: Positive, Negative, Edge Case, Regression, atau Security. riskLevel HANYA boleh: High, Medium, atau Low. confidence WAJIB angka 0-100. Setiap step WAJIB memiliki step (angka >= 1), action, dan expected yang TIDAK BOLEH kosong — tulis ringkasan perilaku dalam Bahasa Indonesia, DILARANG menyalin kode/SQL mentah. DILARANG memakai kunci lain selain yang ditentukan. DILARANG menambahkan teks lain. Hanya output JSON."
         );
 
         // 4. Extract scenarios from the model response (robust JSON extraction).
         //    The model is constrained by an Ollama JSON Schema (schema version
         //    SCENARIO_SCHEMA_VERSION), retrying up to 2 more times with a
         //    forceful format-only correction and lower temperature.
+        //    Transport / HTTP failures from Ollama abort immediately with the
+        //    real error message instead of being retried as if the model had
+        //    produced an empty (but valid) response.
+        const SCENARIO_NUM_CTX: u32 = 8192;
         let schema = scenario_schema();
+        let filter_set: HashSet<String> = filter_list.iter().cloned().collect();
         let mut scenarios: Vec<BitbucketTestScenario> = Vec::new();
+        let mut last_error: Option<String> = None;
+        // An explicit `{"scenarios": []}` envelope is a VALID answer (the
+        // system prompt instructs the model to return it for trivial changes),
+        // so it ends the loop instead of triggering a retry. Only parse /
+        // validation failures retry.
+        let mut got_valid_response = false;
         for attempt in 0..3 {
             let (sp, temp) = if attempt == 0 {
                 (system_prompt.as_ref(), None)
@@ -847,7 +896,7 @@ Output JSON format:
                 "calling_ai",
                 format!("Menghasilkan skenario dengan AI (percobaan {}/3)...", attempt + 1),
             );
-            let ai_raw_response = ollama
+            let ai_raw_response = match ollama
                 .chat_json_schema(
                     sp,
                     &user_prompt,
@@ -855,27 +904,53 @@ Output JSON format:
                     temp,
                     Some(&active_model),
                     &schema,
-                    None,
+                    Some(SCENARIO_NUM_CTX),
                 )
                 .await
-                .unwrap_or_else(|| "{ \"scenarios\": [] }".to_string());
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    log::error!(
+                        target: "Bitbucket",
+                        "generate_scenarios: Ollama request failed on attempt {}: {e}",
+                        attempt + 1
+                    );
+                    return Err(format!(
+                        "Gagal memanggil model AI ({active_model}): {e}. Periksa Ollama berjalan dan model tersedia."
+                    ));
+                }
+            };
 
-            match Self::parse_scenarios_from_ai(&ai_raw_response) {
-                Ok(list) if !list.is_empty() => {
+            match Self::parse_scenarios_from_ai_scoped(
+                &ai_raw_response,
+                Some(&filter_set),
+            ) {
+                Ok(list) => {
                     scenarios = list;
+                    got_valid_response = true;
+                    if scenarios.is_empty() {
+                        log::info!(
+                            target: "Bitbucket",
+                            "generate_scenarios: model returned an explicit empty scenario list (trivial changes?)"
+                        );
+                    }
                     break;
                 }
-                Ok(_) => log::warn!(
-                    target: "Bitbucket",
-                    "generate_scenarios: attempt {} produced 0 scenarios, retrying with correction",
-                    attempt + 1
-                ),
-                Err(e) => log::warn!(
-                    target: "Bitbucket",
-                    "generate_scenarios: attempt {} failed schema validation ({e}), retrying with correction",
-                    attempt + 1
-                ),
+                Err(e) => {
+                    last_error = Some(e.clone());
+                    log::warn!(
+                        target: "Bitbucket",
+                        "generate_scenarios: attempt {} failed schema validation ({e}), retrying with correction",
+                        attempt + 1
+                    )
+                }
             }
+        }
+        if !got_valid_response {
+            return Err(format!(
+                "Model AI tidak menghasilkan skenario valid setelah 3 percobaan. Penyebab terakhir: {}",
+                last_error.unwrap_or_else(|| "response kosong".to_string())
+            ));
         }
 
         // 5. Duplicate Filtering & Risk Ranking
@@ -944,6 +1019,24 @@ Output JSON format:
         let mut synced_keys: Vec<String> = Vec::new();
 
         for sc in &req.scenarios {
+            // Guard against creating empty Jira issues from malformed AI
+            // output (or legacy cached scenarios): title + at least one step
+            // with non-empty action & expected are mandatory.
+            if sc.scenario.trim().is_empty() {
+                results.push((String::new(), false, None, Some("Scenario tanpa judul".to_string())));
+                continue;
+            }
+            if sc.steps.is_empty()
+                || sc.steps.iter().any(|s| s.action.trim().is_empty() || s.expected.trim().is_empty())
+            {
+                results.push((
+                    sc.scenario.clone(),
+                    false,
+                    None,
+                    Some("Scenario tidak punya steps lengkap (action/expected wajib)".to_string()),
+                ));
+                continue;
+            }
             let steps_lines: String = sc
                 .steps
                 .iter()
@@ -979,9 +1072,22 @@ Output JSON format:
                 Err(e) => results.push((sc.scenario.clone(), false, None, Some(format!("Client error: {e}")))),
                 Ok(client) => match client.api.post_json("/issue", &body).await {
                     Ok(resp) => {
-                        let key = resp["key"].as_str().unwrap_or("").to_string();
-                        synced_keys.push(key.clone());
-                        results.push((sc.scenario.clone(), true, Some(key), None));
+                        // HTTP success with no usable "key" is a failure: the
+                        // scenario cannot be tracked, deselected, or moved to
+                        // a folder, and must stay retryable.
+                        match resp["key"].as_str().map(str::trim).filter(|k| !k.is_empty()) {
+                            Some(key) => {
+                                let key = key.to_string();
+                                synced_keys.push(key.clone());
+                                results.push((sc.scenario.clone(), true, Some(key), None));
+                            }
+                            None => results.push((
+                                sc.scenario.clone(),
+                                false,
+                                None,
+                                Some("Jira tidak mengembalikan issue key pada response sukses".to_string()),
+                            )),
+                        }
                     }
                     Err(e) => results.push((sc.scenario.clone(), false, None, Some(e.to_string()))),
                 },
@@ -1029,13 +1135,30 @@ Output JSON format:
             req.mode.trim().to_string()
         };
 
+        // Validate the optional line range: numbers must be positive and
+        // ordered; 0 / reversed ranges would silently render misleading
+        // context windows.
+        if req.start_line.map_or(false, |s| s == 0)
+            || req.end_line.map_or(false, |e| e == 0)
+            || matches!((req.start_line, req.end_line), (Some(s), Some(e)) if s > e)
+        {
+            return Err(
+                "Rentang baris tidak valid: nomor baris harus > 0 dan start <= end.".to_string(),
+            );
+        }
+
+        // Effective model first: the cache key must record the model that
+        // actually produced the result, not the raw (possibly empty) config.
+        let active_model = self.effective_model();
+
         let cache_key = BitbucketExplainCacheService::make_key(
+            &self.config.bitbucket.base_url,
             &namespace,
             &req.file_path,
             req.start_line,
             req.end_line,
             &mode,
-            &self.config.ollama.model,
+            &active_model,
         );
         // #10: skip cache when force_refresh is set.
         if !req.force_refresh {
@@ -1175,12 +1298,7 @@ Output JSON format:
             ));
         }
 
-        // Active model from Settings.
-        let active_model = if self.config.ollama.model.is_empty() {
-            "qwen2.5:7b".to_string()
-        } else {
-            self.config.ollama.model.clone()
-        };
+        // Active model already resolved above (with fallback) for the cache key.
 
         let system_prompt = Self::explain_system_prompt(&mode);
         let user_prompt = format!(
@@ -1197,7 +1315,9 @@ Output JSON format:
         log::info!(target: "Bitbucket", "explain_bitbucket_code: calling Ollama with active model '{}' (mode {mode})", active_model);
 
         // Request the model to emit strict JSON; retry once with a sharp
-        // reminder if the first attempt doesn't parse as valid JSON.
+        // reminder if the first attempt doesn't parse as valid JSON. A
+        // transport/HTTP failure on the retry is surfaced to the user with
+        // the real Ollama error instead of being masked as an empty answer.
         let mut ai_raw = ollama
             .chat_json(
                 &system_prompt,
@@ -1207,7 +1327,10 @@ Output JSON format:
                 Some(&active_model),
             )
             .await
-            .unwrap_or_default();
+            .unwrap_or_else(|e| {
+                log::warn!(target: "Bitbucket", "explain_bitbucket_code: attempt 1 failed, retrying: {e}");
+                String::new()
+            });
         log::info!(target: "Bitbucket", "explain_bitbucket_code: raw Ollama response (attempt 1): {}", ai_raw);
 
         let parsed = match Self::parse_explain_response(&ai_raw) {
@@ -1225,7 +1348,7 @@ Output JSON format:
                         Some(&active_model),
                     )
                     .await
-                    .unwrap_or_else(|| "{}".to_string());
+                    .map_err(|e| format!("Gagal memanggil model AI ({active_model}): {e}"))?;
                 log::info!(target: "Bitbucket", "explain_bitbucket_code: raw Ollama response (attempt 2): {}", ai_raw);
                 Self::parse_explain_response(&ai_raw)?
             }
@@ -1814,6 +1937,17 @@ Output JSON dengan skema berikut:
                     if selected.len() >= MAX_RETRIEVED_CHUNKS {
                         break;
                     }
+                    // The namespace is shared across selections of the same PR
+                    // commit — only chunks from the currently selected files
+                    // may enter the prompt.
+                    let in_scope = c
+                        .code
+                        .as_ref()
+                        .map(|m| filter_list.iter().any(|p| p == &m.file_path))
+                        .unwrap_or(false);
+                    if !in_scope {
+                        continue;
+                    }
                     if seen.insert(c.id.clone()) {
                         selected.push(c);
                     }
@@ -1925,13 +2059,157 @@ Output JSON dengan skema berikut:
         (range, rendered)
     }
 
+    /// Per-field length cap used by `looks_like_code_leak`. Mirrors the
+    /// `maxLength` enforced by the JSON Schema in `scenario_schema()` — the
+    /// parser-side check is the safety net for SLM models that ignore or
+    /// overshoot the schema constraint.
+    const MAX_FIELD_CHARS: usize = 500;
+
+    /// Returns `Some(reason)` when a free-text scenario field contains a
+    /// strong signal that the model dumped raw source code (SQL, Java, diff
+    /// hunks, JSX/XML literals, etc.) into the field instead of summarising
+    /// the behaviour. The caller should treat this as a hard parse failure so
+    /// the retry loop regenerates with a forceful correction prompt.
+    fn looks_like_code_leak(field: &str) -> Option<&'static str> {
+        if field.len() > Self::MAX_FIELD_CHARS {
+            return Some("field exceeds maxLength");
+        }
+        // Lower-case once; marker scan is case-insensitive to catch
+        // `SELECT`, `Select`, `select`, etc. Only STRONG code markers are
+        // listed here: generic words like "function", "package", or
+        // "namespace" also appear in valid test prose and must not trigger
+        // a false positive.
+        let lower = field.to_ascii_lowercase();
+        const MARKERS: &[&str] = &[
+            "<sql_script>",
+            "<sql>",
+            "</sql>",
+            "diff --git",
+            "@@ ",
+            "+++ b/",
+            "--- a/",
+            "select * from",
+            "select 'header'",
+            "union all",
+            "insert into ",
+            "create table",
+            "import React",
+            "export default ",
+        ];
+        for m in MARKERS {
+            if lower.contains(m) {
+                return Some("field contains raw code markers");
+            }
+        }
+        // Heuristic: brace density. Real prose almost never contains `{}` —
+        // source dumps (JS/TS/Java/SQL) usually do. Parentheses and
+        // semicolons are NOT counted: they appear in normal prose.
+        if field.len() >= 80 {
+            let braces = field.chars().filter(|c| matches!(c, '{' | '}')).count();
+            if braces * 100 / field.len() >= 10 {
+                return Some("field has code-like brace density");
+            }
+        }
+        None
+    }
+
+    /// Resolve a model-provided `filePath` against the selected changed files.
+    /// Small SLMs frequently abbreviate the full path to its basename (e.g.
+    /// `OCEAN.ReportPostTrx.task.xml` instead of the full directory chain), so
+    /// resolution order is: exact match → unique case-insensitive full-path
+    /// match → unique basename match. Ambiguous (multiple candidates) or
+    /// unknown paths return `None` so the scenario is dropped instead of being
+    /// silently attributed to the wrong file.
+    fn resolve_file_path(provided: &str, allowed: &HashSet<String>) -> Option<String> {
+        let provided = provided.trim();
+        if provided.is_empty() {
+            return None;
+        }
+        if allowed.contains(provided) {
+            return Some(provided.to_string());
+        }
+        let lower = provided.to_lowercase();
+        // Case-insensitive full-path match.
+        let ci: Vec<&String> = allowed
+            .iter()
+            .filter(|p| p.to_lowercase() == lower)
+            .collect();
+        if ci.len() == 1 {
+            return Some((*ci[0]).clone());
+        }
+        if !ci.is_empty() {
+            return None; // ambiguous case-insensitive full paths
+        }
+        // Basename match (both `/` and `\` separators), unique only.
+        let base = provided
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(provided)
+            .to_lowercase();
+        let by_base: Vec<&String> = allowed
+            .iter()
+            .filter(|p| {
+                let pb = p.rsplit(['/', '\\']).next().unwrap_or(p.as_str());
+                pb.to_lowercase() == base
+            })
+            .collect();
+        if by_base.len() == 1 {
+            Some((*by_base[0]).clone())
+        } else {
+            None // unknown, or ambiguous basename shared by several files
+        }
+    }
+
+    /// Validate every free-text field of a scenario against the leak
+    /// detector. Returns `Err(field_name)` on the first violation so the
+    /// caller can drop / retry the batch.
+    fn validate_scenario_fields(i: usize, s: &BitbucketTestScenario) -> Result<(), String> {
+        let checks: &[(&str, &str)] = &[
+            ("scenario", s.scenario.as_str()),
+            ("reason", s.reason.as_str()),
+            ("filePath", s.file_path.as_str()),
+            ("scenarioType", s.scenario_type.as_str()),
+            ("riskLevel", s.risk_level.as_str()),
+        ];
+        for (name, val) in checks {
+            if let Some(why) = Self::looks_like_code_leak(val) {
+                return Err(format!("Scenario #{i} field '{name}' looks like a code leak ({why})"));
+            }
+        }
+        for (p_idx, p) in s.preconditions.iter().enumerate() {
+            if let Some(why) = Self::looks_like_code_leak(p) {
+                return Err(format!("Scenario #{i} precondition #{p_idx} looks like a code leak ({why})"));
+            }
+        }
+        for (s_idx, st) in s.steps.iter().enumerate() {
+            if let Some(why) = Self::looks_like_code_leak(&st.action) {
+                return Err(format!("Scenario #{i} step #{s_idx} 'action' looks like a code leak ({why})"));
+            }
+            if let Some(why) = Self::looks_like_code_leak(&st.expected) {
+                return Err(format!("Scenario #{i} step #{s_idx} 'expected' looks like a code leak ({why})"));
+            }
+        }
+        Ok(())
+    }
+
     /// Parse the scenarios array from the model's response. Returns `Err` when
-    /// the response is not valid JSON or does not match the required envelope
-    /// (`{"scenarios": [...]}`). We are intentionally strict: an object with an
-    /// unrelated shape (e.g. `{"steps": [...]}`, `{"totalResults": 3}`) or a
-    /// malformed scenario item is treated as a hard failure so the caller can
-    /// retry instead of silently producing zero scenarios.
+    /// the response is not valid JSON, does not match the required envelope
+    /// (`{"scenarios": [...]}`), or when a scenario's free-text fields contain
+    /// raw source code leaked from the diff. We are intentionally strict: an
+    /// object with an unrelated shape (e.g. `{"steps": [...]}`, `{"totalResults": 3}`)
+    /// or a malformed scenario item is treated as a hard failure so the caller
+    /// can retry instead of silently producing zero scenarios.
     fn parse_scenarios_from_ai(raw: &str) -> Result<Vec<BitbucketTestScenario>, String> {
+        Self::parse_scenarios_from_ai_scoped(raw, None)
+    }
+
+    /// Like `parse_scenarios_from_ai`, but additionally enforces that every
+    /// scenario's `filePath` is one of `allowed_files` (the selected changed
+    /// files of the PR). `None` skips the filePath check (used by unit tests).
+    fn parse_scenarios_from_ai_scoped(
+        raw: &str,
+        allowed_files: Option<&HashSet<String>>,
+    ) -> Result<Vec<BitbucketTestScenario>, String> {
         let value = match crate::services::text_utils::extract_json_block(raw) {
             Some(v) => v,
             None => {
@@ -1940,6 +2218,20 @@ Output JSON dengan skema berikut:
                 return Err("Model response was not valid JSON".to_string());
             }
         };
+
+        // Reject unrelated envelopes outright (e.g. {"steps": [...]} or
+        // {"totalResults": 3}) — small SLMs occasionally echo a wrong schema
+        // and the retry prompt must fire.
+        if let Some(obj) = value.as_object() {
+            let unknown: Vec<&String> =
+                obj.keys().filter(|k| k.as_str() != "scenarios").collect();
+            if !unknown.is_empty() {
+                return Err(format!(
+                    "Model response has unexpected top-level keys: {}",
+                    unknown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                ));
+            }
+        }
 
         // Require a top-level object with a "scenarios" array. Bare arrays and
         // unrelated objects are rejected so we never accept a wrong schema.
@@ -1953,17 +2245,131 @@ Output JSON dengan skema berikut:
         };
 
         let mut list = Vec::new();
+        // Availability policy: an invalid ITEM is dropped (with a warning) so
+        // one bad scenario doesn't discard the whole batch; the response only
+        // fails hard when EVERY item is invalid, which triggers the caller's
+        // retry with the correction prompt. Envelope-level failures above stay
+        // hard errors.
+        let mut first_item_error: Option<String> = None;
+        let mut dropped = 0usize;
         for (i, item) in arr.iter().enumerate() {
-            let s: BitbucketTestScenario = serde_json::from_value(item.clone()).map_err(|e| {
-                log::warn!(target: "Bitbucket", "parse_scenarios_from_ai: scenario #{i} failed deserialization: {e}");
-                format!("Scenario #{i} is malformed: {e}")
-            })?;
+            let mut s: BitbucketTestScenario = match serde_json::from_value(item.clone()) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!(target: "Bitbucket", "parse_scenarios_from_ai: scenario #{i} failed deserialization, dropped: {e}");
+                    first_item_error.get_or_insert(format!("Scenario #{i} is malformed: {e}"));
+                    dropped += 1;
+                    continue;
+                }
+            };
+            let reject = |reason: String| -> String {
+                log::warn!(target: "Bitbucket", "parse_scenarios_from_ai: {reason}, dropped");
+                reason
+            };
 
             // Semantic validation on top of Serde's type checks.
             if s.scenario.trim().is_empty() {
-                return Err(format!("Scenario #{i} has an empty 'scenario' title"));
+                first_item_error.get_or_insert(reject(format!("Scenario #{i} has an empty 'scenario' title")));
+                dropped += 1;
+                continue;
+            }
+            if s.confidence > 100 {
+                first_item_error.get_or_insert(reject(format!("Scenario #{i} confidence {} out of 0-100", s.confidence)));
+                dropped += 1;
+                continue;
+            }
+            const VALID_TYPES: &[&str] = &["Positive", "Negative", "Edge Case", "Regression", "Security"];
+            const VALID_RISKS: &[&str] = &["High", "Medium", "Low"];
+            if !VALID_TYPES.contains(&s.scenario_type.as_str()) {
+                first_item_error.get_or_insert(reject(format!(
+                    "Scenario #{i} has invalid scenarioType '{}'; expected one of {}",
+                    s.scenario_type, VALID_TYPES.join(", ")
+                )));
+                dropped += 1;
+                continue;
+            }
+            if !VALID_RISKS.contains(&s.risk_level.as_str()) {
+                first_item_error.get_or_insert(reject(format!(
+                    "Scenario #{i} has invalid riskLevel '{}'; expected one of {}",
+                    s.risk_level, VALID_RISKS.join(", ")
+                )));
+                dropped += 1;
+                continue;
+            }
+            if let Some(allowed) = allowed_files {
+                match Self::resolve_file_path(&s.file_path, allowed) {
+                    Some(full) => {
+                        // Canonicalize: the response always carries the full
+                        // path even when the model answered with a basename.
+                        s.file_path = full;
+                    }
+                    None => {
+                        first_item_error.get_or_insert(reject(format!(
+                            "Scenario #{i} filePath '{}' does not match any selected changed file",
+                            s.file_path
+                        )));
+                        dropped += 1;
+                        continue;
+                    }
+                }
+            }
+            if s.steps.is_empty() {
+                first_item_error.get_or_insert(reject(format!("Scenario #{i} has no steps")));
+                dropped += 1;
+                continue;
+            }
+            // Step numbers must be >= 1 and unique; then renumber sequentially
+            // so the UI always shows a clean 1..n ordering.
+            let mut nums: Vec<usize> = s.steps.iter().map(|st| st.step).collect();
+            nums.sort_unstable();
+            nums.dedup();
+            if nums.len() != s.steps.len() {
+                first_item_error.get_or_insert(reject(format!("Scenario #{i} has duplicate step numbers")));
+                dropped += 1;
+                continue;
+            }
+            if nums[0] == 0 {
+                first_item_error.get_or_insert(reject(format!("Scenario #{i} has an invalid step number 0")));
+                dropped += 1;
+                continue;
+            }
+            let invalid_step = s
+                .steps
+                .iter()
+                .find(|st| st.action.trim().is_empty() || st.expected.trim().is_empty())
+                .map(|st| st.step);
+            if let Some(step_no) = invalid_step {
+                first_item_error.get_or_insert(reject(format!(
+                    "Scenario #{i} step {step_no} has an empty action/expected"
+                )));
+                dropped += 1;
+                continue;
+            }
+            let mut sorted_steps = s.steps.clone();
+            sorted_steps.sort_by_key(|st| st.step);
+            for (idx, st) in sorted_steps.iter_mut().enumerate() {
+                st.step = idx + 1;
+            }
+            s.steps = sorted_steps;
+
+            // Reject any scenario whose free-text fields look like a raw code
+            // dump (typical failure mode of small SLM models that echo the
+            // diff instead of summarising it).
+            if let Err(e) = Self::validate_scenario_fields(i, &s) {
+                first_item_error.get_or_insert(reject(e));
+                dropped += 1;
+                continue;
             }
             list.push(s);
+        }
+        if list.is_empty() && !arr.is_empty() {
+            return Err(format!(
+                "All {dropped} scenario(s) invalid: {}",
+                first_item_error.unwrap_or_else(|| "unknown validation failure".to_string())
+            ));
+        }
+        if dropped > 0 {
+            log::info!(target: "Bitbucket", "parse_scenarios_from_ai: kept {} valid scenario(s), dropped {dropped} invalid", list.len());
         }
         Ok(list)
     }
@@ -2154,38 +2560,144 @@ mod tests {
     }
 
     #[test]
-    fn parse_scenarios_from_ai_accepts_any_supporting_scenario_type() {
+    fn parse_scenarios_from_ai_rejects_invalid_scenario_type() {
         let raw = r#"{"scenarios":[{"scenario":"S","confidence":80,"reason":"r","scenarioType":"Weird","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"}]}]}"#;
-        assert!(BitbucketService::parse_scenarios_from_ai(raw).is_ok());
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("scenarioType"), "unexpected error: {err}");
     }
 
     #[test]
-    fn parse_scenarios_from_ai_accepts_any_supporting_risk_level() {
+    fn parse_scenarios_from_ai_rejects_invalid_risk_level() {
         let raw = r#"{"scenarios":[{"scenario":"S","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Extreme","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"}]}]}"#;
-        assert!(BitbucketService::parse_scenarios_from_ai(raw).is_ok());
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("riskLevel"), "unexpected error: {err}");
     }
 
     #[test]
-    fn parse_scenarios_from_ai_accepts_empty_supporting_fields() {
+    fn parse_scenarios_from_ai_rejects_empty_steps() {
         let raw = r#"{"scenarios":[{"scenario":"S","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[]}]}"#;
-        let list = BitbucketService::parse_scenarios_from_ai(raw).unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].scenario, "S");
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("no steps"), "unexpected error: {err}");
     }
 
     #[test]
-    fn parse_scenarios_from_ai_accepts_scenario_only() {
-        let raw = r#"{"scenarios":[{"scenario":"S"}]}"#;
-        let list = BitbucketService::parse_scenarios_from_ai(raw).unwrap();
-        assert_eq!(list.len(), 1);
-        assert!(list[0].reason.is_empty());
-        assert!(list[0].steps.is_empty());
+    fn parse_scenarios_from_ai_rejects_empty_action_or_expected() {
+        let raw = r#"{"scenarios":[{"scenario":"S","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"   ","expected":"e"}]}]}"#;
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("empty action/expected"), "unexpected error: {err}");
     }
 
     #[test]
-    fn parse_scenarios_from_ai_rejects_malformed_item() {
+    fn parse_scenarios_from_ai_rejects_duplicate_step_numbers() {
+        let raw = r#"{"scenarios":[{"scenario":"S","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"},{"step":1,"action":"b","expected":"f"}]}]}"#;
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("duplicate step"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_rejects_step_number_zero() {
+        let raw = r#"{"scenarios":[{"scenario":"S","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":0,"action":"a","expected":"e"}]}]}"#;
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("step number 0"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_rejects_out_of_scope_file_path() {
+        let raw = r#"{"scenarios":[{"scenario":"S","filePath":"other/file.java","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"}]}]}"#;
+        let allowed: HashSet<String> = ["src/A.java".to_string()].into_iter().collect();
+        let err = BitbucketService::parse_scenarios_from_ai_scoped(raw, Some(&allowed)).unwrap_err();
+        assert!(err.contains("does not match any selected"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_accepts_in_scope_file_path_and_renumbers_steps() {
+        let raw = r#"{"scenarios":[{"scenario":"S","filePath":"src/A.java","confidence":80,"reason":"r","scenarioType":"Regression","riskLevel":"Medium","preconditions":[],"steps":[{"step":5,"action":"b","expected":"f"},{"step":2,"action":"a","expected":"e"}]}]}"#;
+        let allowed: HashSet<String> = ["src/A.java".to_string()].into_iter().collect();
+        let list = BitbucketService::parse_scenarios_from_ai_scoped(raw, Some(&allowed)).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].steps[0].step, 1);
+        assert_eq!(list[0].steps[0].action, "a");
+        assert_eq!(list[0].steps[1].step, 2);
+        assert_eq!(list[0].steps[1].action, "b");
+    }
+
+    #[test]
+    fn resolve_file_path_exact_match() {
+        let allowed: HashSet<String> = ["OWS_WORK/task/OCEAN.ReportPostTrx.task.xml".to_string()].into_iter().collect();
+        assert_eq!(
+            BitbucketService::resolve_file_path("OWS_WORK/task/OCEAN.ReportPostTrx.task.xml", &allowed),
+            Some("OWS_WORK/task/OCEAN.ReportPostTrx.task.xml".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_file_path_unique_basename_resolves_to_full_path() {
+        // Real-world regression: the model answered with the basename only.
+        let allowed: HashSet<String> = ["OWS_WORK/client/way4manager/components/dbm.module/task/OCEAN.ReportPostTrx.task.xml".to_string()].into_iter().collect();
+        assert_eq!(
+            BitbucketService::resolve_file_path("OCEAN.ReportPostTrx.task.xml", &allowed),
+            Some("OWS_WORK/client/way4manager/components/dbm.module/task/OCEAN.ReportPostTrx.task.xml".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_file_path_ambiguous_basename_is_rejected() {
+        let allowed: HashSet<String> = [
+            "src/api/User.ts".to_string(),
+            "tests/api/User.ts".to_string(),
+        ].into_iter().collect();
+        assert_eq!(BitbucketService::resolve_file_path("User.ts", &allowed), None);
+    }
+
+    #[test]
+    fn resolve_file_path_unknown_is_rejected() {
+        let allowed: HashSet<String> = ["src/A.java".to_string()].into_iter().collect();
+        assert_eq!(BitbucketService::resolve_file_path("other/B.java", &allowed), None);
+        assert_eq!(BitbucketService::resolve_file_path("", &allowed), None);
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_canonicalizes_basename_file_path() {
+        let raw = r#"{"scenarios":[{"scenario":"S","filePath":"OCEAN.ReportPostTrx.task.xml","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"}]}]}"#;
+        let allowed: HashSet<String> = ["OWS_WORK/client/way4manager/components/dbm.module/task/OCEAN.ReportPostTrx.task.xml".to_string()].into_iter().collect();
+        let list = BitbucketService::parse_scenarios_from_ai_scoped(raw, Some(&allowed)).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            list[0].file_path,
+            "OWS_WORK/client/way4manager/components/dbm.module/task/OCEAN.ReportPostTrx.task.xml"
+        );
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_rejects_unknown_top_level_keys() {
+        let raw = r#"{"scenarios":[{"scenario":"S","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"}]}],"id":"146275891058804","class":"m_sql"}"#;
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("unexpected top-level keys"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_drops_malformed_item_keeps_valid_one() {
+        // Availability policy: one malformed item is dropped, the valid one is
+        // kept — a full-batch retry would waste a working answer.
         let raw = r#"{"scenarios":[{"scenario":"S1","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"}]},{"scenario":"S2","confidence":"not-a-number","reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"}]}]}"#;
-        assert!(BitbucketService::parse_scenarios_from_ai(raw).is_err());
+        let list = BitbucketService::parse_scenarios_from_ai(raw).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].scenario, "S1");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_rejects_batch_when_all_items_invalid() {
+        let raw = r#"{"scenarios":[{"scenario":"","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"a","expected":"e"}]}]}"#;
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("All 1 scenario(s) invalid"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_accepts_explicit_empty_array() {
+        // Trivial changes: the prompt instructs the model to return an empty
+        // array; it must be accepted as a valid (uncached) result.
+        let list = BitbucketService::parse_scenarios_from_ai(r#"{"scenarios":[]}"#).unwrap();
+        assert!(list.is_empty());
     }
 
     #[test]
@@ -2267,5 +2779,82 @@ mod tests {
         assert!(BitbucketService::is_binary_file("dist/bundle.zip"));
         assert!(!BitbucketService::is_binary_file("src/App.java"));
         assert!(!BitbucketService::is_binary_file("README.md"));
+    }
+
+    #[test]
+    fn looks_like_code_leak_flags_sql_script_tag() {
+        assert!(BitbucketService::looks_like_code_leak("<sql_script>select * from dual</sql_script>").is_some());
+    }
+
+    #[test]
+    fn looks_like_code_leak_flags_sql_keywords() {
+        assert!(BitbucketService::looks_like_code_leak("select * from ows.doc d left join ows.opt_re_inc_post reincp").is_some());
+    }
+
+    #[test]
+    fn looks_like_code_leak_flags_diff_hunk() {
+        assert!(BitbucketService::looks_like_code_leak("@@ -1,5 +1,6 @@\n foo\n+bar\n").is_some());
+    }
+
+    #[test]
+    fn looks_like_code_leak_flags_brace_density() {
+        // Braces-only density: 13 braces in ~95 chars (~13%) — over the 10%
+        // heuristic and above the 80-char minimum length gate.
+        let dense = "const cfg = { a: { b: 1 }, c: { d: 2 }, e: { f: 3 }, g: { h: 4 }, i: { j: 5 }, k: { l: 6 } };";
+        assert!(BitbucketService::looks_like_code_leak(dense).is_some());
+    }
+
+    #[test]
+    fn looks_like_code_leak_allows_prose_with_common_tech_words() {
+        // Regression guard: generic words like "function"/"package" appear in
+        // valid test prose and must NOT be treated as raw-code leaks.
+        assert!(BitbucketService::looks_like_code_leak("Validasi package pengguna sebelum function pembayaran dipanggil oleh sistem.").is_none());
+        assert!(BitbucketService::looks_like_code_leak("Proses insert data berhasil dengan hasil (dicek) di tabel; status OK.").is_none());
+    }
+
+    #[test]
+    fn looks_like_code_leak_flags_oversize_field() {
+        let big = "a".repeat(BitbucketService::MAX_FIELD_CHARS + 1);
+        assert!(BitbucketService::looks_like_code_leak(&big).is_some());
+    }
+
+    #[test]
+    fn looks_like_code_leak_allows_normal_prose() {
+        assert!(BitbucketService::looks_like_code_leak("Sistem mengembalikan header, body, dan trailer.").is_none());
+        assert!(BitbucketService::looks_like_code_leak("Status response adalah 200 OK.").is_none());
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_rejects_sql_leak_in_expected() {
+        // Real-world regression: model dumped <sql_script>...</sql_script> into
+        // a step's expected field. Parser must reject so the retry regenerates.
+        let raw = r#"{"scenarios":[{"scenario":"Validasi export CSV","filePath":"sql/export.sql","confidence":90,"reason":"Mengacu pada perubahan query export.","scenarioType":"Positive","riskLevel":"High","preconditions":["Data tersedia"],"steps":[{"step":1,"action":"Jalankan query export","expected":"<sql_script>select * from (select 'HEADER' as blk_code, 'CardNumber' as CardNumber from dual union all select * from ows.doc d) as t order by 1,2,3</sql_script>"}]}]}"#;
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("code leak"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_rejects_sql_leak_in_reason() {
+        let raw = r#"{"scenarios":[{"scenario":"Validasi","filePath":"src/A.java","confidence":80,"reason":"select * from ows.doc d","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{"step":1,"action":"Aksi","expected":"Hasil"}]}]}"#;
+        let err = BitbucketService::parse_scenarios_from_ai(raw).unwrap_err();
+        assert!(err.contains("code leak"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_rejects_oversize_action() {
+        let big_action = "a".repeat(BitbucketService::MAX_FIELD_CHARS + 1);
+        let raw = format!(
+            r#"{{"scenarios":[{{"scenario":"Validasi","filePath":"src/A.java","confidence":80,"reason":"r","scenarioType":"Positive","riskLevel":"Low","preconditions":[],"steps":[{{"step":1,"action":"{big_action}","expected":"ok"}}]}}]}}"#
+        );
+        let err = BitbucketService::parse_scenarios_from_ai(&raw).unwrap_err();
+        assert!(err.contains("code leak"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_scenarios_from_ai_accepts_clean_response() {
+        let raw = r#"{"scenarios":[{"scenario":"Validasi","filePath":"src/A.java","confidence":88,"reason":"Mengacu perubahan method validate().","scenarioType":"Positive","riskLevel":"Medium","preconditions":["User aktif"],"steps":[{"step":1,"action":"Kirim payload valid","expected":"Sistem mengembalikan 200 OK"}]}]}"#;
+        let list = BitbucketService::parse_scenarios_from_ai(raw).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].steps[0].expected, "Sistem mengembalikan 200 OK");
     }
 }
