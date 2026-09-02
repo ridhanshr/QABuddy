@@ -72,7 +72,13 @@ impl UpdateService {
         let checked_at = chrono::Utc::now().to_rfc3339();
         match self.github_release().await {
             Ok(release) => {
-                let latest_version = release["tag_name"].as_str().unwrap_or(current_version).to_string();
+                // Store the tag without the "v" prefix — the UI renders it as
+                // "v{latestVersion}" and is_newer_version expects bare semver.
+                let latest_version = release["tag_name"]
+                    .as_str()
+                    .unwrap_or(current_version)
+                    .trim_start_matches(['v', 'V'])
+                    .to_string();
                 let url = release["html_url"].as_str().unwrap_or("https://github.com/ridhanshr/QABuddy/releases").to_string();
                 let release_notes = release["body"].as_str().unwrap_or("").to_string();
                 let published_at = release["published_at"].as_str().unwrap_or("").to_string();
@@ -121,12 +127,8 @@ impl UpdateService {
     ) -> Result<()> {
         let release = self.github_release().await?;
         let assets = release["assets"].as_array().cloned().unwrap_or_default();
-        let exe_asset = assets
-            .iter()
-            .find(|asset| asset["name"].as_str().map(|n| n.ends_with(".exe")).unwrap_or(false))
-            .ok_or_else(|| ServiceError::NotFound("Tidak ditemukan installer Windows (.exe) di rilis terbaru.".into()))?;
-        let download_url = exe_asset["browser_download_url"].as_str().unwrap_or("");
-        let asset_name = exe_asset["name"].as_str().unwrap_or("qa-buddy-installer.exe");
+        let (asset_name, download_url) =
+            pick_installer_asset(&assets, std::env::consts::OS, std::env::consts::ARCH)?;
         if download_url.is_empty() {
             return Err(ServiceError::NotFound("Download URL installer tidak tersedia".into()));
         }
@@ -147,7 +149,7 @@ impl UpdateService {
 
         let total = resp.content_length().unwrap_or(0);
         let temp_dir = std::env::temp_dir();
-        let installer_path = temp_dir.join(asset_name);
+        let installer_path = temp_dir.join(&asset_name);
         let mut file = std::fs::File::create(&installer_path)?;
         let mut downloaded = 0u64;
 
@@ -159,10 +161,104 @@ impl UpdateService {
             on_progress(DownloadProgress { progress, downloaded, total });
         }
 
-        let _ = Command::new(&installer_path)
-            .spawn()
-            .map_err(ServiceError::from)?;
+        // Windows: launch the NSIS installer directly. macOS: mount the DMG
+        // (a .dmg is a disk image, not an executable — it must be opened).
+        #[cfg(target_os = "macos")]
+        let spawn_result = Command::new("open").arg(&installer_path).spawn();
+        #[cfg(not(target_os = "macos"))]
+        let spawn_result = Command::new(&installer_path).spawn();
+        spawn_result.map_err(ServiceError::from)?;
         let _ = app_handle;
         Ok(())
+    }
+}
+
+/// Pick the release asset matching the user's OS/architecture.
+/// Returns `(asset_name, browser_download_url)`.
+///   - windows → first `.exe` (NSIS setup)
+///   - macos   → `.dmg` matching the CPU arch (`aarch64` / `x64`)
+fn pick_installer_asset(
+    assets: &[serde_json::Value],
+    os: &str,
+    arch: &str,
+) -> Result<(String, String)> {
+    let wanted = |name: &str| -> bool {
+        match os {
+            "windows" => name.to_lowercase().ends_with(".exe"),
+            "macos" => {
+                let dmg_arch = if arch == "aarch64" { "aarch64" } else { "x64" };
+                name.to_lowercase().ends_with(".dmg") && name.contains(dmg_arch)
+            }
+            _ => false,
+        }
+    };
+    for asset in assets {
+        let Some(name) = asset["name"].as_str() else { continue };
+        if !wanted(name) {
+            continue;
+        }
+        let url = asset["browser_download_url"].as_str().unwrap_or("");
+        if !url.is_empty() {
+            return Ok((name.to_string(), url.to_string()));
+        }
+    }
+    let hint = match os {
+        "windows" => "installer Windows (.exe)".to_string(),
+        "macos" => format!("installer macOS (.dmg) untuk arsitektur {arch}"),
+        other => format!("installer untuk sistem operasi {other}"),
+    };
+    Err(ServiceError::NotFound(format!(
+        "Tidak ditemukan {hint} di rilis terbaru. Unduh manual dari halaman Releases."
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn release_assets() -> Vec<serde_json::Value> {
+        vec![
+            json!({"name": "QA.Buddy_1.1.4_aarch64.dmg", "browser_download_url": "https://x/aarch64.dmg"}),
+            json!({"name": "QA.Buddy_1.1.4_x64-setup.exe", "browser_download_url": "https://x/setup.exe"}),
+            json!({"name": "QA.Buddy_1.1.4_x64.dmg", "browser_download_url": "https://x/x64.dmg"}),
+            json!({"name": "QA.Buddy_1.1.4_x64_en-US.msi", "browser_download_url": "https://x/setup.msi"}),
+        ]
+    }
+
+    #[test]
+    fn is_newer_version_compares_semver_with_v_prefix() {
+        let svc = UpdateService::new();
+        assert!(svc.is_newer_version("1.1.3", "1.1.4"));
+        assert!(svc.is_newer_version("1.1.3", "v1.1.4"));
+        assert!(svc.is_newer_version("1.1.3", "2.0.0"));
+        assert!(svc.is_newer_version("1.1", "1.1.1"));
+        assert!(!svc.is_newer_version("1.1.4", "v1.1.3"));
+        assert!(!svc.is_newer_version("1.1.3", "v1.1.3"));
+        assert!(!svc.is_newer_version("1.1.3", "v1.1.2"));
+    }
+
+    #[test]
+    fn pick_installer_asset_windows_picks_exe() {
+        let (name, url) = pick_installer_asset(&release_assets(), "windows", "x86_64").unwrap();
+        assert_eq!(name, "QA.Buddy_1.1.4_x64-setup.exe");
+        assert_eq!(url, "https://x/setup.exe");
+    }
+
+    #[test]
+    fn pick_installer_asset_macos_picks_dmg_per_arch() {
+        let (name, _) = pick_installer_asset(&release_assets(), "macos", "aarch64").unwrap();
+        assert_eq!(name, "QA.Buddy_1.1.4_aarch64.dmg");
+        let (name, _) = pick_installer_asset(&release_assets(), "macos", "x86_64").unwrap();
+        assert_eq!(name, "QA.Buddy_1.1.4_x64.dmg");
+    }
+
+    #[test]
+    fn pick_installer_asset_errors_without_match() {
+        assert!(pick_installer_asset(&[], "windows", "x86_64").is_err());
+        assert!(pick_installer_asset(&release_assets(), "linux", "x86_64").is_err());
+        // macOS x64 must not pick the aarch64 dmg
+        let only_arm = vec![json!({"name": "QA.Buddy_aarch64.dmg", "browser_download_url": "https://x/a.dmg"})];
+        assert!(pick_installer_asset(&only_arm, "macos", "x86_64").is_err());
     }
 }
