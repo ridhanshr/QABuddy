@@ -1584,6 +1584,23 @@ select {
 @keyframes dialogEnter { from { opacity: 0; transform: scale(0.97) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 .uqa-dialog { max-width: 640px; width: 100%; }
 
+/* UQA dialog refinements (scoped so other dialogs are unaffected) */
+.uqa-dialog .dialog-header {
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--outline-variant);
+  align-items: center;
+}
+.uqa-dialog .dialog-title { font-family: var(--font-mono); letter-spacing: -0.01em; }
+.uqa-dialog .dialog-subtitle {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.45;
+}
+.uqa-dialog .dialog-body { padding: 14px 20px 20px; gap: 12px; }
+.uqa-dialog .dialog-header-actions .uqa-badge { justify-self: auto; }
+
 .dialog-header {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
   padding: 20px 24px 0; flex-shrink: 0;
@@ -1645,22 +1662,51 @@ select {
 .uqa-section-card .primary-button, .uqa-section-card .secondary-button { padding: 6px 13px; font-size: 12.5px; }
 .uqa-section-card select.input, .uqa-section-card input[type="time"].input { padding: 6px 10px; font-size: 13px; }
 .uqa-section-card .uqa-textarea { min-height: 50px; font-size: 13px; padding: 8px 10px; }
-.uqa-section-card-compact .uqa-section-header { padding-bottom: 0; }
 .uqa-section-header {
   display: flex; align-items: center; gap: 8px;
-  padding: 12px 16px; font-size: 13px; font-weight: 600; user-select: none;
+  padding: 12px 14px; font-size: 13px; font-weight: 600; user-select: none;
   color: var(--on-surface);
 }
+.uqa-section-header > .material-symbols:first-child { color: var(--primary); }
 .uqa-section-header[role="button"] { cursor: pointer; transition: background 0.15s ease; }
 .uqa-section-header[role="button"]:hover { background: var(--surface-container); }
 .uqa-section-header .material-symbols { font-size: 18px; color: var(--on-surface-variant); }
 .uqa-section-chevron { margin-left: auto; font-size: 18px; transition: transform 0.15s ease; }
-.uqa-section-body { padding: 0 16px 14px; display: flex; flex-direction: column; gap: 10px; }
+.uqa-section-body { padding: 2px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
 .uqa-section-body-scroll { max-height: 420px; overflow-y: auto; }
 
 .uqa-transition-row { display: flex; gap: 8px; align-items: center; }
 .uqa-transition-row select { flex: 1; }
 .uqa-textarea { resize: vertical; min-height: 60px; }
+
+.uqa-phase-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.uqa-phase-label { font-size: 12px; font-weight: 600; color: var(--on-surface-variant); white-space: nowrap; }
+.uqa-phase-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.uqa-phase-pill {
+  padding: 5px 14px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--outline-variant); background: var(--surface-container-lowest);
+  color: var(--on-surface-variant);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.uqa-phase-pill:hover:not(:disabled):not(.active) { border-color: var(--primary); color: var(--primary); }
+.uqa-phase-pill.active { border-color: var(--primary); background: var(--primary); color: var(--on-primary); }
+.uqa-phase-pill:disabled { opacity: 0.55; cursor: not-allowed; }
+.uqa-card-footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+.uqa-auto-summary-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.uqa-auto-summary-head .uqa-auto-section-title { margin: 0; }
+.uqa-auto-source-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 4px;
+  background: color-mix(in srgb, var(--severity-epic) 12%, transparent);
+  color: var(--severity-epic);
+  border: 1px solid color-mix(in srgb, var(--severity-epic) 25%, transparent);
+}
+.uqa-auto-source-badge[data-source="db"] {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 25%, transparent);
+}
 
 .uqa-message { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; }
 .uqa-message.success { background: var(--success-container); color: var(--success); }

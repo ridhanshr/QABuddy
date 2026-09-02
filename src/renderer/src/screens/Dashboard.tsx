@@ -418,7 +418,10 @@ export default function Dashboard() {
                         <button
                           type="button"
                           title="Buka di Jira"
-                          onClick={() => void window.qaBuddy.openExternal(`${config.jira.baseUrl}/browse/${p.uqa_key}`)}
+                          onClick={() => {
+                            const base = config.jira.baseUrl?.replace(/\/+$/, "");
+                            if (base) void window.qaBuddy.openExternal(`${base}/browse/${p.uqa_key}`);
+                          }}
                           style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", flexShrink: 0, padding: 4 }}
                         >
                           <span className="material-symbols" style={{ fontSize: 18 }}>open_in_new</span>
@@ -523,7 +526,10 @@ export default function Dashboard() {
                           <button
                             type="button"
                             title="Buka di Jira"
-                            onClick={() => void window.qaBuddy.openExternal(`${config.jira.baseUrl}/browse/${p.uqa_key}`)}
+                            onClick={() => {
+                              const base = config.jira.baseUrl?.replace(/\/+$/, "");
+                              if (base) void window.qaBuddy.openExternal(`${base}/browse/${p.uqa_key}`);
+                            }}
                             style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", flexShrink: 0, padding: 4 }}
                           >
                             <span className="material-symbols" style={{ fontSize: 18 }}>open_in_new</span>
