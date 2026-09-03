@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useLayoutEffect, useEffect, useMemo, useRef, useCallback } from "react";
 import ReactDOM from "react-dom";
 
 export interface SearchableSelectProps {
@@ -21,7 +21,7 @@ export default function SearchableSelect({
   const triggerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({ position: "fixed" });
 
   const filtered = useMemo(
     () => options.filter(o => (o.label || "").toLowerCase().includes(search.toLowerCase())),
@@ -31,7 +31,7 @@ export default function SearchableSelect({
   const selectedLabel = options.find(o => o.value === value)?.label || "";
 
   // Recalculate position every time the dropdown opens or the window resizes
-  const recalcPosition = () => {
+  const recalcPosition = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
@@ -45,17 +45,17 @@ export default function SearchableSelect({
       zIndex: 9999,
       maxHeight: dropHeight,
     });
-  };
+  }, []);
 
-  useEffect(() => {
-    if (open) {
-      recalcPosition();
-      // Focus search input without triggering scroll
-      requestAnimationFrame(() => {
-        searchInputRef.current?.focus({ preventScroll: true });
-      });
-    }
-  }, [open]);
+  // Measure before paint so the dropdown appears immediately in the right spot
+  useLayoutEffect(() => {
+    if (!open) return;
+    recalcPosition();
+    // Focus search input without triggering scroll
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+    });
+  }, [open, recalcPosition]);
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +67,7 @@ export default function SearchableSelect({
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
     };
-  }, [open]);
+  }, [open, recalcPosition]);
 
   // Close on outside click
   useEffect(() => {
@@ -91,10 +91,10 @@ export default function SearchableSelect({
       ref={dropdownRef}
       style={{
         ...dropdownStyle,
-        background: "var(--surface)",
+        background: "var(--surface-container)",
         border: "1px solid var(--outline-variant)",
-        borderRadius: 6,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+        borderRadius: 10,
+        boxShadow: "0 4px 20px rgba(0,0,0,0.18)",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
@@ -108,14 +108,14 @@ export default function SearchableSelect({
         onChange={e => setSearch(e.target.value)}
         onClick={e => e.stopPropagation()}
         style={{
-          padding: "8px 12px",
+          padding: "8px 14px",
           border: "none",
           borderBottom: "1px solid var(--outline-variant)",
           outline: "none",
-          fontSize: 14,
+          fontSize: 13,
           width: "100%",
           boxSizing: "border-box",
-          background: "var(--surface)",
+          background: "var(--surface-container)",
           color: "var(--on-surface)",
           flexShrink: 0,
         }}
@@ -124,36 +124,51 @@ export default function SearchableSelect({
         <div
           onClick={() => { onChange(""); setOpen(false); setSearch(""); }}
           style={{
-            padding: "8px 12px",
+            padding: "10px 14px",
             cursor: "pointer",
-            fontSize: 14,
-            color: value === "" ? "var(--primary)" : "var(--on-surface-variant)",
+            fontSize: 13,
+            fontWeight: value === "" ? 700 : 400,
+            color: value === "" ? "var(--primary)" : "var(--on-surface)",
             background: value === "" ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "transparent",
+            borderBottom: "1px solid var(--outline-variant)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = "var(--surface-container-high)"; }}
+          onMouseEnter={e => { if (value !== "") e.currentTarget.style.background = "var(--surface-container-high)"; }}
           onMouseLeave={e => { if (value !== "") e.currentTarget.style.background = "transparent"; }}
         >
-          -- Clear --
+          {/* <span className="material-symbols" style={{ fontSize: 16 }}>all_inclusive</span> */}
+          None
+          {value === "" && <span className="material-symbols" style={{ fontSize: 14, marginLeft: "auto" }}>check</span>}
         </div>
         {filtered.map(o => (
           <div
             key={o.value}
             onClick={() => { onChange(o.value); setOpen(false); setSearch(""); }}
             style={{
-              padding: "8px 12px",
+              padding: "10px 14px",
               cursor: "pointer",
-              fontSize: 14,
+              fontSize: 13,
+              fontWeight: value === o.value ? 700 : 400,
               color: value === o.value ? "var(--primary)" : "var(--on-surface)",
               background: value === o.value ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "transparent",
+              borderBottom: "1px solid var(--outline-variant)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
             }}
             onMouseEnter={e => { if (value !== o.value) e.currentTarget.style.background = "var(--surface-container-high)"; }}
             onMouseLeave={e => { if (value !== o.value) e.currentTarget.style.background = "transparent"; }}
           >
-            {o.label}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{o.label}</span>
+            {value === o.value && <span className="material-symbols" style={{ fontSize: 14, marginLeft: "auto" }}>check</span>}
           </div>
         ))}
         {filtered.length === 0 && (
-          <div style={{ padding: "8px 12px", color: "var(--on-surface-variant)", fontSize: 14, fontStyle: "italic" }}>
+          <div style={{ padding: "10px 14px", color: "var(--on-surface-variant)", fontSize: 13, fontStyle: "italic" }}>
             No results found
           </div>
         )}
@@ -170,22 +185,25 @@ export default function SearchableSelect({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "8px 12px",
+          gap: 6,
+          padding: "6px 12px",
           border: "1px solid var(--outline-variant)",
-          borderRadius: 6,
-          background: disabled ? "var(--surface-container-low)" : "var(--surface)",
+          borderRadius: 8,
+          background: disabled ? "var(--surface-container-low)" : "var(--surface-container-low)",
           cursor: disabled ? "not-allowed" : "pointer",
           minHeight: 36,
-          fontSize: 14,
+          fontSize: 13,
           color: value ? "var(--on-surface)" : "var(--on-surface-variant)",
           boxSizing: "border-box",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
         }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {selectedLabel || placeholder || "Select..."}
         </span>
-        <span className="material-symbols" style={{ fontSize: 18, flexShrink: 0, transition: "transform 0.15s", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}>
-          arrow_drop_down
+        <span className="material-symbols" style={{ fontSize: 14, flexShrink: 0, color: "var(--on-surface-variant)" }}>
+          expand_more
         </span>
       </div>
       {dropdown}

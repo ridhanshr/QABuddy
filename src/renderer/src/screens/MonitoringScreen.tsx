@@ -609,7 +609,7 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
               onChange={e => setTeSearch(e.target.value)}
               onFocus={() => setTeSearchFocused(true)}
               onBlur={() => setTeSearchFocused(false)}
-              style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 13, color: "var(--on-surface)", minWidth: 0 }}
+              style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 13, color: "var(--on-surface)", minWidth: 0, padding: 0, height: 18, lineHeight: "18px" }}
             />
             {teSearch && (
               <button
@@ -747,7 +747,7 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
               onChange={e => setTcSearch(e.target.value)}
               onFocus={() => setTcSearchFocused(true)}
               onBlur={() => setTcSearchFocused(false)}
-              style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 13, color: "var(--on-surface)", minWidth: 0 }}
+              style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 13, color: "var(--on-surface)", minWidth: 0, padding: 0, height: 18, lineHeight: "18px" }}
             />
             {tcSearch && (
               <button

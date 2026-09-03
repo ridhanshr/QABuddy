@@ -1054,6 +1054,7 @@ impl ConfluenceService {
                 filename: String,
                 download_path: String,
                 expand_group: String,
+                note: String,
             }
 
             let mut download_tasks: Vec<DownloadTaskItem> = Vec::new();
@@ -1067,6 +1068,11 @@ impl ConfluenceService {
                             download_path: download_path.clone(),
                             expand_group: entry
                                 .screen_capture_expand_groups
+                                .get(order)
+                                .cloned()
+                                .unwrap_or_default(),
+                            note: entry
+                                .screen_capture_notes
                                 .get(order)
                                 .cloned()
                                 .unwrap_or_default(),
@@ -1101,6 +1107,7 @@ impl ConfluenceService {
                             item.order,
                             item.filename,
                             item.expand_group,
+                            item.note,
                             res,
                         )
                     });
@@ -1122,7 +1129,7 @@ impl ConfluenceService {
                         total_downloads,
                         None,
                     );
-                    if let Ok((entry_idx, order, filename, expand_group, Ok(bytes))) = res {
+                    if let Ok((entry_idx, order, filename, expand_group, note, Ok(bytes))) = res {
                         let ext = filename.rsplit('.').next().unwrap_or("png").to_lowercase();
                         let mime = match ext.as_str() {
                             "jpg" | "jpeg" => "image/jpeg",
@@ -1136,7 +1143,7 @@ impl ConfluenceService {
                             name: filename,
                             data: format!("data:{mime};base64,{b64}"),
                             order: order + 1,
-                            note: String::new(),
+                            note,
                             expand_group,
                         };
                         downloaded_map
@@ -1923,10 +1930,12 @@ fn latest_expand_group_before(html: &str, from: usize, index: usize) -> String {
     group
 }
 
-/// Extract (filename, expand_group) pairs for every attachment in the Screen
-/// Capture region. The group is the title of the innermost enclosing Expand
-/// macro; empty for the default "Click here to expand..." expand.
-fn extract_screen_capture_files_with_groups(body: &str) -> Vec<(String, String)> {
+/// Extract (filename, expand_group, note) triples for every attachment in the
+/// Screen Capture region. The group is the title of the innermost enclosing
+/// Expand macro; empty for the default "Click here to expand..." expand.
+/// The note is the text written immediately before the image inside the
+/// region (e.g. "Before", "After"); empty when two images are adjacent.
+fn extract_screen_capture_files_with_groups(body: &str) -> Vec<(String, String, String)> {
     // Find where the Screen Capture label appears (case-insensitive plain text)
     let lower = body.to_lowercase();
     let marker_pos = lower
@@ -1945,22 +1954,79 @@ fn extract_screen_capture_files_with_groups(body: &str) -> Vec<(String, String)>
         r#"(?i)<ri:attachment\b[^>]*\bri:filename\s*=\s*(?:"([^"]+)"|'([^']+)')"#,
     )
     .unwrap();
+    let tag_close_re = regex::Regex::new(r"(?i)^\s*/?>").unwrap();
 
-    att_re
-        .captures_iter(region)
-        .filter_map(|c| {
-            let filename = c
-                .get(1)
-                .or_else(|| c.get(2))
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-            if filename.is_empty() {
-                return None;
+    let mut results = Vec::new();
+    // End of the previous attachment tag — the note of an image is the text
+    // written between the previous image (or the column label) and this one.
+    let mut prev_end = marker;
+    let mut is_first = true;
+    for cap in att_re.captures_iter(region) {
+        let filename = cap
+            .get(1)
+            .or_else(|| cap.get(2))
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        if filename.is_empty() {
+            continue;
+        }
+        let m = cap.get(0).unwrap();
+        let abs = marker + m.start();
+        let group = latest_expand_group_before(body, marker, abs);
+        let note = extract_note_between(body, prev_end, abs, is_first);
+        results.push((filename, group, note));
+        is_first = false;
+        // Consume the rest of the attachment tag (e.g. trailing " />") so it
+        // does not leak into the next image's note.
+        prev_end = marker
+            + m.end()
+            + tag_close_re
+                .find(&body[marker + m.end()..])
+                .map(|cm| cm.end())
+                .unwrap_or(0);
+    }
+    results
+}
+
+/// Extract the plain-text note written immediately before an attachment in the
+/// Screen Capture column: everything between `from` (end of the previous
+/// attachment / column label start) and `to` (start of the attachment), minus
+/// structural noise — Expand title markers and, for the first image only, the
+/// column label itself (`is_first`).
+fn extract_note_between(html: &str, from: usize, to: usize, is_first: bool) -> String {
+    let end = to.min(html.len());
+    let start = from.min(end);
+    let seg = &html[start..end];
+
+    // Skip past the last Expand title marker — only content after it is a note.
+    let title_re = regex::Regex::new(
+        r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*["']title["'][^>]*>[\s\S]*?</ac:parameter>|<span\b[^>]*class\s*=\s*["'][^"']*\bexpand-control-text\b[^"']*["'][^>]*>[\s\S]*?</span>"#,
+    )
+    .unwrap();
+    let seg = match title_re.find_iter(seg).last() {
+        Some(m) => &seg[m.end()..],
+        None => {
+            // Only the first image's segment still contains the Screen Capture
+            // label element itself — skip past its first closing tag. Later
+            // segments start right after the previous attachment, so any other
+            // closing tag there (e.g. </span> around a styled note) belongs to
+            // the note's own inline styling and must be kept.
+            if !is_first {
+                seg
+            } else {
+                let label_re = regex::Regex::new(
+                    r"(?i)</strong>|</th>|</ac:parameter>|</span>|</button>|</td>",
+                )
+                .unwrap();
+                match label_re.find(seg) {
+                    Some(m) => &seg[m.end()..],
+                    None => seg,
+                }
             }
-            let abs = marker + c.get(0).unwrap().start();
-            Some((filename, latest_expand_group_before(body, marker, abs)))
-        })
-        .collect()
+        }
+    };
+
+    extract_text_lines(seg)
 }
 
 /// Split a table row's raw HTML into individual cell raw HTML contents.
@@ -2078,11 +2144,15 @@ fn parse_vertical_table(body: &str, counter: &mut usize) -> Option<ConfluenceTes
         source_table_index: None,
         screen_capture_filenames: screen_capture_files
             .iter()
-            .map(|(f, _)| f.clone())
+            .map(|(f, _, _)| f.clone())
             .collect(),
         screen_capture_expand_groups: screen_capture_files
             .iter()
-            .map(|(_, g)| g.clone())
+            .map(|(_, g, _)| g.clone())
+            .collect(),
+        screen_capture_notes: screen_capture_files
+            .iter()
+            .map(|(_, _, n)| n.clone())
             .collect(),
         images: Vec::new(), // populated later by parse_confluence_entries
     })
@@ -2206,6 +2276,7 @@ fn build_entry(
         source_table_index: None,
         screen_capture_filenames: Vec::new(),
         screen_capture_expand_groups: Vec::new(),
+        screen_capture_notes: Vec::new(),
         images: Vec::new(),
     }
 }
@@ -2303,6 +2374,7 @@ mod tests {
             source_table_index: None,
             screen_capture_filenames: Vec::new(),
             screen_capture_expand_groups: Vec::new(),
+            screen_capture_notes: Vec::new(),
             images: Vec::new(),
         }];
         let table = ConfluenceService::generate_single_table(&entries);
@@ -2354,9 +2426,18 @@ mod tests {
         </tbody></table>"#;
         let files = extract_screen_capture_files_with_groups(html);
         assert_eq!(files.len(), 3);
-        assert_eq!(files[0], ("TC004-1.png".to_string(), "Refund".to_string()));
-        assert_eq!(files[1], ("TC004-2.png".to_string(), "Refund".to_string()));
-        assert_eq!(files[2], ("TC004-3.png".to_string(), "Reversal".to_string()));
+        assert_eq!(
+            files[0],
+            ("TC004-1.png".to_string(), "Refund".to_string(), String::new())
+        );
+        assert_eq!(
+            files[1],
+            ("TC004-2.png".to_string(), "Refund".to_string(), String::new())
+        );
+        assert_eq!(
+            files[2],
+            ("TC004-3.png".to_string(), "Reversal".to_string(), String::new())
+        );
     }
 
     #[test]
@@ -2373,8 +2454,58 @@ mod tests {
         </td></tr></tbody></table>"#;
         let files = extract_screen_capture_files_with_groups(html);
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0], ("R1.png".to_string(), "Refund".to_string()));
-        assert_eq!(files[1], ("V1.png".to_string(), "Reversal".to_string()));
+        assert_eq!(
+            files[0],
+            ("R1.png".to_string(), "Refund".to_string(), String::new())
+        );
+        assert_eq!(
+            files[1],
+            ("V1.png".to_string(), "Reversal".to_string(), String::new())
+        );
+    }
+
+    #[test]
+    fn extract_screen_capture_notes_before_images() {
+        // Vertical table where the Screen Capture expand contains text notes
+        // ("Before", "After", ...) between image groups — the notes must be
+        // captured per image, and the default "Screen Capture" expand title
+        // must not leak into any note.
+        let html = r#"<table><tbody><tr><td class="confluenceTd"><strong>Screen Capture</strong></td><td class="confluenceTd"><div class="content-wrapper"><p><br/></p><ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">Screen Capture</ac:parameter><ac:rich-text-body><p>Before</p><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-0-20.png"/></ac:image><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-0-20-1.png"/></ac:image><p>After</p><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-0-20-2.png"/></ac:image><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-0-20-3.png"/></ac:image><p>Cek Account Before dan After Patching</p><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-0-20-4.png"/></ac:image></ac:rich-text-body></ac:structured-macro></div></td></tr></tbody></table>"#;
+        let files = extract_screen_capture_files_with_groups(html);
+        assert_eq!(files.len(), 5);
+        let notes: Vec<&str> = files.iter().map(|(_, _, n)| n.as_str()).collect();
+        assert_eq!(
+            notes,
+            vec![
+                "Before",
+                "",
+                "After",
+                "",
+                "Cek Account Before dan After Patching"
+            ]
+        );
+        // Expand title is the default label — groups stay empty.
+        assert!(files.iter().all(|(_, g, _)| g.is_empty()));
+    }
+
+    #[test]
+    fn extract_screen_capture_notes_with_inline_styling() {
+        // "After" is wrapped in an inline <span style=...> — the note must
+        // still be read because the label-cut only applies to the first image.
+        let html = r#"<table><tbody><tr><td class="confluenceTd"><strong>Screen Capture</strong></td><td class="confluenceTd"><div class="content-wrapper"><p><br/></p><ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">Screen Capture</ac:parameter><ac:rich-text-body><p>Before</p><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-1-55.png"/></ac:image><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-1-55-1.png"/></ac:image><p><span style="letter-spacing: 0.0px;">After</span></p><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-2-11.png"/></ac:image><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-2-11-1.png"/></ac:image><p>Cek Account Before dan After Patching</p><ac:image ac:width="400"><ri:attachment ri:filename="image-2026-9-2_15-2-21.png"/></ac:image></ac:rich-text-body></ac:structured-macro></div></td></tr></tbody></table>"#;
+        let files = extract_screen_capture_files_with_groups(html);
+        assert_eq!(files.len(), 5);
+        let notes: Vec<&str> = files.iter().map(|(_, _, n)| n.as_str()).collect();
+        assert_eq!(
+            notes,
+            vec![
+                "Before",
+                "",
+                "After",
+                "",
+                "Cek Account Before dan After Patching"
+            ]
+        );
     }
 
     #[test]
@@ -2470,6 +2601,9 @@ mod tests {
         </tbody></table>"#;
         let files = extract_screen_capture_files_with_groups(html);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0], ("TC001-1.png".to_string(), String::new()));
+        assert_eq!(
+            files[0],
+            ("TC001-1.png".to_string(), String::new(), String::new())
+        );
     }
 }

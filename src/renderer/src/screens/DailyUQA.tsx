@@ -18,6 +18,17 @@ function lastEntryDate(entries?: UqaEntry[]): string | null {
   return sorted[0].date;
 }
 
+function statusCategoryIcon(category?: string): string {
+  switch ((category || "").toLowerCase().replace("_", "-")) {
+    case "done": return "check_circle";
+    case "in-progress": return "hourglass_top";
+    case "to-do": return "radio_button_unchecked";
+    case "aborted": return "block";
+    case "failed": return "error";
+    default: return "circle";
+  }
+}
+
 interface QuickUpdateDialogProps {
   issue: UqaIssue;
   onClose: () => void;
@@ -122,7 +133,8 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
             <p className="dialog-subtitle">{issue.summary}</p>
           </div>
           <div className="dialog-header-actions">
-            <span className={`status-pill status-${issue.statusCategory?.toLowerCase() || "unknown"}`}>
+            <span className={`uqa-badge uqa-badge-${issue.statusCategory?.toLowerCase().replace("_", "-") || "unknown"}`}>
+              <span className="material-symbols uqa-badge-icon">{statusCategoryIcon(issue.statusCategory)}</span>
               {issue.status}
             </span>
             <button className="ghost-button" onClick={onClose} type="button" title="Tutup">
@@ -177,15 +189,9 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
 
                 {autoData && (
                   <div className="uqa-auto-summary">
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <div className="uqa-auto-section-title" style={{ marginBottom: 0 }}>Ringkasan per Test Execution Hari Ini</div>
-                      <span style={{
-                        fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
-                        padding: "2px 7px", borderRadius: 4,
-                        background: autoData.source === "db" ? "color-mix(in srgb, var(--success) 13%, transparent)" : "color-mix(in srgb, var(--success) 13%, transparent)",
-                        color: autoData.source === "db" ? "var(--primary)" : "var(--severity-epic)",
-                        border: `1px solid ${autoData.source === "db" ? "color-mix(in srgb, var(--success) 25%, transparent)" : "color-mix(in srgb, var(--success) 25%, transparent)"}`,
-                      }}>
+                    <div className="uqa-auto-summary-head">
+                      <div className="uqa-auto-section-title">Ringkasan per Test Execution Hari Ini</div>
+                      <span className="uqa-auto-source-badge" data-source={autoData.source}>
                         {autoData.source === "db" ? "DB (last sync hari ini)" : "Xray API (live)"}
                       </span>
                     </div>
@@ -258,7 +264,7 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
           </div>
 
           {/* Section 2: Transition */}
-          <div className="uqa-section-card uqa-section-card-compact">
+          <div className="uqa-section-card">
             <div className="uqa-section-header">
               <span className="material-symbols">swap_horiz</span>
               <span>Transition</span>
@@ -306,27 +312,21 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
               <span>Aktivitas Hari Ini (Manual)</span>
             </div>
             <div className="uqa-section-body">
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <label style={{ fontSize: 13, fontWeight: 600, color: "var(--on-surface-variant)", whiteSpace: "nowrap" }}>
-                  Fase:
-                </label>
-                {(["SIT", "UAT", "DT", "Others"] as const).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPhase(p)}
-                    disabled={submitting}
-                    style={{
-                      padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                      border: `1px solid ${phase === p ? "var(--primary)" : "var(--outline-variant)"}`,
-                      background: phase === p ? "var(--primary)" : "transparent",
-                      color: phase === p ? "var(--on-primary)" : "var(--on-surface-variant)",
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    {p}
-                  </button>
-                ))}
+              <div className="uqa-phase-row">
+                <span className="uqa-phase-label">Fase</span>
+                <div className="uqa-phase-pills">
+                  {(["SIT", "UAT", "DT", "Others"] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      className={`uqa-phase-pill${phase === p ? " active" : ""}`}
+                      onClick={() => setPhase(p)}
+                      disabled={submitting}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
               </div>
               {phase === "Others" && (
                 <input
@@ -335,7 +335,6 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
                   onChange={(e) => setCustomPhase(e.target.value)}
                   placeholder="Sebutkan fase/kategori aktivitas..."
                   disabled={submitting}
-                  style={{ marginBottom: 8 }}
                 />
               )}
               <textarea
@@ -346,15 +345,16 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
                 rows={3}
                 disabled={submitting}
               />
-              <button
-                className="primary-button"
-                onClick={handleSubmit}
-                disabled={!activity.trim() || (phase === "Others" && !customPhase.trim()) || submitting}
-                type="button"
-                style={{ marginTop: 8, alignSelf: "flex-start" }}
-              >
-                {submitting ? "Menyimpan..." : "Catat Aktivitas"}
-              </button>
+              <div className="uqa-card-footer">
+                <button
+                  className="primary-button"
+                  onClick={handleSubmit}
+                  disabled={!activity.trim() || (phase === "Others" && !customPhase.trim()) || submitting}
+                  type="button"
+                >
+                  {submitting ? "Menyimpan..." : "Catat Aktivitas"}
+                </button>
+              </div>
             </div>
           </div>
 
