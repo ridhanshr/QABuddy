@@ -199,23 +199,35 @@ function QuickUpdateDialog({ issue, onClose, onSubmitted }: QuickUpdateDialogPro
                     )}
 
                     {autoData.phases.map((p) => (
-                      <div key={p.testExecKey} className="uqa-auto-phase-row">
-                        <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <span className="uqa-auto-phase-name">{p.phase}</span>
-                            <span style={{ fontSize: 11, color: "var(--on-surface-variant)", fontWeight: 500 }}>{p.testExecKey}</span>
+                      <div key={p.testExecKey} className="uqa-auto-phase-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span className="uqa-auto-phase-name">{p.phase}</span>
+                              <span style={{ fontSize: 11, color: "var(--on-surface-variant)", fontWeight: 500 }}>{p.testExecKey}</span>
+                            </div>
+                            {p.testExecName && p.testExecName !== p.testExecKey && (
+                              <span style={{ fontSize: 11, color: "var(--on-surface-variant)", opacity: 0.8, fontStyle: "italic" }}>{p.testExecName}</span>
+                            )}
                           </div>
-                          {p.testExecName && p.testExecName !== p.testExecKey && (
-                            <span style={{ fontSize: 11, color: "var(--on-surface-variant)", opacity: 0.8, fontStyle: "italic" }}>{p.testExecName}</span>
-                          )}
+                          <span className="uqa-auto-phase-stats">
+                            {p.todo > 0 && <span className="uqa-auto-stat uqa-auto-stat-todo">{p.todo} To Do</span>}
+                            {p.inProgress > 0 && <span className="uqa-auto-stat uqa-auto-stat-progress">{p.inProgress} In Prog</span>}
+                            {p.done > 0 && <span className="uqa-auto-stat uqa-auto-stat-done">{p.done} Done</span>}
+                            {p.failed > 0 && <span className="uqa-auto-stat uqa-auto-stat-failed">{p.failed} Failed</span>}
+                            {p.aborted > 0 && <span className="uqa-auto-stat uqa-auto-stat-aborted">{p.aborted} Aborted</span>}
+                          </span>
                         </div>
-                        <span className="uqa-auto-phase-stats">
-                          {p.todo > 0 && <span className="uqa-auto-stat uqa-auto-stat-todo">{p.todo} To Do</span>}
-                          {p.inProgress > 0 && <span className="uqa-auto-stat uqa-auto-stat-progress">{p.inProgress} In Prog</span>}
-                          {p.done > 0 && <span className="uqa-auto-stat uqa-auto-stat-done">{p.done} Done</span>}
-                          {p.failed > 0 && <span className="uqa-auto-stat uqa-auto-stat-failed">{p.failed} Failed</span>}
-                          {p.aborted > 0 && <span className="uqa-auto-stat uqa-auto-stat-aborted">{p.aborted} Aborted</span>}
-                        </span>
+                        {!!p.relatedDefects?.length && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingLeft: 4, borderLeft: "2px solid var(--severity-epic)" }}>
+                            {p.relatedDefects.map((d) => (
+                              <span key={d} style={{ fontSize: 11, color: "var(--severity-epic)" }}>
+                                <span className="material-symbols" style={{ fontSize: 12, verticalAlign: "middle", marginRight: 3 }}>bug_report</span>
+                                {d}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
 

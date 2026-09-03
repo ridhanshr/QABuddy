@@ -44,6 +44,7 @@ import type {
   BRDTestCase,
   BrdChunkProgress,
   BitbucketGenerateProgress,
+  DefectCreateProgress,
   ExecutionMonitoringData,
   JiraProject,
   JiraProjectSource,
@@ -276,6 +277,8 @@ const api = {
     on<BrdChunkProgress>("brd-chunk-progress", callback),
   onBitbucketGenerateProgress: (callback: (progress: BitbucketGenerateProgress) => void) =>
     on<BitbucketGenerateProgress>("bitbucket-generate-progress", callback),
+  onDefectCreateProgress: (callback: (progress: DefectCreateProgress) => void) =>
+    on<DefectCreateProgress>("defect-create-progress", callback),
 
   // ── BRD / Test Case Manager ─────────────────────────────────────────
   generateTestCasesFromBRD: (request: BRDGenerationRequest) =>
@@ -372,7 +375,7 @@ const api = {
   removeDuplicateDefectLink: (id: string) => cmd<void>("remove_duplicate_defect_link", { id }),
   getDefectStats: () => cmd<DefectRepositoryStats>("get_defect_stats"),
   reindexAllDefects: () => cmd<void>("reindex_all_defects"),
-  syncDefectToDb: (defectKey: string, judulDefect: string) => cmd<void>("sync_defect_to_db", { defectKey, judulDefect }),
+  syncDefectToDb: (defectKey: string, judulDefect: string, tpJiraKey?: string) => cmd<void>("sync_defect_to_db", { defectKey, judulDefect, tpJiraKey: tpJiraKey || null }),
   checkDefectsInDb: (defectKeys: string[]) => cmd<string[]>("check_defects_in_db", { defectKeys }),
   getCurrentUser: () => cmd<Record<string, unknown>>("get_current_user", {}),
   loginUser: (pn: string, password: string) => cmd<{ success: boolean; role: string | null; jira_api_token: string | null; confluence_api_token: string | null; message: string }>("login_user", { pn, password }),

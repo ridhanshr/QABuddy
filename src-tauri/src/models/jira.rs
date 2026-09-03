@@ -78,6 +78,19 @@ pub struct BugPreview {
     pub labels: Vec<String>,
 }
 
+/// Progress event emitted while creating a defect (issue creation + optional
+/// Test Plan link resolution/attempts), so the UI can show live status
+/// instead of a silent wait.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DefectCreateProgress {
+    /// Machine-readable stage id, e.g. "create_issue", "find_link_type",
+    /// "link_test_plan", "done".
+    pub stage: String,
+    /// Human-readable message (Bahasa Indonesia) shown to the user.
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DefectCreateDraft {

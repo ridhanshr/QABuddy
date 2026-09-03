@@ -767,6 +767,7 @@ export interface DesktopApi {
   onExtractionProgress: (callback: (msg: string) => void) => () => void;
   onBrdChunkProgress: (callback: (progress: BrdChunkProgress) => void) => () => void;
   onBitbucketGenerateProgress: (callback: (progress: BitbucketGenerateProgress) => void) => () => void;
+  onDefectCreateProgress: (callback: (progress: DefectCreateProgress) => void) => () => void;
   getUqaField: () => Promise<{ id: string; name: string; type: string; isCustom: boolean } | null>;
   updateUqaSchedule: (config: UqaConfig) => Promise<void>;
   getUqaSchedule: () => Promise<UqaConfig>;
@@ -788,7 +789,7 @@ export interface DesktopApi {
   removeDuplicateDefectLink: (id: string) => Promise<void>;
   getDefectStats: () => Promise<DefectRepositoryStats>;
   reindexAllDefects: () => Promise<void>;
-  syncDefectToDb: (defectKey: string, judulDefect: string) => Promise<void>;
+  syncDefectToDb: (defectKey: string, judulDefect: string, tpJiraKey?: string) => Promise<void>;
   checkDefectsInDb: (defectKeys: string[]) => Promise<string[]>;
   getCurrentUser: () => Promise<Record<string, unknown>>;
   loginUser: (pn: string, password: string) => Promise<{ success: boolean; role: string | null; jira_api_token: string | null; confluence_api_token: string | null; message: string }>;
@@ -1099,6 +1100,7 @@ export interface PhaseTestSummary {
   failed: number;
   aborted: number;
   failedDetails: Array<{ testKey: string; defects: string[] }>;
+  relatedDefects?: string[];
 }
 
 export interface AutoUqaGeneratedPayload {
@@ -1309,6 +1311,11 @@ export interface BrdChunkProgress {
 }
 
 export interface BitbucketGenerateProgress {
+  stage: string;
+  message: string;
+}
+
+export interface DefectCreateProgress {
   stage: string;
   message: string;
 }

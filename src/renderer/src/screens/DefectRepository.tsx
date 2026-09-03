@@ -152,6 +152,7 @@ export default function DefectRepository() {
   const [createDuplicateCandidates, setCreateDuplicateCandidates] = useState<DuplicateCandidate[]>([]);
   const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
   const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [createProgress, setCreateProgress] = useState<import("@shared/types").DefectCreateProgress | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createInfo, setCreateInfo] = useState<string | null>(null);
   const [sourceEditorOpen, setSourceEditorOpen] = useState(false);
@@ -461,7 +462,9 @@ export default function DefectRepository() {
     setCreateSubmitting(true);
     setCreateError(null);
     setCreateInfo(null);
+    setCreateProgress(null);
 
+    let unlistenProgress: (() => void) | null = null;
     try {
       if (!forceCreate) {
         const duplicateFilters = buildDuplicateFiltersFromDraft(createDraft);
@@ -480,13 +483,16 @@ export default function DefectRepository() {
         }
       }
 
+      unlistenProgress = window.qaBuddy.onDefectCreateProgress((progress) => {
+        setCreateProgress(progress);
+      });
       const result = await window.qaBuddy.createDefectIssue(createDraft);
       setCreateInfo(`Defect ${result.key} berhasil dibuat.`);
       setShowDuplicateWarning(false);
       setCreateDuplicateCandidates([]);
       setShowCreateDefect(false);
       try {
-        await window.qaBuddy.syncDefectToDb(result.key, summary);
+        await window.qaBuddy.syncDefectToDb(result.key, summary, createDraft.tpJiraKey);
         setDefectsInDb(prev => new Set(prev).add(result.key));
       } catch (dbErr: any) {
         console.warn(`[submitCreateDefect] Gagal sync ${result.key} ke DB:`, dbErr);
@@ -500,7 +506,9 @@ export default function DefectRepository() {
     } catch (error: any) {
       setCreateError(error?.message || "Gagal membuat defect.");
     } finally {
+      if (unlistenProgress) unlistenProgress();
       setCreateSubmitting(false);
+      setCreateProgress(null);
     }
   };
 
@@ -1293,6 +1301,16 @@ export default function DefectRepository() {
               {createInfo && (
                 <div className="defect-banner defect-banner-success">{createInfo}</div>
               )}
+              {createProgress && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
+                  borderRadius: 6, background: "var(--surface-container-low)",
+                  border: "1px solid var(--outline-variant)", marginBottom: 12, fontSize: 13,
+                }}>
+                  <span className="material-symbols spin" style={{ fontSize: 16, color: "var(--primary)" }}>progress_activity</span>
+                  <span>{createProgress.message}</span>
+                </div>
+              )}
 
               <form
                 onSubmit={(e) => {
@@ -1474,10 +1492,10 @@ export default function DefectRepository() {
                     type="submit"
                     disabled={createSubmitting}
                   >
-                    <span className="material-symbols" style={{ fontSize: 16 }}>
-                      {createSubmitting ? "sync" : "save"}
+                    <span className={`material-symbols${createSubmitting ? " spin" : ""}`} style={{ fontSize: 16 }}>
+                      {createSubmitting ? "progress_activity" : "save"}
                     </span>
-                    {createSubmitting ? "Checking..." : "Create Defect"}
+                    {createSubmitting ? (createProgress ? createProgress.message : "Checking...") : "Create Defect"}
                   </button>
                 </div>
               </form>

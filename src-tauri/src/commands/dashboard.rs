@@ -6,7 +6,7 @@ use crate::models::jira::{BugFormDraft, BugPreview, DefectCreateDraft};
 use crate::models::rag::RagSearchResult;
 use crate::services::prompts;
 use crate::AppState;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 const CHAT_EMBEDDING_MODEL: &str = "nomic-embed-text";
 
@@ -428,12 +428,13 @@ pub async fn create_bug(
 #[tauri::command]
 pub async fn create_defect_issue(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     draft: DefectCreateDraft,
 ) -> Result<serde_json::Value, String> {
     let config = load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
     let result = jira_service
-        .create_defect_issue(&config.jira, &draft)
+        .create_defect_issue(&config.jira, &draft, Some(&app_handle))
         .await
         .map_err(|e| e.to_string())?;
     Ok(serde_json::json!(result))

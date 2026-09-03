@@ -61,6 +61,10 @@ pub struct PhaseTestSummary {
     pub failed: u32,
     pub aborted: u32,
     pub failed_details: Vec<PhaseFailedDetail>,
+    /// Defects linked to this TE's Test Plan (via `defect.tp_jira_key`) whose
+    /// `last_sync` is today. Populated only by the DB-sourced auto-generate path.
+    #[serde(default)]
+    pub related_defects: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

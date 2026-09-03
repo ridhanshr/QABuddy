@@ -859,11 +859,22 @@ pub async fn check_test_plans_in_db(
 /// Fetch defect detail from Jira and upsert into `defect` table.
 /// summary is passed directly from frontend (already in DefectRecord).
 /// Only fetches resolution, assignee, issuelinks from Jira (single request, no retry).
+///
+/// `tp_jira_key` is an optional caller-known override (e.g. the Test Plan the
+/// user picked when creating the defect) — when present it skips issuelinks
+/// parsing entirely. When absent, the Test Plan is resolved by scanning
+/// `issuelinks` for a linked issue whose `issuetype.name` is "Test Plan"
+/// (not by link-type-name keyword matching, which is unreliable across Jira
+/// instances — plugin-provided link types like "contains project" or
+/// "Hierarchy link (WBSGantt)" can share the same wording).
+/// `tp_jira_key` is NOT NULL in the DB, so the row is skipped (not inserted)
+/// when no Test Plan can be resolved either way.
 #[tauri::command]
 pub async fn sync_defect_to_db(
     state: State<'_, AppState>,
     defect_key: String,
     judul_defect: String,
+    tp_jira_key: Option<String>,
 ) -> Result<(), String> {
     let pool = get_pool!(state);
     let config = crate::commands::load_config(state.clone()).await?;
@@ -888,48 +899,45 @@ pub async fn sync_defect_to_db(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    // Extract tp_jira_key from issuelinks where type is "is contained on" / "Test"
-    let tp_jira_key: Option<String> = fields["issuelinks"]
-        .as_array()
-        .and_then(|links| {
-            links.iter().find_map(|link| {
-                // "is contained on" → outwardIssue or inwardIssue depending on link direction
-                let link_type = link["type"]["name"].as_str().unwrap_or("").to_lowercase();
-                let inward = link["type"]["inward"].as_str().unwrap_or("").to_lowercase();
-                let outward = link["type"]["outward"].as_str().unwrap_or("").to_lowercase();
-
-                let is_contained = link_type.contains("test")
-                    || link_type.contains("contained")
-                    || inward.contains("contained")
-                    || outward.contains("contained")
-                    || inward.contains("test plan")
-                    || outward.contains("test plan");
-
-                if !is_contained {
-                    return None;
-                }
-
-                // Try outwardIssue first, then inwardIssue
-                link["outwardIssue"]["key"].as_str()
-                    .or_else(|| link["inwardIssue"]["key"].as_str())
-                    .map(|k| k.to_string())
+    let tp_jira_key: Option<String> = tp_jira_key
+        .filter(|k| !k.trim().is_empty())
+        .or_else(|| {
+            fields["issuelinks"].as_array().and_then(|links| {
+                links.iter().find_map(|link| {
+                    for dir in ["outwardIssue", "inwardIssue"] {
+                        if link[dir]["fields"]["issuetype"]["name"].as_str() == Some("Test Plan") {
+                            if let Some(k) = link[dir]["key"].as_str() {
+                                return Some(k.to_string());
+                            }
+                        }
+                    }
+                    None
+                })
             })
         });
 
+    let Some(tp_jira_key) = tp_jira_key else {
+        eprintln!(
+            "[sync_defect_to_db] {defect_key}: tidak ditemukan Test Plan terhubung — dilewati (tp_jira_key wajib diisi)."
+        );
+        return Ok(());
+    };
+
     sqlx::query(
         r#"
-        INSERT INTO defect (id_jira_defect, judul_defect, tp_jira_key, resolution, assignee)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO defect (id_jira_defect, judul_defect, tp_jira_key, resolution, assignee, last_sync)
+        VALUES (?, ?, ?, ?, ?, NOW())
         ON DUPLICATE KEY UPDATE
             judul_defect = VALUES(judul_defect),
             tp_jira_key  = COALESCE(VALUES(tp_jira_key), tp_jira_key),
             resolution   = COALESCE(VALUES(resolution), resolution),
-            assignee     = COALESCE(VALUES(assignee), assignee)
+            assignee     = COALESCE(VALUES(assignee), assignee),
+            last_sync    = NOW()
         "#,
     )
     .bind(&defect_key)
     .bind(&judul_defect)
-    .bind(tp_jira_key.as_deref())
+    .bind(&tp_jira_key)
     .bind(resolution.as_deref())
     .bind(assignee.as_deref())
     .execute(&pool)

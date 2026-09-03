@@ -561,6 +561,48 @@ pub async fn auto_generate_uqa_notes(state: State<'_, AppState>, issue_key: Stri
 
     if !db_rows.is_empty() {
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        // Defects synced today, related via test_plan → test_execution chain
+        // (uqa_project → test_plan → test_execution, and test_plan → defect).
+        // Maps te_jira_key -> [defect summaries].
+        let defects_by_te: std::collections::HashMap<String, Vec<String>> = {
+            let pool_opt = state.db_pool.lock().await.clone();
+            if let Some(pool) = pool_opt {
+                sqlx::query(
+                    r#"
+                    SELECT te.te_jira_key AS te_jira_key,
+                           d.id_jira_defect AS defect_key,
+                           d.judul_defect AS defect_title
+                    FROM test_plan tp
+                    JOIN test_execution te ON te.tp_jira_key = tp.tp_jira_key
+                    JOIN defect d ON d.tp_jira_key = tp.tp_jira_key
+                    WHERE tp.uqa_key = ?
+                      AND DATE(d.last_sync) = CURDATE()
+                    "#,
+                )
+                .bind(&issue_key)
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default()
+                .iter()
+                .fold(std::collections::HashMap::new(), |mut acc, row| {
+                    use sqlx::Row;
+                    let te_key: String = row.get("te_jira_key");
+                    let defect_key: String = row.get("defect_key");
+                    let defect_title: String = row.get("defect_title");
+                    let label = if defect_title.trim().is_empty() {
+                        defect_key
+                    } else {
+                        format!("{defect_key}: {defect_title}")
+                    };
+                    acc.entry(te_key).or_insert_with(Vec::new).push(label);
+                    acc
+                })
+            } else {
+                std::collections::HashMap::new()
+            }
+        };
+
         let phases: Vec<PhaseTestSummary> = db_rows.iter()
             .filter(|r| {
                 let name = r.te_title.as_deref().unwrap_or(&r.te_jira_key).to_lowercase();
@@ -578,6 +620,7 @@ pub async fn auto_generate_uqa_notes(state: State<'_, AppState>, issue_key: Stri
                 failed:         r.failed,
                 aborted:        r.aborted,
                 failed_details: vec![],
+                related_defects: defects_by_te.get(&r.te_jira_key).cloned().unwrap_or_default(),
             }
         }).collect();
         let mut activity: Vec<String> = phases.iter()
