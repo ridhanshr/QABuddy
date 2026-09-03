@@ -59,10 +59,10 @@ export default function MultiSearchableSelect({
           padding: "6px 8px",
           minHeight: 36,
           border: "1px solid var(--outline-variant)",
-          borderRadius: 6,
-          background: disabled ? "var(--surface-container-low)" : "var(--surface)",
+          borderRadius: 8,
+          background: "var(--surface-container-low)",
           cursor: disabled ? "not-allowed" : "pointer",
-          fontSize: 14,
+          fontSize: 13,
           boxSizing: "border-box",
         }}
       >
@@ -107,7 +107,7 @@ export default function MultiSearchableSelect({
             {placeholder || "Select..."}
           </span>
         )}
-        <span className="material-symbols" style={{ fontSize: 18, marginLeft: "auto", flexShrink: 0 }}>arrow_drop_down</span>
+        <span className="material-symbols" style={{ fontSize: 14, marginLeft: "auto", flexShrink: 0, color: "var(--on-surface-variant)" }}>expand_more</span>
       </div>
       {open && (
         <div
@@ -116,13 +116,13 @@ export default function MultiSearchableSelect({
             top: "100%",
             left: 0,
             right: 0,
-            zIndex: 100,
-            background: "var(--surface)",
+            zIndex: 200,
+            background: "var(--surface-container)",
             border: "1px solid var(--outline-variant)",
-            borderRadius: 6,
-            marginTop: 4,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
-            maxHeight: 300,
+            borderRadius: 10,
+            marginTop: 6,
+            boxShadow: "0 4px 20px rgba(0,0,0,0.18)",
+            maxHeight: 360,
             overflow: "hidden",
             display: "flex",
             flexDirection: "column",
@@ -136,17 +136,18 @@ export default function MultiSearchableSelect({
             autoFocus
             onClick={(e) => e.stopPropagation()}
             style={{
-              padding: "8px 12px",
+              padding: "8px 14px",
               border: "none",
               borderBottom: "1px solid var(--outline-variant)",
               outline: "none",
-              fontSize: 14,
+              fontSize: 13,
               width: "100%",
               boxSizing: "border-box",
-              background: "var(--surface)",
+              background: "var(--surface-container)",
+              color: "var(--on-surface)",
             }}
           />
-          <div style={{ overflowY: "auto", maxHeight: 240 }}>
+          <div style={{ overflowY: "auto", maxHeight: 280 }}>
             {filtered.map((o) => {
               const selected = values.includes(o.value);
               return (
@@ -155,14 +156,16 @@ export default function MultiSearchableSelect({
                   onClick={() => toggleValue(o.value)}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "20px minmax(0, 1fr)",
+                    gridTemplateColumns: "20px minmax(0, 1fr) 16px",
                     alignItems: "center",
                     columnGap: 8,
-                    padding: "10px 12px",
+                    padding: "10px 14px",
                     cursor: "pointer",
-                    fontSize: 14,
+                    fontSize: 13,
                     color: selected ? "var(--primary)" : "var(--on-surface)",
+                    fontWeight: selected ? 700 : 400,
                     background: selected ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "transparent",
+                    borderBottom: "1px solid var(--outline-variant)",
                     textAlign: "left",
                     width: "100%",
                     boxSizing: "border-box",
@@ -174,16 +177,17 @@ export default function MultiSearchableSelect({
                     type="checkbox"
                     checked={selected}
                     onChange={() => {}}
-                    style={{ cursor: "pointer", margin: 0, width: 16, height: 16, justifySelf: "center" }}
+                    style={{ cursor: "pointer", margin: 0, width: 16, height: 16, justifySelf: "center", accentColor: "var(--primary)" }}
                   />
                   <div style={{ minWidth: 0, overflow: "hidden" }}>
-                    <div style={{ fontWeight: 600, lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "inherit" }}>{o.label}</div>
+                    <div style={{ lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "inherit" }}>{o.label}</div>
                   </div>
+                  {selected && <span className="material-symbols" style={{ fontSize: 14, justifySelf: "center", color: "var(--primary)" }}>check</span>}
                 </div>
               );
             })}
             {filtered.length === 0 && (
-              <div style={{ padding: "8px 12px", color: "var(--on-surface-variant)", fontSize: 14, fontStyle: "italic" }}>
+              <div style={{ padding: "10px 14px", color: "var(--on-surface-variant)", fontSize: 13, fontStyle: "italic" }}>
                 No results found
               </div>
             )}
