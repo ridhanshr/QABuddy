@@ -1899,7 +1899,13 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         return m ? m[1] : "";
       };
       const entries: ConfluenceTestImportEntry[] = result.entries.map((entry: any) => {
-        const issueKey = entry.scenarioIssueKey || extractKey(entry.scenario || "");
+        // Automation-style SIT docs embed the Jira issue key as a macro/link
+        // inside the "No. Test Case" cell (e.g. "CARDPRO-119 - Scenario
+        // title") instead of the Scenario cell — check both.
+        const issueKey =
+          entry.scenarioIssueKey ||
+          extractKey(entry.scenario || "") ||
+          extractKey(entry.testCaseNo || "");
         return {
           id: crypto.randomUUID(),
           issueKey,
@@ -1969,8 +1975,14 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       }
       setConfImportLoading(true);
       try {
-        const collectChildIds = (folders: XrayFolder[]): number[] =>
-          folders.flatMap(f => [f.id, ...(f.children ? collectChildIds(f.children) : [])]);
+        // Collect [id, path] pairs for the folder and every descendant, so
+        // each one can carry its own path for the Xray 200-item-cap JQL
+        // fallback (testRepositoryFolderTests needs the exact folder path).
+        const collectChildEntries = (folders: XrayFolder[], parentPath: string): Array<[number, string]> =>
+          folders.flatMap(f => {
+            const path = `${parentPath}/${f.name}`;
+            return [[f.id, path] as [number, string], ...(f.children ? collectChildEntries(f.children, path) : [])];
+          });
         const folders = confImportXrayFolders;
         const pathParts = confImportSelectedFolder.split("/").filter(Boolean);
         let currentLevel: XrayFolder[] = folders;
@@ -1981,9 +1993,12 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
           else { foundFolder = null; break; }
         }
         if (!foundFolder) throw new Error("Folder tidak ditemukan.");
-        const allFolderIds = [foundFolder.id, ...collectChildIds(foundFolder.children || [])];
+        const allFolderEntries: Array<[number, string]> = [
+          [foundFolder.id, confImportSelectedFolder],
+          ...collectChildEntries(foundFolder.children || [], confImportSelectedFolder),
+        ];
         const rawIssuesList = await Promise.all(
-          allFolderIds.map(id => window.qaBuddy.getXrayFolderIssues(confImportProjectKey, id))
+          allFolderEntries.map(([id, path]) => window.qaBuddy.getXrayFolderIssues(confImportProjectKey, id, path))
         );
         const seen = new Set<string>();
         const rawIssues = rawIssuesList.flat().filter(i => { const dup = seen.has(i.key); seen.add(i.key); return !dup; });

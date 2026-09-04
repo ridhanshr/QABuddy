@@ -712,7 +712,7 @@ export interface DesktopApi {
   updateTestCasesFromConfluence: (entries: ConfluenceTestImportEntry[], mode?: StepConflictMode) => Promise<UpdateTestCasesFromConfluenceResult>;
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => () => void;
   findTestCasesByJql: (jql: string, maxResults: number) => Promise<JiraIssueSummary[]>;
-  getXrayFolderIssues: (projectKey: string, folderId: number) => Promise<{ key: string; summary: string }[]>;
+  getXrayFolderIssues: (projectKey: string, folderId: number, folderPath?: string) => Promise<{ key: string; summary: string }[]>;
   addTestsToExecution: (execKey: string, testKeys: string[]) => Promise<void>;
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) => Promise<SyncToConfluenceResult>;
   openExternal: (url: string) => Promise<void>;
@@ -843,8 +843,10 @@ export interface DesktopApi {
   getDbTestPlans: () => Promise<DbTestPlan[]>;
   getTestPlansByProjectPrefix: (projectKey: string) => Promise<DbTestPlan[]>;
   checkTestPlansInDb: (tpKeys: string[]) => Promise<string[]>;
+  reconcileTestPlansDeleted: (uqaKey: string, liveTpKeys: string[]) => Promise<number>;
   saveTestExecutions: (executions: SaveTestExecutionInput[]) => Promise<void>;
   checkTestExecutionsInDb: (teKeys: string[]) => Promise<string[]>;
+  reconcileTestExecutionsDeleted: (tpJiraKey: string, liveTeKeys: string[]) => Promise<number>;
   saveTestRepositories: (repositories: SaveTestRepositoryInput[]) => Promise<void>;
   getTestRepositoriesInDb: () => Promise<DbTestRepository[]>;
   fetchUqaWithDates: () => Promise<UqaWithDates[]>;

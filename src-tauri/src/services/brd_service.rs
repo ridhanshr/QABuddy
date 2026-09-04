@@ -1740,7 +1740,7 @@ Output HANYA raw JSON:
                 match folder_id {
                     Some(id) => {
                         let raw = jira
-                            .get_xray_folder_issues(&config.jira, project_key, id)
+                            .get_xray_folder_issues(&config.jira, project_key, id, Some(folder_path.as_str()))
                             .await
                             .unwrap_or_default();
                         raw.iter()

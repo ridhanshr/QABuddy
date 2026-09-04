@@ -1159,6 +1159,7 @@ impl JiraService {
         config: &JiraConfig,
         project_key: &str,
         folder_id: u32,
+        folder_path: Option<&str>,
     ) -> Result<Vec<Value>> {
         self.assert_configured(config)?;
         let client = self.client(config)?;
@@ -1187,6 +1188,52 @@ impl JiraService {
             }
         }
         log::info!("[folder_issues] resolved {} keys for folder {}", keys.len(), folder_id);
+
+        // Xray Server's /testrepository/.../tests endpoint hard-caps results
+        // at 200 with no pagination support (same limitation documented for
+        // /testexec/{key}/test elsewhere in this codebase). When we hit that
+        // cap, fall back to the `testRepositoryFolderTests` JQL function,
+        // which is not subject to the same REST cap, and merge in any keys
+        // it finds that the capped list missed.
+        const FOLDER_PAGE_CAP: usize = 200;
+        if keys.len() >= FOLDER_PAGE_CAP {
+            if let Some(folder_path) = folder_path.filter(|p| !p.is_empty()) {
+                let jql = format!(
+                    "issue in testRepositoryFolderTests(\"{project_key}\", \"{folder_path}\", \"true\")"
+                );
+                match client.search_issues_paginated(&jql, "summary").await {
+                    Ok(issues) if !issues.is_empty() => {
+                        log::info!(
+                            "[folder_issues] folder {folder_id} hit the {FOLDER_PAGE_CAP}-cap ({} keys) — JQL fallback found {} total",
+                            keys.len(), issues.len()
+                        );
+                        return Ok(issues
+                            .iter()
+                            .map(|i| json!({ "key": i["key"], "summary": i["fields"]["summary"] }))
+                            .collect());
+                    }
+                    Ok(_) => {
+                        log::warn!(
+                            "[folder_issues] folder {folder_id} hit the {FOLDER_PAGE_CAP}-cap but JQL fallback \
+                             (testRepositoryFolderTests) returned no issues — results may be incomplete. \
+                             This JQL function requires Jira Server/Data Center with Xray's JQL functions enabled."
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[folder_issues] folder {folder_id} hit the {FOLDER_PAGE_CAP}-cap and JQL fallback \
+                             failed ({e}) — results may be incomplete."
+                        );
+                    }
+                }
+            } else {
+                log::warn!(
+                    "[folder_issues] folder {folder_id} hit the {FOLDER_PAGE_CAP}-cap and no folder_path was \
+                     provided for the JQL fallback — results may be incomplete."
+                );
+            }
+        }
+
         if !keys.is_empty() {
             return Ok(fetch_issue_summaries(&client, &keys).await);
         }
@@ -1363,7 +1410,10 @@ impl JiraService {
         {
             let path = format!("/test/{}/step", entry.issue_key);
             let has = match client.xray.get_json_or_none(&path, &[]).await {
-                Some(v) => v.as_array().is_some_and(|a| !a.is_empty()) || !v.is_null(),
+                // Xray returns a JSON array of steps (possibly empty) when
+                // the TC exists. An empty array means no steps yet — that's
+                // NOT a conflict. Only a non-empty array counts as "has steps".
+                Some(v) => v.as_array().is_some_and(|a| !a.is_empty()),
                 None => false,
             };
             if has {

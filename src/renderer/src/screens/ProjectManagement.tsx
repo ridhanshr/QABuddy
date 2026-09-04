@@ -416,6 +416,15 @@ export default function ProjectManagement() {
       const inDbNow = await window.qaBuddy.checkTestPlansInDb(fetched.map((p) => p.key));
       setPlansInDb(new Set(inDbNow));
     } catch { /* ignore */ }
+    // `fetched` is the complete, fresh set of Test Plans Jira returned for
+    // this UQA project — any DB row no longer in that set was deleted in
+    // Jira. Reconcile only when the full save loop succeeded end-to-end;
+    // a partial failure means `fetched` can't be trusted as complete.
+    if (failed === 0) {
+      try {
+        await window.qaBuddy.reconcileTestPlansDeleted(uqaKey, fetched.map((p) => p.key));
+      } catch { /* non-fatal — deletion detection is best-effort */ }
+    }
     if (failed > 0) {
       setSyncResult({ ok: false, msg: `Auto-sync: ${fetched.length - failed} berhasil, ${failed} gagal.` });
     }
@@ -765,13 +774,22 @@ export default function ProjectManagement() {
       assignee: exec.assignee || undefined,
       execution_status: normalizeTeStatus(exec.status),
     }));
+    let saveOk = true;
     try {
       await window.qaBuddy.saveTestExecutions(toSync);
-    } catch { /* fall through — manual sync buttons remain available */ }
+    } catch { saveOk = false; /* fall through — manual sync buttons remain available */ }
     try {
       const inDbNow = await window.qaBuddy.checkTestExecutionsInDb(base.map((e) => e.key));
       setExecsInDb(new Set(inDbNow));
     } catch { /* ignore */ }
+    // `base` is the complete, fresh set of Test Executions Jira returned
+    // for this Test Plan — any DB row no longer in that set was deleted in
+    // Jira. Only reconcile when the bulk save above actually succeeded.
+    if (saveOk) {
+      try {
+        await window.qaBuddy.reconcileTestExecutionsDeleted(planKey, base.map((e) => e.key));
+      } catch { /* non-fatal — deletion detection is best-effort */ }
+    }
     setSyncingExecs(false);
 
     // Force-sync test cases for every TE, one at a time (mirrors the

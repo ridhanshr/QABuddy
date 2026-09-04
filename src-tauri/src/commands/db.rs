@@ -31,6 +31,75 @@ macro_rules! get_pool {
     }};
 }
 
+/// Reconcile soft-delete state for one entity level after a fresh sync from
+/// Jira. `live_keys` is the complete, authoritative set of keys Jira just
+/// returned for the given parent scope (or the whole table, if `parent_col`
+/// is `None`). Any row within that scope whose key is NOT in `live_keys` is
+/// marked `is_deleted = 1` (the Jira issue was deleted/moved). Any row
+/// within that scope whose key IS in `live_keys` but was previously marked
+/// deleted is "undeleted" (`is_deleted = 0`) — the issue reappeared, e.g. a
+/// restore or a JQL/filter change that had excluded it before.
+///
+/// `parent_col`/`parent_val` scope the reconciliation (e.g. only Test
+/// Executions under one Test Plan) so an incomplete/partial Jira fetch for
+/// one parent never wrongly marks rows belonging to a different parent.
+/// Pass `None` only for the top-level UQA Project sync, which always fetches
+/// the complete set.
+async fn reconcile_deleted(
+    pool: &sqlx::MySqlPool,
+    table: &str,
+    key_col: &str,
+    parent_col: Option<&str>,
+    parent_val: Option<&str>,
+    live_keys: &[String],
+) -> Result<u32, sqlx::Error> {
+    let marked: u32;
+
+    // Mark rows gone from Jira as deleted.
+    {
+        let mut sql = format!(
+            "UPDATE {table} SET is_deleted = 1, deleted_at = NOW() WHERE is_deleted = 0"
+        );
+        if let Some(pc) = parent_col {
+            sql.push_str(&format!(" AND {pc} = ?"));
+        }
+        if !live_keys.is_empty() {
+            let placeholders = live_keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            sql.push_str(&format!(" AND {key_col} NOT IN ({placeholders})"));
+        }
+        let mut q = sqlx::query(&sql);
+        if let Some(pv) = parent_val {
+            q = q.bind(pv);
+        }
+        for k in live_keys {
+            q = q.bind(k);
+        }
+        let result = q.execute(pool).await?;
+        marked = result.rows_affected() as u32;
+    }
+
+    // Undelete rows that reappeared in Jira.
+    if !live_keys.is_empty() {
+        let placeholders = live_keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let mut sql = format!(
+            "UPDATE {table} SET is_deleted = 0, deleted_at = NULL WHERE is_deleted = 1 AND {key_col} IN ({placeholders})"
+        );
+        if let Some(pc) = parent_col {
+            sql.push_str(&format!(" AND {pc} = ?"));
+        }
+        let mut q = sqlx::query(&sql);
+        for k in live_keys {
+            q = q.bind(k);
+        }
+        if let Some(pv) = parent_val {
+            q = q.bind(pv);
+        }
+        q.execute(pool).await?;
+    }
+
+    Ok(marked)
+}
+
 // ── Check DB connection ───────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -58,7 +127,7 @@ pub async fn save_uqa_test_plan(
             r#"
             INSERT INTO uqa_project (uqa_key, project_name, assignee, status, last_sync)
             VALUES (?, '', ?, '', NOW())
-            ON DUPLICATE KEY UPDATE last_sync = NOW()
+            ON DUPLICATE KEY UPDATE last_sync = NOW(), is_deleted = 0, deleted_at = NULL
             "#,
         )
         .bind(&input.uqa_key)
@@ -75,10 +144,12 @@ pub async fn save_uqa_test_plan(
         INSERT INTO test_plan (tp_jira_key, title, uqa_key, assignee, last_sync)
         VALUES (?, ?, ?, ?, NOW())
         ON DUPLICATE KEY UPDATE
-            title     = VALUES(title),
-            uqa_key   = COALESCE(VALUES(uqa_key), uqa_key),
-            assignee  = VALUES(assignee),
-            last_sync = NOW()
+            title      = VALUES(title),
+            uqa_key    = COALESCE(VALUES(uqa_key), uqa_key),
+            assignee   = VALUES(assignee),
+            last_sync  = NOW(),
+            is_deleted = 0,
+            deleted_at = NULL
         "#,
     )
     .bind(&input.tp_jira_key)
@@ -202,7 +273,9 @@ pub async fn save_test_executions(
                 tp_jira_key      = VALUES(tp_jira_key),
                 assignee         = VALUES(assignee),
                 execution_status = VALUES(execution_status),
-                last_sync        = NOW()
+                last_sync        = NOW(),
+                is_deleted       = 0,
+                deleted_at       = NULL
             "#,
         )
         .bind(&exec.te_jira_key)
@@ -251,6 +324,22 @@ pub async fn check_test_executions_in_db(
         .into_iter()
         .map(|row| row.get::<String, _>("te_jira_key"))
         .collect())
+}
+
+/// Mark Test Executions under `tp_jira_key` as deleted if they're no longer
+/// present in `live_te_keys` (the complete, fresh set just fetched from
+/// Jira for this Test Plan), and undelete any that reappeared. Call this
+/// once after syncing all Test Executions for a Test Plan — never per-item.
+#[tauri::command]
+pub async fn reconcile_test_executions_deleted(
+    state: State<'_, AppState>,
+    tp_jira_key: String,
+    live_te_keys: Vec<String>,
+) -> Result<u32, String> {
+    let pool = get_pool!(state);
+    reconcile_deleted(&pool, "test_execution", "te_jira_key", Some("tp_jira_key"), Some(&tp_jira_key), &live_te_keys)
+        .await
+        .map_err(|e| format!("Gagal rekonsiliasi test_execution: {e}"))
 }
 
 // ── UQA Project sync to DB ────────────────────────────────────────────────────
@@ -305,6 +394,13 @@ pub async fn save_uqa_projects(
         .map_err(|e| format!("Gagal upsert uqa_project {}: {e}", p.uqa_key))?;
     }
 
+    // `projects` is the complete set of UQA issues Jira just returned, so
+    // any DB row not present here was deleted/moved in Jira.
+    let live_keys: Vec<String> = projects.iter().map(|p| p.uqa_key.clone()).collect();
+    reconcile_deleted(&pool, "uqa_project", "uqa_key", None, None, &live_keys)
+        .await
+        .map_err(|e| format!("Gagal rekonsiliasi uqa_project: {e}"))?;
+
     Ok(())
 }
 
@@ -327,7 +423,9 @@ pub async fn resync_uqa_project(
             start_qa       = VALUES(start_qa),
             finish_qa      = VALUES(finish_qa),
             finish_uat     = VALUES(finish_uat),
-            last_sync      = NOW()
+            last_sync      = NOW(),
+            is_deleted     = 0,
+            deleted_at     = NULL
         "#,
     )
     .bind(&project.uqa_key)
@@ -499,7 +597,9 @@ pub async fn save_test_cases(
                 title        = COALESCE(VALUES(title), title),
                 id_jira_repo = COALESCE(VALUES(id_jira_repo), id_jira_repo),
                 assignee     = COALESCE(VALUES(assignee), assignee),
-                last_sync    = NOW()
+                last_sync    = NOW(),
+                is_deleted   = 0,
+                deleted_at   = NULL
             "#,
         )
         .bind(&tc.tc_key)
@@ -798,7 +898,9 @@ pub async fn sync_execution_tests_to_db(
                 assignee        = COALESCE(VALUES(assignee), assignee),
                 executed_by     = COALESCE(VALUES(executed_by), executed_by),
                 executed_at     = COALESCE(VALUES(executed_at), executed_at),
-                last_sync       = NOW()
+                last_sync       = NOW(),
+                is_deleted      = 0,
+                deleted_at      = NULL
             "#,
         )
         .bind(&tc_key)
@@ -814,6 +916,15 @@ pub async fn sync_execution_tests_to_db(
         .map_err(|e| format!("Gagal upsert {tc_key}/{exec_key}: {e}"))?;
 
         count += 1;
+    }
+
+    // Only sweep when tc_keys is known to be the COMPLETE live set — if the
+    // TE exceeded Xray's listing cap, tc_keys is a partial page and sweeping
+    // would wrongly mark real, still-existing TCs beyond the cap as deleted.
+    if !over_cap {
+        reconcile_deleted(&pool, "test_case", "tc_key", Some("te_jira_key"), Some(&exec_key), &tc_keys)
+            .await
+            .map_err(|e| format!("Gagal rekonsiliasi test_case: {e}"))?;
     }
 
     Ok(SyncTcResult { count, truncated: over_cap })
@@ -854,6 +965,23 @@ pub async fn check_test_plans_in_db(
         .collect();
 
     Ok(found)
+}
+
+/// Mark Test Plans under `uqa_key` as deleted if they're no longer present
+/// in `live_tp_keys` (the complete, fresh set just fetched from Jira for
+/// this UQA project), and undelete any that reappeared. Call this once
+/// after syncing all Test Plans for a UQA project — never per-item, since a
+/// single-item save has no way to know the complete live set.
+#[tauri::command]
+pub async fn reconcile_test_plans_deleted(
+    state: State<'_, AppState>,
+    uqa_key: String,
+    live_tp_keys: Vec<String>,
+) -> Result<u32, String> {
+    let pool = get_pool!(state);
+    reconcile_deleted(&pool, "test_plan", "tp_jira_key", Some("uqa_key"), Some(&uqa_key), &live_tp_keys)
+        .await
+        .map_err(|e| format!("Gagal rekonsiliasi test_plan: {e}"))
 }
 
 /// Fetch defect detail from Jira and upsert into `defect` table.

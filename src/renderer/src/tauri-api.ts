@@ -153,8 +153,8 @@ const api = {
   organizeTestsIntoXray: (source: string, folderPath: string, projectKey: string) =>
     cmd<{ count: number }>("organize_tests_into_xray", { source, folderPath, projectKey }),
   getXrayFolders: (projectKey: string) => cmd<XrayFolder[]>("get_xray_folders", { projectKey }),
-  getXrayFolderIssues: (projectKey: string, folderId: number) =>
-    cmd<{ key: string; summary: string }[]>("get_xray_folder_issues", { projectKey, folderId }),
+  getXrayFolderIssues: (projectKey: string, folderId: number, folderPath?: string) =>
+    cmd<{ key: string; summary: string }[]>("get_xray_folder_issues", { projectKey, folderId, folderPath: folderPath || null }),
   addTestsToExecution: (execKey: string, testKeys: string[]) =>
     cmd<void>("add_tests_to_execution", { execKey, testKeys }),
   checkTestSteps: (entries: ConfluenceTestImportEntry[]) =>
@@ -406,10 +406,14 @@ const api = {
   getTestPlansByProjectPrefix: (projectKey: string) => cmd<DbTestPlan[]>("get_test_plans_by_project_prefix", { projectKey }),
   checkTestPlansInDb: (tpKeys: string[]) =>
     cmd<string[]>("check_test_plans_in_db", { tpKeys }),
+  reconcileTestPlansDeleted: (uqaKey: string, liveTpKeys: string[]) =>
+    cmd<number>("reconcile_test_plans_deleted", { uqaKey, liveTpKeys }),
   saveTestExecutions: (executions: SaveTestExecutionInput[]) =>
     cmd<void>("save_test_executions", { executions }),
   checkTestExecutionsInDb: (teKeys: string[]) =>
     cmd<string[]>("check_test_executions_in_db", { teKeys }),
+  reconcileTestExecutionsDeleted: (tpJiraKey: string, liveTeKeys: string[]) =>
+    cmd<number>("reconcile_test_executions_deleted", { tpJiraKey, liveTeKeys }),
   saveTestRepositories: (repositories: SaveTestRepositoryInput[]) =>
     cmd<void>("save_test_repositories", { repositories }),
   getTestRepositoriesInDb: () =>

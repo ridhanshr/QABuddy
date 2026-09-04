@@ -152,11 +152,12 @@ pub async fn get_xray_folder_issues(
     state: State<'_, AppState>,
     project_key: String,
     folder_id: u32,
+    folder_path: Option<String>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let config = load_config(state.clone()).await?;
     let jira_service = state.jira_service.lock().await;
     jira_service
-        .get_xray_folder_issues(&config.jira, &project_key, folder_id)
+        .get_xray_folder_issues(&config.jira, &project_key, folder_id, folder_path.as_deref())
         .await
         .map_err(|e| e.to_string())
 }
