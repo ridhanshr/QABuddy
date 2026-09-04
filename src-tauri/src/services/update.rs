@@ -161,15 +161,40 @@ impl UpdateService {
             on_progress(DownloadProgress { progress, downloaded, total });
         }
 
-        // Windows: launch the NSIS installer directly. macOS: mount the DMG
-        // (a .dmg is a disk image, not an executable — it must be opened).
+        // Windows cannot replace the running executable. Keep a detached shell
+        // alive long enough for Tauri to exit before starting the installer.
+        #[cfg(target_os = "windows")]
+        {
+            let command = format!(
+                "timeout /t 2 /nobreak > NUL & start \"\" \"{}\"",
+                installer_path.display()
+            );
+            Command::new("cmd")
+                .args(["/C", &command])
+                .spawn()
+                .map_err(ServiceError::from)?;
+            app_handle.exit(0);
+            return Ok(());
+        }
+
+        // macOS mounts the DMG; it is not an executable.
         #[cfg(target_os = "macos")]
-        let spawn_result = Command::new("open").arg(&installer_path).spawn();
-        #[cfg(not(target_os = "macos"))]
-        let spawn_result = Command::new(&installer_path).spawn();
-        spawn_result.map_err(ServiceError::from)?;
-        let _ = app_handle;
-        Ok(())
+        {
+            Command::new("open")
+                .arg(&installer_path)
+                .spawn()
+                .map_err(ServiceError::from)?;
+            let _ = app_handle;
+            Ok(())
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let _ = app_handle;
+            Err(ServiceError::NotFound(
+                "Auto-update belum didukung untuk sistem operasi ini".into(),
+            ))
+        }
     }
 }
 
