@@ -161,30 +161,42 @@ impl UpdateService {
             on_progress(DownloadProgress { progress, downloaded, total });
         }
 
-        // Windows cannot replace the running executable. Keep a detached shell
-        // alive long enough for Tauri to exit before starting the installer.
+        // Windows cannot replace the running executable while it's open, and
+        // macOS Finder refuses to drag-replace the .app bundle for the same
+        // reason ("can't be replaced because it's open"). Both branches spawn
+        // a detached helper that waits a few seconds — enough time for this
+        // process to actually exit — before launching the installer/mounting
+        // the DMG, then request app exit. `request_app_exit` below force-kills
+        // the process shortly after if the graceful Tauri shutdown (which is
+        // asynchronous, not immediate) hasn't finished by then, guaranteeing
+        // the exe/.app is unlocked well before the helper's delay elapses.
         #[cfg(target_os = "windows")]
         {
             let command = format!(
-                "timeout /t 2 /nobreak > NUL & start \"\" \"{}\"",
+                "timeout /t 4 /nobreak > NUL & start \"\" \"{}\"",
                 installer_path.display()
             );
             Command::new("cmd")
                 .args(["/C", &command])
                 .spawn()
                 .map_err(ServiceError::from)?;
-            app_handle.exit(0);
+            request_app_exit(app_handle);
             return Ok(());
         }
 
-        // macOS mounts the DMG; it is not an executable.
+        // macOS mounts the DMG; Finder opens a window showing the new .app
+        // next to a shortcut to /Applications for the user to drag in.
         #[cfg(target_os = "macos")]
         {
-            Command::new("open")
-                .arg(&installer_path)
+            let command = format!(
+                "sleep 4; open '{}'",
+                installer_path.display().to_string().replace('\'', "'\\''")
+            );
+            Command::new("sh")
+                .args(["-c", &command])
                 .spawn()
                 .map_err(ServiceError::from)?;
-            let _ = app_handle;
+            request_app_exit(app_handle);
             Ok(())
         }
 
@@ -196,6 +208,22 @@ impl UpdateService {
             ))
         }
     }
+}
+
+/// Request app exit and guarantee the process is actually gone shortly
+/// after, even if the graceful Tauri shutdown (`AppHandle::exit`, which is
+/// asynchronous — it fires exit events through the event loop rather than
+/// terminating immediately) hangs or takes longer than expected. Without
+/// this, the exe/.app can still be locked when the detached installer
+/// helper's delay elapses, reproducing the "file is in use"/"can't be
+/// replaced because it's open" error on both platforms.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn request_app_exit(app_handle: &AppHandle) {
+    app_handle.exit(0);
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_millis(1500));
+        std::process::exit(0);
+    });
 }
 
 /// Pick the release asset matching the user's OS/architecture.
