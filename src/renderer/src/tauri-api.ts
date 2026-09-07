@@ -422,6 +422,8 @@ const api = {
     cmd<UqaWithDates[]>("fetch_uqa_with_dates"),
   saveUqaProjects: (projects: SaveUqaProjectInput[]) =>
     cmd<void>("save_uqa_projects", { projects }),
+  reconcileUqaProjectsDeleted: (fetchedKeys: string[]) =>
+    cmd<number>("reconcile_uqa_projects_deleted", { fetchedKeys }),
   resyncUqaProject: (project: SaveUqaProjectInput) =>
     cmd<void>("resync_uqa_project", { project }),
   checkUqaProjectsInDb: (uqaKeys: string[]) =>

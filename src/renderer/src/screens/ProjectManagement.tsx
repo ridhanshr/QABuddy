@@ -280,6 +280,15 @@ export default function ProjectManagement() {
       await window.qaBuddy.saveUqaProjects(toSave);
       const inDb = await window.qaBuddy.checkUqaProjectsInDb(items.map((m) => m.key));
       setUqaInDb(new Set(inDb));
+      // `items` only covers UQA issues assigned/tested by the current user
+      // (see fetch_uqa_with_dates), not every UQA project in Jira — so a DB
+      // row missing from it might just belong to someone else, not deleted.
+      // reconcile_uqa_projects_deleted verifies each candidate directly
+      // against Jira before marking it deleted, instead of trusting this
+      // per-user list as the complete set.
+      try {
+        await window.qaBuddy.reconcileUqaProjectsDeleted(items.map((m) => m.key));
+      } catch { /* non-fatal — deletion detection is best-effort */ }
     } catch {
       /* silent — manual "Sync ke Database" button remains available */
     } finally {
@@ -369,7 +378,11 @@ export default function ProjectManagement() {
       const jql = isIssueKey
         ? `key = "${trimmed.toUpperCase()}" AND issueType = "Test Plan"`
         : `project = "${trimmed.toUpperCase()}" AND issueType = "Test Plan" ORDER BY created DESC`;
-      const raw: JiraIssueSummary[] = await window.qaBuddy.findIssuesByJql(jql, 50);
+      // 500 is a safety ceiling, not an expected count — this list also
+      // feeds deletion-reconciliation (autoSyncPlans), which treats it as
+      // the complete set of Test Plans for this UQA. A truncated fetch here
+      // would wrongly mark real Test Plans beyond the cap as deleted.
+      const raw: JiraIssueSummary[] = await window.qaBuddy.findIssuesByJql(jql, 500);
       const fetched = raw.map((r) => ({
         key: r.key,
         summary: r.summary,
@@ -700,7 +713,12 @@ export default function ProjectManagement() {
     setExecError(null);
     try {
       const jql = `issue in linkedIssues("${planKey}") AND issuetype = "Test Execution" ORDER BY created DESC`;
-      const raw: JiraIssueSummary[] = await window.qaBuddy.findIssuesByJql(jql, 100);
+      // 500 is a safety ceiling, not an expected count — this list also
+      // feeds deletion-reconciliation (autoSyncExecutions), which treats it
+      // as the complete set of Test Executions for this Test Plan. A
+      // truncated fetch here would wrongly mark real TEs beyond the cap as
+      // deleted.
+      const raw: JiraIssueSummary[] = await window.qaBuddy.findIssuesByJql(jql, 500);
       const base: TestExecutionItem[] = raw.map((r) => ({
         key: r.key,
         summary: r.summary,

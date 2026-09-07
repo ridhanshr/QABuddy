@@ -851,6 +851,7 @@ export interface DesktopApi {
   getTestRepositoriesInDb: () => Promise<DbTestRepository[]>;
   fetchUqaWithDates: () => Promise<UqaWithDates[]>;
   saveUqaProjects: (projects: SaveUqaProjectInput[]) => Promise<void>;
+  reconcileUqaProjectsDeleted: (fetchedKeys: string[]) => Promise<number>;
   resyncUqaProject: (project: SaveUqaProjectInput) => Promise<void>;
   checkUqaProjectsInDb: (uqaKeys: string[]) => Promise<string[]>;
   saveTestCases: (cases: SaveTestCaseInput[]) => Promise<void>;

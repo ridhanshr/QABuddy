@@ -215,6 +215,7 @@ pub fn run() {
             commands::db::save_test_repositories,
             commands::db::get_test_repositories_in_db,
             commands::db::save_uqa_projects,
+            commands::db::reconcile_uqa_projects_deleted,
             commands::db::resync_uqa_project,
             commands::db::update_uqa_project_status,
             commands::db::check_uqa_projects_in_db,

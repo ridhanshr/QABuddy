@@ -43,8 +43,13 @@ macro_rules! get_pool {
 /// `parent_col`/`parent_val` scope the reconciliation (e.g. only Test
 /// Executions under one Test Plan) so an incomplete/partial Jira fetch for
 /// one parent never wrongly marks rows belonging to a different parent.
-/// Pass `None` only for the top-level UQA Project sync, which always fetches
-/// the complete set.
+///
+/// IMPORTANT: only call this when `live_keys` is genuinely the complete set
+/// for the given scope. A fetch that's filtered by current user (e.g. "UQA
+/// issues assigned to me") is NOT complete — using it here would mark every
+/// other user's rows as deleted. For that case use
+/// `reconcile_deleted_by_verifying_missing` instead, which checks each
+/// candidate directly against Jira before marking it deleted.
 async fn reconcile_deleted(
     pool: &sqlx::MySqlPool,
     table: &str,
@@ -98,6 +103,70 @@ async fn reconcile_deleted(
     }
 
     Ok(marked)
+}
+
+/// Deletion reconciliation for a scope whose Jira fetch is NOT guaranteed to
+/// be complete (e.g. filtered by current user). Instead of trusting the
+/// fetched list, each `candidate_keys` entry (typically: DB rows not seen in
+/// this sync's fetch) is verified directly against Jira via a `key in (...)`
+/// JQL search — only keys Jira genuinely no longer returns are marked
+/// deleted. Keys Jira still returns (just not visible to the current
+/// user/filter) are left untouched.
+async fn reconcile_deleted_by_verifying_missing(
+    pool: &sqlx::MySqlPool,
+    client: &crate::services::jira::client::JiraClient,
+    table: &str,
+    key_col: &str,
+    candidate_keys: &[String],
+) -> Result<u32, String> {
+    if candidate_keys.is_empty() {
+        return Ok(0);
+    }
+
+    // Ask Jira which of the candidates still exist, in batches (JQL `key in
+    // (...)` has a practical URL-length limit).
+    const BATCH_SIZE: usize = 100;
+    let mut still_exists: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for batch in candidate_keys.chunks(BATCH_SIZE) {
+        let keys_joined = batch.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(",");
+        let jql = format!("key in ({keys_joined})");
+        match client.search_issues(&jql, batch.len() as u32, "summary").await {
+            Ok(issues) => {
+                for issue in &issues {
+                    if let Some(k) = issue["key"].as_str() {
+                        still_exists.insert(k.to_string());
+                    }
+                }
+            }
+            Err(e) => {
+                // Can't verify this batch — leave those candidates alone
+                // rather than risk marking still-existing issues as deleted.
+                log::warn!("[reconcile_deleted_by_verifying_missing] {table}: JQL check failed for a batch ({e}); skipping those candidates this run");
+                for k in batch {
+                    still_exists.insert(k.clone());
+                }
+            }
+        }
+    }
+
+    let confirmed_missing: Vec<&String> = candidate_keys
+        .iter()
+        .filter(|k| !still_exists.contains(*k))
+        .collect();
+    if confirmed_missing.is_empty() {
+        return Ok(0);
+    }
+
+    let placeholders = confirmed_missing.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "UPDATE {table} SET is_deleted = 1, deleted_at = NOW() WHERE is_deleted = 0 AND {key_col} IN ({placeholders})"
+    );
+    let mut q = sqlx::query(&sql);
+    for k in &confirmed_missing {
+        q = q.bind(k.as_str());
+    }
+    let result = q.execute(pool).await.map_err(|e| format!("Gagal tandai {table} terhapus: {e}"))?;
+    Ok(result.rows_affected() as u32)
 }
 
 // ── Check DB connection ───────────────────────────────────────────────────────
@@ -394,14 +463,52 @@ pub async fn save_uqa_projects(
         .map_err(|e| format!("Gagal upsert uqa_project {}: {e}", p.uqa_key))?;
     }
 
-    // `projects` is the complete set of UQA issues Jira just returned, so
-    // any DB row not present here was deleted/moved in Jira.
-    let live_keys: Vec<String> = projects.iter().map(|p| p.uqa_key.clone()).collect();
-    reconcile_deleted(&pool, "uqa_project", "uqa_key", None, None, &live_keys)
-        .await
-        .map_err(|e| format!("Gagal rekonsiliasi uqa_project: {e}"))?;
+    // NOTE: no blind reconcile_deleted() call here. `projects` is only the
+    // UQA issues Jira returned for the CURRENT user (assignee/tester =
+    // currentUser() — see fetch_uqa_with_dates), never the complete set of
+    // UQA projects in Jira. Deletion detection for this table instead lives
+    // in reconcile_uqa_projects_deleted, which verifies each candidate
+    // directly against Jira before marking it deleted (see that function's
+    // doc comment for why).
 
     Ok(())
+}
+
+/// Deletion reconciliation for `uqa_project`. `fetched_keys` is whatever
+/// this sync's Jira fetch returned for the CURRENT user only (not the
+/// complete set of UQA projects — see fetch_uqa_with_dates), so it CANNOT be
+/// used the way reconcile_deleted uses a live-set: a key simply not
+/// belonging to the current user would look identical to a deleted one.
+///
+/// Instead: take every non-deleted DB row NOT in `fetched_keys`, and verify
+/// each one directly against Jira via JQL before marking it deleted. A row
+/// only gets flagged if Jira genuinely no longer returns that key at all —
+/// not because it merely fell outside the current user's assignee/tester
+/// filter.
+#[tauri::command]
+pub async fn reconcile_uqa_projects_deleted(
+    state: State<'_, AppState>,
+    fetched_keys: Vec<String>,
+) -> Result<u32, String> {
+    let pool = get_pool!(state);
+    let config = crate::commands::load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    let client = jira_service
+        .client(&config.jira)
+        .map_err(|e| format!("Gagal membuat Jira client: {e}"))?;
+
+    let existing_rows = sqlx::query("SELECT uqa_key FROM uqa_project WHERE is_deleted = 0")
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| format!("Gagal mengambil daftar uqa_project: {e}"))?;
+    let fetched_set: std::collections::HashSet<&String> = fetched_keys.iter().collect();
+    let candidates: Vec<String> = existing_rows
+        .into_iter()
+        .map(|row| row.get::<String, _>("uqa_key"))
+        .filter(|k| !fetched_set.contains(k))
+        .collect();
+
+    reconcile_deleted_by_verifying_missing(&pool, &client, "uqa_project", "uqa_key", &candidates).await
 }
 
 #[tauri::command]
