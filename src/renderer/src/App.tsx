@@ -23,9 +23,9 @@ const primaryNavigation: NavItem[] = [
   { key: "project-management", label: "Project Management", icon: "folder_open", filledIcon: "folder_open" },
   { key: "manual-test-case", label: "Test Cases Management", icon: "assignment", filledIcon: "assignment" },
   { key: "documentation-sync", label: "Test Evidence Management", icon: "description", filledIcon: "description" },
-  { key: "document-review", label: "QA Documentation Review", icon: "fact_check", filledIcon: "fact_check" },
   { key: "defect-repository", label: "Test Defect Management", icon: "inventory_2", filledIcon: "inventory_2" },
   { key: "daily-uqa", label: "Daily Activities", icon: "edit_note", filledIcon: "edit_note" },
+  { key: "document-review", label: "QA Document Review", icon: "fact_check", filledIcon: "fact_check" },
 ];
 
 const footerNavigation: NavItem[] = [
