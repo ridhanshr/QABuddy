@@ -172,12 +172,22 @@ impl UpdateService {
         // the exe/.app is unlocked well before the helper's delay elapses.
         #[cfg(target_os = "windows")]
         {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW (0x08000000) stops Windows from spawning a
+            // console host for this detached `cmd.exe` at all. Without it,
+            // Windows resolves whatever the user's default terminal
+            // application is (which can be Windows Terminal) to host the
+            // console — and if that app's settings.json is missing/corrupt,
+            // its own "Failed to load settings" error dialog appears,
+            // unrelated to QA Buddy but surfaced by this spawn.
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
             let command = format!(
                 "timeout /t 4 /nobreak > NUL & start \"\" \"{}\"",
                 installer_path.display()
             );
             Command::new("cmd")
                 .args(["/C", &command])
+                .creation_flags(CREATE_NO_WINDOW)
                 .spawn()
                 .map_err(ServiceError::from)?;
             request_app_exit(app_handle);
