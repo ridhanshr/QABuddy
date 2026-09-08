@@ -481,20 +481,47 @@ impl BRDService {
         // number (e.g. "2.2", "3.") — we ONLY look at actual heading tags, never
         // at <p>/<div>, because numbered list items inside the section (e.g. "3. Terdapat...")
         // would otherwise be mis-detected as a new top-level section.
+        //
+        // BRD authors routinely restart plain numbering from 1 for their OWN
+        // sub-narrative inside a feature description (e.g. "1. Proses Transaksi
+        // di Merchant", "2. Proses Pembayaran di QITA", "3. …", "4. …" as h3/h4
+        // flow steps inside a feature's "Catatan Tambahan"/"Acceptance Criteria"
+        // cell). Those restarts can themselves reach numbers >= the current
+        // section's own number (2, 3, 4…), so comparing leading numbers alone
+        // isn't reliable either. What actually distinguishes a real sibling
+        // section heading in this BRD template is a two-part DECIMAL number
+        // ("2.2", "3.1" — never a bare "2." or "3." on its own), or the literal
+        // "Aturan Bisnis" section title that always immediately follows "Proses
+        // Bisnis" in this template. A heading only counts as a real sibling if
+        // it matches one of those two shapes AND isn't a sub-section of 2.1
+        // itself (2.1.2, 2.1.3, …).
         let heading_only_re  = regex::Regex::new(r"(?i)<h([1-6])\b[^>]*>([\s\S]*?)</h[1-6]>").unwrap();
         let tag_strip2       = regex::Regex::new(r"(?is)<[^>]+>").unwrap();
-        // Matches real section numbers: "2.2 ...", "3. ...", "3 ..." etc.
-        let section_num_re   = regex::Regex::new(r"^\d+[\.\s]").unwrap();
+        // Matches a real decimal section number: "2.2 ...", "3.1 ..." etc.
+        // (deliberately requires the second numeric component — bare "3. Judul"
+        // style numbering is how in-feature narrative flow steps are written).
+        let decimal_section_re = regex::Regex::new(r"^\d+\.\d+\b").unwrap();
+
+        // Fallback for BRDs that skip straight from "2.1 Proses Bisnis" to the
+        // next top-level chapter without a "2.2"/"Aturan Bisnis" section:
+        // a bare "N. Judul" heading only counts as a real chapter boundary when
+        // it's an <h1> — in-feature narrative flow steps use h3/h4 (see above),
+        // never h1, for their restarted "1. / 2. / 3. …" numbering.
+        let bare_section_re = regex::Regex::new(r"^(\d+)[\.\s]").unwrap();
 
         let end_pos = heading_only_re.captures_iter(s)
             .filter_map(|cap| {
                 let pos = cap.get(0)?.start();
                 if pos <= start_pos { return None; }
+                let level: u8 = cap[1].parse().unwrap_or(6);
                 let text = tag_strip2.replace_all(&cap[2], " ");
                 let text = text.trim().to_lowercase();
-                // Only stop at headings that look like a real sibling section number
-                // AND are NOT a sub-section of 2.1 (like 2.1.2, 2.1.3…)
-                if section_num_re.is_match(&text) && !text.starts_with("2.1") {
+                // Not a sub-section of 2.1 itself (2.1.2, 2.1.3…)
+                if text.starts_with("2.1") { return None; }
+                let is_sibling = decimal_section_re.is_match(&text)
+                    || text.contains("aturan bisnis")
+                    || (level == 1 && bare_section_re.is_match(&text));
+                if is_sibling {
                     Some(pos)
                 } else {
                     None
@@ -710,10 +737,53 @@ impl BRDService {
             rows
         };
 
-        for table_html in extract_tables(section_html) {
-            let rows = extract_rows(&table_html);
+        // Build the full candidate list up front: tables from the narrowed
+        // slice first (fast path for well-formed pages), THEN every other
+        // table in the untruncated section not already included. This
+        // matters because if the heading sits INSIDE a table used purely for
+        // page layout (common in Confluence templates: a wrapping
+        // <table><tr><td>…heading…nested data table…</td></tr></table>),
+        // slicing at the heading's byte position cuts off that wrapper's
+        // opening <table> tag. The depth-aware tokenizer then desyncs on the
+        // wrapper's lone closing </table> and either finds nothing, or finds
+        // only small, unrelated tables that happen to be fully contained
+        // after the heading (e.g. callout/info boxes) — neither of which is
+        // an "empty list", so a fallback gated on emptiness alone would never
+        // trigger. Always append the full-document candidates instead, and
+        // let the per-table row/header checks below pick the real one.
+        let narrowed_tables = extract_tables(section_html);
+        let mut candidate_tables = narrowed_tables.clone();
+        if fungsi_pos.is_some() {
+            let all_tables = extract_tables(s);
+            let heading_pos = fungsi_pos.unwrap();
+            let already: std::collections::HashSet<&String> = narrowed_tables.iter().collect();
+            // Prefer tables at/after the heading; fall back to any table at
+            // all (in case byte offsets don't line up cleanly across scans).
+            let mut after: Vec<String> = Vec::new();
+            let mut before: Vec<String> = Vec::new();
+            for t in all_tables {
+                if already.contains(&t) { continue; }
+                if let Some(t_pos) = s.find(&t) {
+                    if t_pos >= heading_pos { after.push(t); continue; }
+                }
+                before.push(t);
+            }
+            if !after.is_empty() || !before.is_empty() {
+                eprintln!("[BRD Gen] Adding {} extra candidate(s) from full Proses Bisnis HTML ({} after heading, {} before)",
+                    after.len() + before.len(), after.len(), before.len());
+            }
+            candidate_tables.extend(after);
+            candidate_tables.extend(before);
+        }
+
+        eprintln!("[BRD Gen] {} candidate table(s) found for row/header parsing", candidate_tables.len());
+
+        for (t_idx, table_html) in candidate_tables.iter().enumerate() {
+            let rows = extract_rows(table_html);
+            eprintln!("[BRD Gen] Candidate table {t_idx}: {} chars, {} rows parsed", table_html.len(), rows.len());
 
             if rows.len() < 2 {
+                eprintln!("[BRD Gen] Candidate table {t_idx} skipped (fewer than 2 rows)");
                 continue;
             }
 
@@ -1047,18 +1117,36 @@ impl BRDService {
 
         let model = config.ollama.extraction_model.as_deref().unwrap_or(&config.ollama.model);
 
-        let system_prompt = r#"Kamu adalah QA engineer senior perbankan Indonesia. Buat test case KOMPREHENSIF dari satu baris BRD.
+        let system_prompt = r#"Kamu adalah QA engineer senior perbankan Indonesia dengan pengalaman mendalam menguji sistem core banking, payment, dan integrasi antar-layanan. Tugasmu: menganalisis SATU fitur BRD secara menyeluruh dan menghasilkan test case yang benar-benar melacak setiap kondisi yang bisa terjadi di lapangan — bukan sekadar satu TC per kategori.
 
-ATURAN:
-1. Gunakan HANYA role yang disebut eksplisit di requirement. Jangan asumsikan Maker/Signer jika tidak ada.
-2. TC_HAPPY: setiap alur berhasil + variasinya. TC_UNHAPPY: setiap field wajib kosong satu per satu, format salah, batas nilai, skenario Variation. TC_REGRESSION: hanya jika ada integrasi modul lain.
-3. Satu skenario = satu TC terpisah. Jangan digabung.
-4. Nama TC: deskriptif dan spesifik. Tidak harus diawali "Verifikasi".
-5. Steps: 3–8 langkah, setiap step punya expected result spesifik (bukan hanya "berhasil").
-6. JANGAN berhenti sebelum JSON ditutup. Output harus JSON lengkap dan valid.
+── CARA MENGANALISIS FITUR (lakukan ini secara diam-diam sebelum menulis JSON) ──
+Baca requirement (user story, Acceptance Criteria, Business Flow, Catatan Tambahan) dan pecah menjadi daftar elemen yang bisa diuji:
+  a. Setiap FIELD INPUT yang disebut (nomor, nominal, tanggal, kode, PIN, dsb) — dan aturan validasinya (wajib/opsional, format, panjang, batas nilai minimum/maksimum).
+  b. Setiap KONDISI/CABANG yang disebut secara eksplisit di requirement (mis. "jika terdaftar" vs "jika tidak terdaftar", "jika saldo cukup" vs "tidak cukup", "eligible" vs "tidak eligible", pilihan tenor/skema, status sukses/gagal dari sistem lain).
+  c. Setiap SISTEM/LAYANAN LAIN yang berinteraksi dengan fitur ini (disebut di Business Flow atau Catatan Tambahan) — ini kandidat TC_REGRESSION jika responsnya memengaruhi hasil.
+  d. Aturan BISNIS/PERHITUNGAN yang disebut (fee, rounding, limit, prioritas, urutan proses) — ini sumber TC_UNHAPPY batas nilai (boundary) dan TC_HAPPY variasi hasil.
+Dari daftar itu, rancang test case yang MELACAK SETIAP ITEM secara individual — jangan menggabungkan dua kondisi berbeda ke dalam satu TC, dan jangan melewatkan kondisi yang disebut eksplisit di requirement hanya karena terlihat kecil.
+
+── ATURAN PENULISAN TEST CASE ──
+1. Gunakan HANYA role/aktor/sistem yang disebut eksplisit di requirement. Jangan mengarang Maker/Signer/OTP/dsb kalau tidak disebutkan.
+2. Klasifikasi:
+   - TC_HAPPY: setiap jalur berhasil (success path) YANG BERBEDA — termasuk variasi input valid yang menghasilkan hasil/cabang berbeda (mis. metode pembayaran A vs B, tenor 1 vs 3 bulan, eligible vs kondisi lain yang tetap sukses). Bukan hanya satu "happy path" tunggal.
+   - TC_UNHAPPY: SETIAP field wajib diuji kosong satu per satu (bukan digabung), setiap aturan format/panjang diuji dengan nilai salah, setiap batas nilai (boundary: tepat di batas, sedikit di bawah, sedikit di atas) bila requirement menyebut angka/limit, dan setiap kondisi "gagal"/"tidak eligible"/"tidak terdaftar"/"ditolak" yang disebut di requirement.
+   - TC_REGRESSION: HANYA jika requirement menyebut integrasi dengan modul/sistem lain (mis. Way4, BRINET, Kafka, core banking lain) DAN ada skenario di mana sistem lain itu gagal/lambat/mengembalikan data tak terduga yang harus ditangani fitur ini. Jangan buat TC_REGRESSION jika tidak ada integrasi eksplisit.
+3. JANGAN membuat generalisasi seperti "Input tidak valid" untuk mewakili banyak field — pecah menjadi TC terpisah per field/per aturan validasi yang disebut requirement.
+4. Jika requirement menyebutkan >1 channel/tampilan (mis. remark tampil di SMS, WA, Email, atau di QITA, BCCM, Billing Statement), buat TC yang memverifikasi tiap channel bila formatnya bisa berbeda per channel; jika formatnya identik di semua channel, cukup satu TC yang menyebutkan seluruh channel di expected result — jangan duplikasi TC yang isinya sama persis.
+5. Satu skenario/kondisi = satu TC terpisah. Jangan digabung menjadi satu TC besar.
+6. Nama TC: kalimat natural berbahasa Indonesia yang deskriptif dan spesifik tentang KONDISI yang diuji (bukan judul generik seperti "Test Berhasil"), TANPA prefix/kategori (jangan diawali "TC_HAPPY", "Happy Path:", "TC_UNHAPPY", dsb — kategori sudah ada di field scenarioType terpisah) dan TANPA format identifier seperti snake_case atau PascalCase (contoh SALAH: "TC_HAPPY_GenerateToken_Success", "Inquiry_Success_CardholderName_Available"). Tidak harus diawali "Verifikasi".
+7. Steps: 3–8 langkah, setiap step punya expected result spesifik yang bisa diverifikasi (bukan hanya "berhasil" atau "sesuai").
+8. Sebelum selesai, periksa ulang: apakah ada field wajib, kondisi eksplisit, atau integrasi di requirement yang BELUM punya TC? Jika ada, tambahkan.
+9. JANGAN berhenti sebelum JSON ditutup. Output harus JSON lengkap dan valid.
+
+── featureCategory (WAJIB, satu nilai untuk SELURUH fitur ini) ──
+Analisis judul dan isi fitur ini secara menyeluruh, lalu simpulkan MODUL UTAMA yang diuji dalam 1-3 kata singkat berbahasa Indonesia (contoh: "Notifikasi Transaksi", "Billing", "Rekonsiliasi", "Tokenisasi", "Migrasi Data"). Ini BUKAN ringkasan judul fitur, melainkan nama modul/domain fungsional yang paling mewakili fitur ini secara umum.
+featureCategory ditulis SATU KALI di root JSON (bukan per test case) — nilai yang sama ini otomatis berlaku untuk semua test case dari fitur ini.
 
 Output HANYA raw JSON:
-{"featureName":"...","testCases":[{"name":"...","featureCategory":"...","scenarioType":"TC_HAPPY|TC_UNHAPPY|TC_REGRESSION","steps":[{"stepNumber":1,"action":"..."}],"expectedResult":[{"stepNumber":1,"result":"..."}]}]}"#;
+{"featureName":"...","featureCategory":"...","testCases":[{"name":"...","scenarioType":"TC_HAPPY|TC_UNHAPPY|TC_REGRESSION","steps":[{"stepNumber":1,"action":"..."}],"expectedResult":[{"stepNumber":1,"result":"..."}]}]}"#;
 
         // ── Step 5: Parallel AI calls — one per feature ─────────────────
         // All features are sent to Ollama concurrently. Results are collected
@@ -1067,8 +1155,64 @@ Output HANYA raw JSON:
         let now = Utc::now().to_rfc3339();
         let feature_total = features.len();
 
-        // Helper: parse raw JSON response into Vec<Value> of test case objects.
-        fn parse_tc_response(response: &str, feat_idx: usize, feature_total: usize) -> Vec<Value> {
+        // Normalize an AI-generated TC name into a plain, readable sentence.
+        // The scenario type (TC_HAPPY/TC_UNHAPPY/TC_REGRESSION) already has its
+        // own badge in the UI, so the model restating it as a name prefix (or
+        // as a raw identifier like "TC_HAPPY_GenerateToken_Success_With_CIF")
+        // is redundant and unreadable. This strips that category noise and
+        // converts snake_case/PascalCase identifiers into spaced-out words.
+        fn normalize_tc_name(raw: &str) -> String {
+            let mut name = raw.trim().to_string();
+
+            // Drop a leading scenario-type/category label, with or without a
+            // separating colon or dash (e.g. "TC_HAPPY: ...", "Happy Path: ...",
+            // "[TC_UNHAPPY] ...", "TC_HAPPY_GenerateToken..." with underscore).
+            let prefix_re = regex::Regex::new(
+                r"(?i)^\s*[\[(]?\s*(?:tc[_ ]?)?(?:happy(?:[ _]path)?|unhappy|negative|regression|positive|boundary)\s*[\])]?\s*[:\-_\s]\s*"
+            ).unwrap();
+            loop {
+                let stripped = prefix_re.replace(&name, "").to_string();
+                if stripped == name { break; }
+                name = stripped;
+            }
+            // Also handle a bare leading "TC_" / "TC " with no category word
+            // (e.g. "TC_001_Something") — just drop the "TC" marker itself.
+            let bare_tc_re = regex::Regex::new(r"(?i)^\s*tc[_ ]").unwrap();
+            name = bare_tc_re.replace(&name, "").to_string();
+
+            // If what's left still reads like an identifier (snake_case or
+            // PascalCase/camelCase with no spaces), convert it into words:
+            // underscores become spaces, and a lower-to-upper letter boundary
+            // gets a space inserted (GenerateToken -> Generate Token).
+            let looks_like_identifier = !name.contains(' ') && (name.contains('_')
+                || name.chars().filter(|c| c.is_ascii_uppercase()).count() >= 2);
+            if looks_like_identifier {
+                let spaced = name.replace('_', " ");
+                let mut out = String::with_capacity(spaced.len() + 8);
+                let chars: Vec<char> = spaced.chars().collect();
+                for (i, &c) in chars.iter().enumerate() {
+                    if i > 0 {
+                        let prev = chars[i - 1];
+                        let boundary = (prev.is_lowercase() && c.is_uppercase())
+                            || (prev.is_ascii_digit() && c.is_alphabetic() && c.is_uppercase())
+                            || (prev.is_alphabetic() && c.is_ascii_digit());
+                        if boundary && prev != ' ' {
+                            out.push(' ');
+                        }
+                    }
+                    out.push(c);
+                }
+                name = regex::Regex::new(r"\s+").unwrap().replace_all(&out, " ").trim().to_string();
+            }
+
+            name.trim().trim_matches(|c: char| c == '_' || c == '-' || c == ':').trim().to_string()
+        }
+
+        // Helper: parse raw JSON response into (featureCategory, Vec<Value> of test case objects).
+        // featureCategory is read once from the response root — see the prompt's
+        // "── featureCategory ──" section — so every TC in this chunk shares the
+        // exact same short module name instead of each TC inventing its own.
+        fn parse_tc_response(response: &str, feat_idx: usize, feature_total: usize) -> (Option<String>, Vec<Value>) {
             let cleaned = response
                 .trim()
                 .strip_prefix("```json").or_else(|| response.trim().strip_prefix("```"))
@@ -1076,8 +1220,19 @@ Output HANYA raw JSON:
                 .unwrap_or(response.trim());
 
             if let Ok(v) = serde_json::from_str::<Value>(cleaned) {
-                return v.get("testCases").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+                let category = v.get("featureCategory").and_then(|c| c.as_str())
+                    .filter(|s| !s.is_empty()).map(|s| s.to_string());
+                let cases = v.get("testCases").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+                return (category, cases);
             }
+
+            // Partial parse fallback: pull featureCategory out with a plain
+            // string search since the JSON as a whole may not parse.
+            let category = regex::Regex::new(r#""featureCategory"\s*:\s*"([^"]*)""#).unwrap()
+                .captures(cleaned)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+                .filter(|s| !s.is_empty());
 
             // Partial parse: extract complete {...} objects from "testCases":[
             let mut cases: Vec<Value> = Vec::new();
@@ -1116,7 +1271,7 @@ Output HANYA raw JSON:
             }
             eprintln!("[BRD Gen] Chunk {}/{} — partial parse: {}/{} TC objects",
                 feat_idx + 1, feature_total, cases.len(), cleaned.matches("\"name\"").count());
-            cases
+            (category, cases)
         }
 
         // Build one prompt string per feature (OCR is still sequential here since it's I/O bound
@@ -1141,9 +1296,10 @@ Output HANYA raw JSON:
                 parts.push(format!("GAMBAR/DIAGRAM DI CATATAN TAMBAHAN:\n{feature_ocr_text}"));
             }
             parts.push(format!(
-                "Buat test case untuk fitur \"{feature_name}\". \
-                 Pastikan: semua alur berhasil (TC_HAPPY), semua kondisi gagal (TC_UNHAPPY) per skenario dan per field, \
-                 dan regression jika ada integrasi. Output HANYA JSON valid lengkap."
+                "Analisis fitur \"{feature_name}\" di atas secara menyeluruh sesuai cara analisis yang dijelaskan, lalu buat test case-nya. \
+                 Susuri setiap field, kondisi/cabang, aturan bisnis, dan integrasi yang disebutkan di Acceptance Criteria/Business Flow/Catatan Tambahan — \
+                 pastikan TIDAK ADA satupun kondisi eksplisit yang disebutkan requirement terlewat tanpa test case. \
+                 Output HANYA JSON valid lengkap."
             ));
 
             let full_prompt = format!("{system_prompt}\n\n{}", parts.join("\n\n"));
@@ -1160,7 +1316,10 @@ Output HANYA raw JSON:
             join_set.spawn(async move {
                 eprintln!("[BRD Gen] Chunk {}/{} START — \"{}\"", feat_idx + 1, ftotal, feature_name);
                 let response = ollama
-                    .generate_text_with_ctx(&prompt, true, Some(0.3), None, Some(16384))
+                    // num_ctx raised alongside the more thorough system prompt: a deeper,
+                    // per-field/per-condition analysis produces more test cases per feature,
+                    // so both the prompt and the JSON output need more room before truncating.
+                    .generate_text_with_ctx(&prompt, true, Some(0.3), None, Some(24576))
                     .await
                     .unwrap_or_default();
                 eprintln!("[BRD Gen] Chunk {}/{} DONE — {} chars", feat_idx + 1, ftotal, response.len());
@@ -1171,27 +1330,38 @@ Output HANYA raw JSON:
         let mut all_test_cases: Vec<BRDTestCase> = Vec::new();
         let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        // As each task completes (in any order), parse and emit immediately
-        while let Some(join_result) = join_set.join_next().await {
-            let (feat_idx, feature_name, response) = match join_result {
-                Ok(r) => r,
-                Err(e) => { eprintln!("[BRD Gen] Task join error: {e}"); continue; }
-            };
-
+        // Builds the BRDTestCase list for one feature's raw AI response. Pulled
+        // out of the completion loop below so it can be called strictly in
+        // feat_idx order (see the buffering loop) rather than in whatever order
+        // each Ollama call happens to finish.
+        let build_chunk_cases = |feat_idx: usize,
+                                  feature_name: &str,
+                                  response: &str,
+                                  seen_names: &mut std::collections::HashSet<String>|
+         -> Vec<BRDTestCase> {
             if response.len() < 10 {
                 eprintln!("[BRD Gen] Chunk {}/{} — empty response, skipping", feat_idx + 1, feature_total);
-                continue;
+                return Vec::new();
             }
 
-            let raw_cases = parse_tc_response(&response, feat_idx, feature_total);
+            let (ai_feature_category, raw_cases) = parse_tc_response(response, feat_idx, feature_total);
+            // Read once per chunk (one chunk = one BRD feature row) and applied
+            // identically to every TC below — never let the model choose a
+            // per-TC value, or TCs from the same BRD row end up with different
+            // category text (e.g. "Service Inquiry Way4" on one TC vs
+            // "Tokenization and Binding API" on another), which breaks any UI
+            // grouping/heading keyed on "which BRD row this TC came from".
+            // Falls back to the full BRD feature name if the model omitted it.
+            let feature_category = ai_feature_category.unwrap_or_else(|| feature_name.to_string());
             let mut chunk_cases: Vec<BRDTestCase> = Vec::new();
 
             for tc in &raw_cases {
-                let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("Unnamed TC").to_string();
+                let raw_name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("Unnamed TC");
+                let name = normalize_tc_name(raw_name);
+                let name = if name.is_empty() { "Unnamed TC".to_string() } else { name };
                 if !seen_names.insert(name.clone()) { continue; }
 
-                let feature_category = tc.get("featureCategory").and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty()).unwrap_or(feature_name.as_str()).to_string();
+                let feature_category = feature_category.clone();
 
                 let raw_scenario = tc.get("scenarioType").and_then(|v| v.as_str()).unwrap_or("TC_HAPPY");
                 let scenario_type = match raw_scenario {
@@ -1232,7 +1402,12 @@ Output HANYA raw JSON:
             }
 
             eprintln!("[BRD Gen] Chunk {}/{} — {} TC untuk \"{}\"", feat_idx + 1, feature_total, chunk_cases.len(), feature_name);
-            if chunk_cases.is_empty() { continue; }
+            chunk_cases
+        };
+
+        // Emits + persists one feature's chunk, in the order this fn is called.
+        let mut emit_chunk = |feat_idx: usize, feature_name: &str, chunk_cases: Vec<BRDTestCase>| {
+            if chunk_cases.is_empty() { return; }
 
             {
                 let mut store = self.load();
@@ -1243,12 +1418,47 @@ Output HANYA raw JSON:
             let _ = self.app_handle.emit("brd-chunk-progress", BrdChunkProgress {
                 feature_index: feat_idx + 1,
                 feature_total,
-                feature_name: feature_name.clone(),
+                feature_name: feature_name.to_string(),
                 test_cases: chunk_cases.clone(),
                 test_execution_id: exec_id.clone(),
             });
 
             all_test_cases.extend(chunk_cases);
+        };
+
+        // All Ollama calls still run fully in parallel (generation speed is
+        // unaffected) — but results are buffered here and only emitted to the
+        // frontend/DB strictly in feat_idx order (Fitur 1, 2, 3, …), regardless
+        // of which call actually finishes first. A feature that finishes late
+        // simply holds up the display of later (already-finished) features
+        // until its own turn comes, instead of them appearing out of order.
+        let mut pending: std::collections::HashMap<usize, (String, String)> = std::collections::HashMap::new();
+        let mut next_to_emit = 0usize;
+
+        while let Some(join_result) = join_set.join_next().await {
+            let (feat_idx, feature_name, response) = match join_result {
+                Ok(r) => r,
+                Err(e) => { eprintln!("[BRD Gen] Task join error: {e}"); continue; }
+            };
+            pending.insert(feat_idx, (feature_name, response));
+
+            // Drain as many in-order entries as are currently available.
+            while let Some((feature_name, response)) = pending.remove(&next_to_emit) {
+                let chunk_cases = build_chunk_cases(next_to_emit, &feature_name, &response, &mut seen_names);
+                emit_chunk(next_to_emit, &feature_name, chunk_cases);
+                next_to_emit += 1;
+            }
+        }
+        // Safety net: if any chunks never drained (e.g. a task panicked and its
+        // feat_idx was skipped, stalling the in-order sequence), flush whatever
+        // is left in whatever order remains rather than silently dropping them.
+        let mut leftover: Vec<usize> = pending.keys().copied().collect();
+        leftover.sort_unstable();
+        for feat_idx in leftover {
+            if let Some((feature_name, response)) = pending.remove(&feat_idx) {
+                let chunk_cases = build_chunk_cases(feat_idx, &feature_name, &response, &mut seen_names);
+                emit_chunk(feat_idx, &feature_name, chunk_cases);
+            }
         }
 
         if all_test_cases.is_empty() {
