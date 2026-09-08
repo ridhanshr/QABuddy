@@ -17,6 +17,17 @@ function teNextStatuses(current: string | null): readonly string[] {
 }
 const TC_STATUSES = ["TODO", "EXECUTING", "PASS", "FAIL", "ABORTED"] as const;
 
+// Excludes UQA projects whose SDLC segment (the part after the first " - "
+// in project_name, e.g. "QCM - NCM OPS - ...") is NCM OPS, ECM, or Support —
+// the Monitoring project filter should only offer the remaining projects.
+function isExcludedSdlcProject(projectName: string | null | undefined): boolean {
+  if (!projectName) return false;
+  const afterFirst = projectName.indexOf(" - ");
+  if (afterFirst === -1) return false;
+  const segment = projectName.slice(afterFirst + 3).split(" - ")[0]?.trim().toLowerCase() || "";
+  return segment === "ncm ops" || segment === "ncm-ops" || segment === "ecm" || segment === "support";
+}
+
 function statusColor(status: string | null): string {
   if (!status) return "var(--on-surface-variant)";
   const s = status.toLowerCase();
@@ -622,7 +633,7 @@ export default function MonitoringScreen({ username, displayName, jiraBaseUrl }:
             )}
           </div>
           <ProjectFilterDropdown
-            projects={uqaProjects}
+            projects={uqaProjects.filter(p => !isExcludedSdlcProject(p.project_name))}
             selectedKey={selectedProjectKey}
             onChange={(key) => { setSelectedProjectKey(key); setSelectedTE(null); setTestCases([]); }}
           />
