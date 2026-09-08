@@ -437,11 +437,11 @@ export default function ManualTestCaseScreen() {
                       </div>
                     </div>
                     <div className="field-group">
-                      <label>Test Execution Key <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--on-surface-variant)' }}>(opsional — langsung attach ke execution)</span></label>
+                      <label>Test Execution Key <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--on-surface-variant)' }}>(opsional — langsung attach ke satu atau lebih execution, pisahkan dengan koma)</span></label>
                       <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                         <span className="material-symbols" style={{ position: 'absolute', left: 12, fontSize: 18, color: 'var(--on-surface-variant)' }}>play_circle</span>
                         <input
-                          placeholder="e.g. PROJ-456"
+                          placeholder="e.g. PROJ-456, PROJ-457"
                           value={item.testExecutionKey || ""}
                           onChange={(e) => updateManualCase(item.id, "testExecutionKey", e.target.value)}
                           style={{ paddingLeft: 40, fontFamily: 'monospace' }}

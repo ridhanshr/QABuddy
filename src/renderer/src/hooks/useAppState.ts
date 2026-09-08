@@ -1509,11 +1509,18 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       }));
       const result = await window.qaBuddy.createManualTestCases(casesToSubmit, loggedInUser || undefined);
 
-      // Group newly created test case keys by their target Test Execution key
+      // Group newly created test case keys by their target Test Execution key.
+      // testExecutionKey supports multiple comma-separated TE keys (e.g.
+      // "PROJ-456, PROJ-457") so one TC can be attached to several
+      // executions at once — each valid key gets its own entry in execMap,
+      // and the same TC key is added under every TE the user listed.
       const execMap: Record<string, string[]> = {};
       result.created.forEach((created, idx) => {
-        const teKey = (manualCases[idx]?.testExecutionKey || "").trim();
-        if (teKey) {
+        const teKeys = (manualCases[idx]?.testExecutionKey || "")
+          .split(",")
+          .map(k => k.trim())
+          .filter(Boolean);
+        for (const teKey of teKeys) {
           if (!execMap[teKey]) execMap[teKey] = [];
           execMap[teKey].push(created.key);
         }
@@ -1547,14 +1554,27 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         );
       }
 
-      // Save to DB — fire and forget, don't block UX on DB availability
+      // Save to DB — fire and forget, don't block UX on DB availability.
+      // One row per (tc_key, te_jira_key) pair, so a TC attached to multiple
+      // TEs gets a DB row for each one; a TC with no TE still gets one row
+      // with an empty te_jira_key so it's tracked in the repository.
       try {
-        const dbPayload = result.created.map((created, idx) => ({
-          tc_key: created.key,
-          te_jira_key: (manualCases[idx]?.testExecutionKey || "").trim(),
-          title: manualCases[idx]?.title || created.key,
-          assignee: config.jira.username || undefined,
-        }));
+        const dbPayload = result.created.flatMap((created, idx) => {
+          const teKeys = (manualCases[idx]?.testExecutionKey || "")
+            .split(",")
+            .map(k => k.trim())
+            .filter(Boolean);
+          const title = manualCases[idx]?.title || created.key;
+          if (teKeys.length === 0) {
+            return [{ tc_key: created.key, te_jira_key: "", title, assignee: config.jira.username || undefined }];
+          }
+          return teKeys.map(te_jira_key => ({
+            tc_key: created.key,
+            te_jira_key,
+            title,
+            assignee: config.jira.username || undefined,
+          }));
+        });
         await window.qaBuddy.saveTestCases(dbPayload);
       } catch {
         // DB save failure is non-critical — Jira create already succeeded
