@@ -225,6 +225,43 @@ function TestCaseCard({
   const exStyle = executionStatusStyle[tc.executionStatus] || executionStatusStyle.Unexecuted;
   const syncStyle = syncStatusStyle[tc.syncStatus] || syncStatusStyle["Draft AI"];
 
+  // Steps and Expected Results are two parallel arrays keyed by stepNumber.
+  // The editor below treats each row as one (action, expected) pair so users
+  // edit them together instead of juggling two separate lists.
+  const rowCount = Math.max(tc.steps.length, tc.expectedResult.length);
+  const rows = Array.from({ length: rowCount }, (_, i) => ({
+    stepNumber: tc.steps[i]?.stepNumber ?? tc.expectedResult[i]?.stepNumber ?? i + 1,
+    action: tc.steps[i]?.action ?? "",
+    expected: tc.expectedResult[i]?.result ?? "",
+  }));
+
+  const renumber = <T extends { stepNumber: number }>(arr: T[]): T[] =>
+    arr.map((item, i) => ({ ...item, stepNumber: i + 1 }));
+
+  const updateStepAction = (rowIdx: number, value: string) => {
+    const steps = [...tc.steps];
+    while (steps.length <= rowIdx) steps.push({ stepNumber: steps.length + 1, action: "" });
+    steps[rowIdx] = { ...steps[rowIdx], action: value };
+    onChange(index, "steps", renumber(steps));
+  };
+
+  const updateExpected = (rowIdx: number, value: string) => {
+    const expected = [...tc.expectedResult];
+    while (expected.length <= rowIdx) expected.push({ stepNumber: expected.length + 1, result: "" });
+    expected[rowIdx] = { ...expected[rowIdx], result: value };
+    onChange(index, "expectedResult", renumber(expected));
+  };
+
+  const addRow = () => {
+    onChange(index, "steps", renumber([...tc.steps, { stepNumber: 0, action: "" }]));
+    onChange(index, "expectedResult", renumber([...tc.expectedResult, { stepNumber: 0, result: "" }]));
+  };
+
+  const removeRow = (rowIdx: number) => {
+    onChange(index, "steps", renumber(tc.steps.filter((_, i) => i !== rowIdx)));
+    onChange(index, "expectedResult", renumber(tc.expectedResult.filter((_, i) => i !== rowIdx)));
+  };
+
   return (
     <div style={{
       border: "1px solid var(--outline-variant, var(--surface-container-high))",
@@ -234,10 +271,6 @@ function TestCaseCard({
       {/* Header row — always visible */}
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "28px 1fr auto auto auto auto auto",
-          alignItems: "center",
-          gap: 12,
           padding: "10px 14px",
           cursor: "pointer",
           background: expanded ? "var(--surface-container)" : "transparent",
@@ -245,53 +278,58 @@ function TestCaseCard({
         }}
         onClick={() => setExpanded(v => !v)}
       >
-        {/* # */}
-        <span style={{ fontWeight: 700, color: "var(--on-surface-variant)", fontSize: 13 }}>{index + 1}</span>
+        <div style={{ display: "grid", gridTemplateColumns: "28px 1fr auto auto auto auto", alignItems: "center", gap: 12 }}>
+          {/* # */}
+          <span style={{ fontWeight: 700, color: "var(--on-surface-variant)", fontSize: 13 }}>{index + 1}</span>
 
-        {/* Name */}
-        <span style={{ fontWeight: 600, fontSize: 13, color: "var(--on-surface)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {tc.name}
-        </span>
+          {/* Spacer so badges/actions stay right-aligned regardless of title length below */}
+          <span />
 
-        {/* Feature badge */}
-        <span style={{ fontSize: 12, color: "var(--on-surface-variant)", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
-          {tc.featureCategory}
-        </span>
+          {/* Type badge */}
+          <Badge label={tc.scenarioType} style={{ background: stStyle.bg, color: stStyle.color }} />
 
-        {/* Type badge */}
-        <Badge label={tc.scenarioType} style={{ background: stStyle.bg, color: stStyle.color }} />
+          {/* Execution status badge */}
+          <Badge label={tc.executionStatus} style={{ background: exStyle.bg, color: exStyle.color }} />
 
-        {/* Execution status badge */}
-        <Badge label={tc.executionStatus} style={{ background: exStyle.bg, color: exStyle.color }} />
+          {/* Sync status badge */}
+          <Badge label={tc.syncStatus} style={{ background: syncStyle.bg, color: syncStyle.color }} />
 
-        {/* Sync status badge */}
-        <Badge label={tc.syncStatus} style={{ background: syncStyle.bg, color: syncStyle.color }} />
+          {/* Jira key + actions */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={e => e.stopPropagation()}>
+            {tc.jiraTestCaseKey ? (
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)" }}>{tc.jiraTestCaseKey}</span>
+            ) : (
+              <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>—</span>
+            )}
+            <button
+              type="button"
+              title="Edit"
+              onClick={() => { setExpanded(true); setEditing(v => !v); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 2 }}
+            >
+              <span className="material-symbols" style={{ fontSize: 16 }}>edit</span>
+            </button>
+            <button
+              type="button"
+              title="Delete"
+              onClick={() => onDelete(tc.id)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--error)", padding: 2 }}
+            >
+              <span className="material-symbols" style={{ fontSize: 16 }}>delete</span>
+            </button>
+            <span className="material-symbols" style={{ fontSize: 16, color: "var(--on-surface-variant)", transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
+              expand_more
+            </span>
+          </div>
+        </div>
 
-        {/* Jira key + actions */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={e => e.stopPropagation()}>
-          {tc.jiraTestCaseKey ? (
-            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)" }}>{tc.jiraTestCaseKey}</span>
-          ) : (
-            <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>—</span>
-          )}
-          <button
-            type="button"
-            title="Edit"
-            onClick={() => { setExpanded(true); setEditing(v => !v); }}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 2 }}
-          >
-            <span className="material-symbols" style={{ fontSize: 16 }}>edit</span>
-          </button>
-          <button
-            type="button"
-            title="Delete"
-            onClick={() => onDelete(tc.id)}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--error)", padding: 2 }}
-          >
-            <span className="material-symbols" style={{ fontSize: 16 }}>delete</span>
-          </button>
-          <span className="material-symbols" style={{ fontSize: 16, color: "var(--on-surface-variant)", transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
-            expand_more
+        {/* Name + feature module — full width row below, wraps instead of truncating */}
+        <div style={{ marginTop: 4, paddingLeft: 40, display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontWeight: 600, fontSize: 13, color: "var(--on-surface)" }}>
+            {tc.name}
+          </span>
+          <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>
+            {tc.featureCategory}
           </span>
         </div>
       </div>
@@ -342,6 +380,57 @@ function TestCaseCard({
                   </select>
                 </div>
               </div>
+
+              {/* Steps & Expected Results editor */}
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 28px", gap: 8, marginBottom: 4 }}>
+                  <span />
+                  <label style={{ fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)" }}>Test Step</label>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: "var(--on-surface-variant)" }}>Expected Result</label>
+                  <span />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {rows.map((row, rowIdx) => (
+                    <div key={rowIdx} style={{ display: "grid", gridTemplateColumns: "28px 1fr 1fr 28px", gap: 8, alignItems: "start" }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--on-surface-variant)", paddingTop: 6, textAlign: "center" }}>
+                        {row.stepNumber}
+                      </span>
+                      <textarea
+                        value={row.action}
+                        onChange={e => updateStepAction(rowIdx, e.target.value)}
+                        onBlur={() => onUpdate(tc)}
+                        rows={2}
+                        style={{ width: "100%", padding: "5px 8px", border: "1px solid var(--outline)", borderRadius: 6, background: "var(--surface)", color: "var(--on-surface)", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
+                      />
+                      <textarea
+                        value={row.expected}
+                        onChange={e => updateExpected(rowIdx, e.target.value)}
+                        onBlur={() => onUpdate(tc)}
+                        rows={2}
+                        style={{ width: "100%", padding: "5px 8px", border: "1px solid var(--outline)", borderRadius: 6, background: "var(--surface)", color: "var(--on-surface)", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
+                      />
+                      <button
+                        type="button"
+                        title="Hapus step"
+                        onClick={() => { removeRow(rowIdx); setTimeout(() => onUpdate(tc), 100); }}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--error)", padding: 2, paddingTop: 6 }}
+                      >
+                        <span className="material-symbols" style={{ fontSize: 16 }}>delete</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => { addRow(); setTimeout(() => onUpdate(tc), 100); }}
+                  style={{ marginTop: 8, fontSize: 12, padding: "4px 10px" }}
+                >
+                  <span className="material-symbols" style={{ fontSize: 14, verticalAlign: "middle", marginRight: 4 }}>add</span>
+                  Tambah Step
+                </button>
+              </div>
+
               <button
                 type="button"
                 className="secondary-button"
@@ -379,6 +468,54 @@ function TestCaseCard({
     </div>
   );
 }
+
+/**
+ * Renders test case cards grouped under a heading for the feature they belong
+ * to (tc.featureCategory) — a new heading appears whenever the feature changes
+ * from the previous card, so cases stay grouped as "Fitur 1: ... / TC A / TC B"
+ * without needing to re-sort the underlying list.
+ */
+function TestCaseListWithFeatureHeadings({
+  testCases, onUpdate, onDelete, onChange,
+}: {
+  testCases: BRDTestCase[];
+  onUpdate: (tc: BRDTestCase) => void;
+  onDelete: (id: string) => void;
+  onChange: (index: number, field: string, value: any) => void;
+}) {
+  let lastFeature: string | null = null;
+  return (
+    <div>
+      {testCases.map((tc, i) => {
+        const showHeading = tc.featureCategory !== lastFeature;
+        lastFeature = tc.featureCategory;
+        return (
+          <React.Fragment key={tc.id}>
+            {showHeading && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "12px 14px 6px", marginTop: i === 0 ? 0 : 8,
+              }}>
+                <span className="material-symbols" style={{ fontSize: 16, color: "var(--primary)" }}>bookmark</span>
+                <h5 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "var(--on-surface)" }}>
+                  {tc.featureCategory || "Tanpa Kategori"}
+                </h5>
+              </div>
+            )}
+            <TestCaseCard
+              tc={tc}
+              index={i}
+              onUpdate={onUpdate}
+              onDelete={onDelete}
+              onChange={onChange}
+            />
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 const CACHE_TTL = 15_000;
 
 export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
@@ -1881,18 +2018,12 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                   <span key={i} style={{ fontSize: 10, fontWeight: 700, color: "var(--on-surface-variant)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</span>
                 ))}
               </div>
-              <div>
-                {testCases.map((tc, i) => (
-                  <TestCaseCard
-                    key={tc.id}
-                    tc={tc}
-                    index={i}
-                    onUpdate={handleUpdateTestCase}
-                    onDelete={handleDeleteTestCase}
-                    onChange={updateField}
-                  />
-                ))}
-              </div>
+              <TestCaseListWithFeatureHeadings
+                testCases={testCases}
+                onUpdate={handleUpdateTestCase}
+                onDelete={handleDeleteTestCase}
+                onChange={updateField}
+              />
             </div>
           )}
 
@@ -2014,18 +2145,12 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
               </div>
 
               {/* Cards */}
-              <div>
-                {testCases.map((tc, i) => (
-                  <TestCaseCard
-                    key={tc.id}
-                    tc={tc}
-                    index={i}
-                    onUpdate={handleUpdateTestCase}
-                    onDelete={handleDeleteTestCase}
-                    onChange={updateField}
-                  />
-                ))}
-              </div>
+              <TestCaseListWithFeatureHeadings
+                testCases={testCases}
+                onUpdate={handleUpdateTestCase}
+                onDelete={handleDeleteTestCase}
+                onChange={updateField}
+              />
             </div>
           )}
 
