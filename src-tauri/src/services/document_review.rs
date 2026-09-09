@@ -1653,10 +1653,12 @@ async fn validate_sit(
 
 /// Required columns on the table inside `Scenario Detail & Screen Capture SIT` page.
 /// Header labels in Confluence are accepted case-insensitively and with `&` <-> `and`.
+/// "Kategori" is deliberately not included — the SIT/UAT evidence template does
+/// not have a Kategori column, so requiring it produced spurious FAIL findings
+/// on every table row.
 const SCENARIO_CAPTURE_REQUIRED_COLUMNS: &[&str] = &[
     "no. test case",
     "function",
-    "kategori",
     "input data",
     "steps",
     "expected result",
