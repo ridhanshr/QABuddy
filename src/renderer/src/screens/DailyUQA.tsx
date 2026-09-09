@@ -725,7 +725,17 @@ export default function DailyUQA() {
                   onClick={() => setDialogIssue(issue)}
                 >
                   <span className="uqa-issue-project">{issue.projectKey}</span>
-                  <span className="uqa-issue-key">{issue.issueKey}</span>
+                  <span
+                    className="uqa-issue-key uqa-issue-key-link"
+                    title="Buka di Jira"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const base = config.jira.baseUrl?.replace(/\/+$/, "");
+                      if (base) void window.qaBuddy.openExternal(`${base}/browse/${issue.issueKey}`);
+                    }}
+                  >
+                    {issue.issueKey}
+                  </span>
                   <span className="uqa-issue-summary">{issue.summary}</span>
                   <span className="uqa-issue-last">
                     {lastDate ? relativeTime(lastDate) : "—"}

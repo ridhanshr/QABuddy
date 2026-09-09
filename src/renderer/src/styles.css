@@ -945,6 +945,24 @@ select {
 .comparison-item h4 { font-size: 12px; font-weight: 700; }
 .comparison-item p.italic { font-style: italic; font-size: 13.5px; color: var(--on-surface-variant); }
 
+.doc-section h3.doc-h3 { display: flex; align-items: center; gap: 8px; }
+.doc-section ol, .doc-section ul.doc-list { font-size: 14px; line-height: 1.65; color: var(--on-surface); margin: 0 0 14px; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+.doc-section ol ul, .doc-section ul.doc-list ul { margin-top: 4px; }
+.doc-table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--outline-variant); border-radius: var(--radius-lg); }
+.doc-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.doc-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; color: var(--on-surface-variant); background: var(--surface-container-low); padding: 10px 14px; border-bottom: 1px solid var(--outline-variant); }
+.doc-table td { padding: 10px 14px; border-bottom: 1px solid var(--outline-variant); color: var(--on-surface); vertical-align: top; }
+.doc-table tr:last-child td { border-bottom: none; }
+.doc-table td:first-child { font-weight: 600; white-space: nowrap; }
+.doc-section .callout-box.warning { background: var(--warning-container); color: var(--on-warning-container, var(--on-surface)); }
+.doc-section .callout-box p { margin-bottom: 0; }
+.doc-section .callout-box p + p { margin-top: 6px; }
+.doc-badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 16px; }
+.doc-badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--surface-container-high); color: var(--on-surface-variant); }
+.doc-badge.db { background: var(--tertiary-container); color: var(--on-tertiary-container); }
+.doc-badge.api { background: var(--success-container); color: var(--on-success-fixed, var(--success)); }
+.doc-role-note { font-size: 12.5px; font-style: italic; color: var(--on-surface-variant); margin: -8px 0 16px; }
+
 /* ── Documentation Sync ── */
 .doc-sync-layout { max-width: 1000px; margin: 0 auto; padding-bottom: 100px; }
 .doc-sync-header { margin-bottom: 32px; }
@@ -1533,6 +1551,8 @@ select {
   font-family: var(--font-mono); letter-spacing: -0.01em;
   white-space: nowrap; overflow: hidden;
 }
+.uqa-issue-key-link { color: var(--primary); cursor: pointer; width: fit-content; }
+.uqa-issue-key-link:hover { text-decoration: underline; }
 .uqa-issue-summary { font-size: 13px; color: var(--on-surface); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .uqa-issue-last { font-size: 11.5px; color: var(--on-surface-variant); text-align: right; white-space: nowrap; min-width: 70px; }
 
