@@ -659,141 +659,63 @@ impl JiraService {
 
         if let Some(tp_key) = draft.tp_jira_key.as_deref().filter(|k| !k.is_empty()) {
             let client = self.client(config)?;
+            // The link must be the "contains" (outward) / "is contained in"
+            // (inward) relation from the "Hierarchy link (WBSGantt)" link
+            // type — that's what makes the defect actually show up nested
+            // under the Test Plan in the WBS Gantt tree view. (An earlier
+            // version of this used the "is Issues of" phrase — link type
+            // "Agile Demand" — which does create a link but does NOT place
+            // the defect in the WBS hierarchy the way this team actually
+            // needs.) The dropdown phrase Jira's UI shows is NOT the
+            // `type.name` POST /issueLink needs, and the two can differ
+            // arbitrarily, so — same as before — look for an existing link
+            // on the Test Plan whose outward phrase matches "contains" to
+            // read off the real `type.name`, falling back to the last
+            // confirmed name only if the Test Plan has no such link yet.
+            const LINK_PHRASE: &str = "contains";
+            const LINK_TYPE_FALLBACK: &str = "Hierarchy link (WBSGantt)";
+            let resolved_link_type = client
+                .find_link_type_name_from_existing_link(tp_key, LINK_PHRASE)
+                .await
+                .unwrap_or(None);
+            let link_type: String = resolved_link_type.unwrap_or_else(|| LINK_TYPE_FALLBACK.to_string());
             Self::emit_defect_create_progress(
                 app_handle,
-                "find_link_type",
-                format!("Mencari tipe link untuk menghubungkan ke Test Plan {tp_key}..."),
+                "link_test_plan",
+                format!("Menghubungkan ke Test Plan {tp_key}..."),
             );
-            match client.get_issue_link_types().await {
-                Ok(link_types) => {
+            // Direction matters for where the defect lands in the WBS Gantt
+            // tree: the outwardIssue is the one that performs the outward
+            // phrase ("contains") on the inwardIssue. Testing showed
+            // (defect=inward, TP=outward) placed the DEFECT as the tree
+            // parent with the Test Plan nested under it — backwards. Swapped
+            // so the Test Plan is outward ("TP contains defect") and the
+            // defect is inward ("defect is contained in TP"), matching the
+            // real hierarchy: TP as parent, defect nested under it.
+            match client
+                .create_issue_link(&link_type, tp_key, &created.key)
+                .await
+            {
+                Ok(()) => {
                     eprintln!(
-                        "[create_defect_issue] Issue link types tersedia: {:?}",
-                        link_types
-                            .iter()
-                            .map(|lt| lt["name"].as_str().unwrap_or(""))
-                            .collect::<Vec<_>>()
+                        "[create_defect_issue] OK link {} ke TP {} (type={link_type})",
+                        created.key, tp_key
                     );
-
-                    // Exclude link types that come from unrelated plugins (e.g. WBS/Gantt
-                    // hierarchy plugins, Portfolio/Advanced Roadmaps) whose vocabulary can
-                    // overlap with Xray's Test <-> Test Plan wording ("contains"/"is part
-                    // of") but are not usable for this relation and 404 with a misleading
-                    // "Login Required".
-                    let is_excluded = |name: &str| {
-                        let n = name.to_lowercase();
-                        n.contains("wbsgantt")
-                            || n.contains("gantt")
-                            || n.contains("hierarchy")
-                            || n.contains("contains project")
-                    };
-
-                    // Rank candidates, most specific first:
-                    //   0. inward phrase is exactly "is issues of" — confirmed correct
-                    //      relation for Test <-> Test Plan on this Jira instance.
-                    //   1. name/inward/outward mention both "test" and "contain"/"plan".
-                    //   2. looser single-keyword match, as a last resort.
-                    // Try each in order, moving to the next if link creation fails.
-                    let mut candidates: Vec<(u8, String)> = Vec::new();
-                    for lt in &link_types {
-                        let name = lt["name"].as_str().unwrap_or("");
-                        if name.is_empty() || is_excluded(name) {
-                            continue;
-                        }
-                        let inward = lt["inward"].as_str().unwrap_or("").to_lowercase();
-                        let outward = lt["outward"].as_str().unwrap_or("").to_lowercase();
-                        let name_lower = name.to_lowercase();
-
-                        if inward.trim() == "is issues of" {
-                            candidates.push((0, name.to_string()));
-                            continue;
-                        }
-
-                        let has_test = name_lower.contains("test")
-                            || inward.contains("test")
-                            || outward.contains("test");
-                        let has_contain = name_lower.contains("contain")
-                            || inward.contains("contain")
-                            || outward.contains("contain")
-                            || inward.contains("test plan")
-                            || outward.contains("test plan");
-                        let rank = if has_test && has_contain {
-                            1
-                        } else if has_test || has_contain {
-                            2
-                        } else {
-                            continue;
-                        };
-                        candidates.push((rank, name.to_string()));
-                    }
-                    candidates.sort_by_key(|(rank, _)| *rank);
-
-                    let mut linked = false;
-                    let mut last_err: Option<String> = None;
-                    for (attempt, (_, link_type)) in candidates.iter().enumerate() {
-                        Self::emit_defect_create_progress(
-                            app_handle,
-                            "link_test_plan",
-                            format!(
-                                "Menghubungkan ke Test Plan {tp_key} (percobaan {}/{})...",
-                                attempt + 1,
-                                candidates.len()
-                            ),
-                        );
-                        match client
-                            .create_issue_link(link_type, &created.key, tp_key)
-                            .await
-                        {
-                            Ok(()) => {
-                                eprintln!(
-                                    "[create_defect_issue] OK link {} ke TP {} (type={link_type})",
-                                    created.key, tp_key
-                                );
-                                linked = true;
-                                break;
-                            }
-                            Err(e) => {
-                                last_err = Some(format!("{e}"));
-                                eprintln!(
-                                    "[create_defect_issue] Gagal link {} ke TP {} (type={link_type}): {e} — mencoba kandidat berikutnya jika ada",
-                                    created.key, tp_key
-                                );
-                            }
-                        }
-                    }
-                    if linked {
-                        Self::emit_defect_create_progress(
-                            app_handle,
-                            "linked",
-                            format!("Berhasil dihubungkan ke Test Plan {tp_key}."),
-                        );
-                    } else if candidates.is_empty() {
-                        eprintln!(
-                            "[create_defect_issue] Tidak ada issue link type yang cocok untuk {} → TP {}",
-                            created.key, tp_key
-                        );
-                        Self::emit_defect_create_progress(
-                            app_handle,
-                            "link_skipped",
-                            "Tidak ditemukan tipe link yang cocok — defect tetap dibuat tanpa link ke Test Plan.",
-                        );
-                    } else if let Some(e) = last_err {
-                        eprintln!(
-                            "[create_defect_issue] Semua kandidat link type gagal untuk {} → TP {}: {e}",
-                            created.key, tp_key
-                        );
-                        Self::emit_defect_create_progress(
-                            app_handle,
-                            "link_failed",
-                            "Gagal menghubungkan ke Test Plan — defect tetap dibuat tanpa link.",
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[create_defect_issue] Gagal ambil issue link types: {e}");
                     Self::emit_defect_create_progress(
                         app_handle,
-                        "link_skipped",
-                        "Gagal mengambil daftar tipe link — defect tetap dibuat tanpa link ke Test Plan.",
+                        "linked",
+                        format!("Berhasil dihubungkan ke Test Plan {tp_key}."),
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[create_defect_issue] Gagal link {} ke TP {} (type={link_type}): {e}",
+                        created.key, tp_key
+                    );
+                    Self::emit_defect_create_progress(
+                        app_handle,
+                        "link_failed",
+                        "Gagal menghubungkan ke Test Plan — defect tetap dibuat tanpa link.",
                     );
                 }
             }
@@ -2139,11 +2061,26 @@ fn format_uqa_notes(phases: &[PhaseTestSummary]) -> String {
             status_parts.push(format!("Aborted {} TC", p.aborted));
         }
         lines.push(format!("{}: {}", p.test_exec_key, status_parts.join(", ")));
+
+        // Group by defect instead of by test case: several TCs commonly share
+        // the same root-cause defect (e.g. one defect blocking 6 related test
+        // cases), and listing that identical defect text once per TC produced
+        // several lines that looked like duplicates. Each unique defect is now
+        // shown once, with every TC key that hit it collected alongside it.
+        let mut defect_order: Vec<&str> = Vec::new();
+        let mut defect_to_tcs: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
         for fd in &p.failed_details {
             for defect in &fd.defects {
-                lines.push(format!("  Failed - {}: {}", fd.test_key, defect));
+                defect_to_tcs.entry(defect.as_str())
+                    .or_insert_with(|| { defect_order.push(defect.as_str()); Vec::new() })
+                    .push(fd.test_key.as_str());
             }
         }
+        for defect in defect_order {
+            let tcs = &defect_to_tcs[defect];
+            lines.push(format!("  Failed - {}: {}", tcs.join(", "), defect));
+        }
+
         for defect in &p.related_defects {
             lines.push(format!("  Defect: {}", defect));
         }

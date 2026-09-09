@@ -488,8 +488,12 @@ impl JiraClient {
     }
 
     /// Create an issue link between two issues via POST /issueLink.
-    /// `link_type` must match a configured Jira issue link type name exactly
-    /// (fetch valid names via `get_issue_link_types`).
+    /// `link_type` must match a configured Jira issue link type name exactly.
+    /// `get_issue_link_types` can discover valid names, but note that its
+    /// GET /issueLinkType endpoint requires elevated permissions on some
+    /// Jira Server/Data Center instances and 401s for ordinary users even
+    /// though they can create links directly — don't gate this call on it
+    /// succeeding.
     pub async fn create_issue_link(
         &self,
         link_type: &str,
@@ -506,9 +510,52 @@ impl JiraClient {
 
     /// Fetch all issue link types configured on this Jira instance
     /// (GET /issueLinkType) — returns raw {id, name, inward, outward} objects.
+    /// NOTE: this endpoint requires elevated permissions on some Jira
+    /// Server/Data Center instances and 401s for ordinary users even though
+    /// they can create issue links directly — don't gate link creation on it
+    /// succeeding. Prefer `find_link_type_name_from_existing_link` instead,
+    /// which discovers the real `type.name` via an issue's own issuelinks
+    /// field (an endpoint ordinary users can already read).
     pub async fn get_issue_link_types(&self) -> Result<Vec<Value>> {
         let v: Value = self.api.get_json("/issueLinkType", &[]).await?;
         Ok(v["issueLinkTypes"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// Find the real `type.name` of an issue link type by inspecting an
+    /// existing link on `issue_key` whose inward or outward phrase matches
+    /// `phrase` case-insensitively. The dropdown/UI only ever shows the
+    /// inward/outward phrase (e.g. "is Issues of"), which is NOT what
+    /// `POST /issueLink` needs — it needs `type.name`, a separate field that
+    /// can differ in case or wording entirely. Since `GET /issueLinkType`
+    /// (the obvious way to look this up) requires elevated permissions this
+    /// user doesn't have, we instead read it off an issue that already has
+    /// a link of the type we want, via the same `issuelinks` field
+    /// `get_issue_links` uses — an endpoint ordinary users can read.
+    pub async fn find_link_type_name_from_existing_link(
+        &self,
+        issue_key: &str,
+        phrase: &str,
+    ) -> Result<Option<String>> {
+        let path = format!("/issue/{issue_key}");
+        let v: Value = self
+            .api
+            .get_json(&path, &[("fields", "issuelinks".to_string())])
+            .await?;
+        let links = v["fields"]["issuelinks"].as_array().cloned().unwrap_or_default();
+        let phrase_lower = phrase.trim().to_lowercase();
+        for link in &links {
+            let link_type = &link["type"];
+            let name = link_type["name"].as_str().unwrap_or("");
+            if name.is_empty() {
+                continue;
+            }
+            let inward = link_type["inward"].as_str().unwrap_or("").trim().to_lowercase();
+            let outward = link_type["outward"].as_str().unwrap_or("").trim().to_lowercase();
+            if inward == phrase_lower || outward == phrase_lower {
+                return Ok(Some(name.to_string()));
+            }
+        }
+        Ok(None)
     }
 
     /// Fetch issue links, filtering for Test Execution type.
