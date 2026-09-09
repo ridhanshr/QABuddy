@@ -1186,6 +1186,12 @@ export interface DefectRecord {
   sourceIssueKey: string;
   sourceProjectKey: string;
   issueType: string;
+  /** Original title exactly as on the Jira issue — use this for display.
+   *  Empty for records saved before this field existed (fall back to
+   *  normalizedTitle in that case). */
+  title: string;
+  /** Lowercased/stripped title for search & dedup matching only — never
+   *  display this to the user. */
   normalizedTitle: string;
   normalizedDescription: string;
   searchText: string;

@@ -493,6 +493,7 @@ impl DefectRepositoryService {
             source_issue_key: issue.jira_issue_key.clone(),
             source_project_key: issue.project_key.clone(),
             issue_type: issue.issue_type.clone(),
+            title: issue.summary.clone(),
             normalized_title: Normalizer::normalize(&issue.summary),
             normalized_description: Normalizer::normalize(&format!(
                 "{} {} {} {}",

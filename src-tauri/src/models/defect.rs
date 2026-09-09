@@ -79,6 +79,14 @@ pub struct DefectRecord {
     pub source_issue_key: String,
     pub source_project_key: String,
     pub issue_type: String,
+    /// Original title exactly as it appears on the Jira issue (or as typed by
+    /// the user for a manually-created defect) — preserves capitalization.
+    /// `normalized_title` below is lowercased/stripped for search & dedup
+    /// matching only and must never be shown to the user as a title.
+    /// Defaults to empty for records written before this field existed;
+    /// the frontend falls back to normalized_title in that case.
+    #[serde(default)]
+    pub title: String,
     pub normalized_title: String,
     pub normalized_description: String,
     pub search_text: String,

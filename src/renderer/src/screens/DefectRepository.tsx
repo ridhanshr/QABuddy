@@ -1,7 +1,16 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useApp } from "../context/AppContext";
-import type { JiraProjectSource, DuplicateCandidate, DefectCreateDraft, BugFormDraft, BugPreview, DbTestPlan } from "@shared/types";
+import type { JiraProjectSource, DuplicateCandidate, DefectCreateDraft, BugFormDraft, BugPreview, DbTestPlan, DefectRecord } from "@shared/types";
+
+// `normalizedTitle` is lowercased/stripped for search & dedup matching only —
+// it must never be shown as the defect's title. `title` (the original,
+// case-preserved summary) is what every display spot should use; older
+// records saved before `title` existed fall back to normalizedTitle so they
+// don't render blank.
+function displayTitle(defect: Pick<DefectRecord, "title" | "normalizedTitle">): string {
+  return defect.title || defect.normalizedTitle;
+}
 
 const duplicateCandidateThreshold = 20;
 const defectIssueTypeOptions = ["Bug", "Task", "Defect"] as const;
@@ -359,7 +368,7 @@ export default function DefectRepository() {
     try {
       for (const d of targets) {
         try {
-          await window.qaBuddy.syncDefectToDb(d.sourceIssueKey, d.normalizedTitle);
+          await window.qaBuddy.syncDefectToDb(d.sourceIssueKey, displayTitle(d));
           setDefectDbSyncResult(prev => ({ ...prev, [d.sourceIssueKey]: { ok: true, msg: "Tersimpan" } }));
           setDefectsInDb(prev => new Set(prev).add(d.sourceIssueKey));
         } catch (err: any) {
@@ -1061,7 +1070,7 @@ export default function DefectRepository() {
                         Score: {c.score}%
                       </span>
                     </div>
-                    <div style={{ fontSize: 13, color: "var(--on-surface)", marginBottom: 4 }}>{c.defect.normalizedTitle}</div>
+                    <div style={{ fontSize: 13, color: "var(--on-surface)", marginBottom: 4 }}>{displayTitle(c.defect)}</div>
                     <div style={{ display: "flex", gap: 8, fontSize: 11, color: "var(--on-surface-variant)", flexWrap: "wrap" }}>
                       <span>{c.defect.sourceProjectKey}</span>
                       <span>{c.defect.issueType}</span>
@@ -1122,7 +1131,7 @@ export default function DefectRepository() {
                         {d.sourceIssueKey}
                       </button>
                     </td>
-                    <td className="summary-cell" style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }} title={d.normalizedTitle}>{d.normalizedTitle}</td>
+                    <td className="summary-cell" style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }} title={displayTitle(d)}>{displayTitle(d)}</td>
                     <td style={{ color: "var(--on-surface-variant)" }}>{d.sourceProjectKey}</td>
                     <td>
                       <span className="type-badge">
@@ -1153,13 +1162,13 @@ export default function DefectRepository() {
                             {isInDb ? (
                               <RowSyncedBadge
                                 syncing={syncing}
-                                onClick={(e) => handleSyncDefectToDb(d.sourceIssueKey, d.normalizedTitle, e)}
+                                onClick={(e) => handleSyncDefectToDb(d.sourceIssueKey, displayTitle(d), e)}
                               />
                             ) : (
                               <button
                                 type="button"
                                 className="ghost-button"
-                                onClick={e => handleSyncDefectToDb(d.sourceIssueKey, d.normalizedTitle, e)}
+                                onClick={e => handleSyncDefectToDb(d.sourceIssueKey, displayTitle(d), e)}
                                 disabled={syncing}
                                 style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "3px 8px" }}
                               >
@@ -1556,7 +1565,7 @@ export default function DefectRepository() {
                         >
                           {candidate.defect.sourceIssueKey}
                         </a>
-                        <span>{candidate.defect.normalizedTitle}</span>
+                        <span>{displayTitle(candidate.defect)}</span>
                       </div>
                       <span className={`defect-score-badge ${candidate.score >= 70 ? "high" : "medium"}`}>
                         Score {candidate.score}%
