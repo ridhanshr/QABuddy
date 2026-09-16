@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use regex::Regex;
 use serde_json::Value;
@@ -172,7 +173,7 @@ pub async fn review_document(
         service
             .client_for(&config.ollama.endpoint, model)
             .await
-            .validate_connection()
+            .validate_connection_with_timeout(Duration::from_millis(350))
             .await
             .is_ok()
     } else {
@@ -1481,19 +1482,21 @@ async fn validate_sit(
         }
         section_missing.push((missing, invalid_values));
     }
-    let semantic_futures: Vec<_> = semantic_order
-        .iter()
-        .map(|&idx| {
-            let (section, labels, _, _) = checks[idx];
-            semantic_validate_section(page, section, labels, config, ollama, ollama_ready)
-        })
-        .collect();
-    let semantic_results: Vec<SemanticDecision> =
-        futures::future::join_all(semantic_futures).await;
     let mut semantics: Vec<SemanticDecision> =
         vec![SemanticDecision::Skipped; checks.len()];
-    for (idx, semantic) in semantic_order.into_iter().zip(semantic_results.into_iter()) {
-        semantics[idx] = semantic;
+    if ollama_ready {
+        let semantic_futures: Vec<_> = semantic_order
+            .iter()
+            .map(|&idx| {
+                let (section, labels, _, _) = checks[idx];
+                semantic_validate_section(page, section, labels, config, ollama, true)
+            })
+            .collect();
+        let semantic_results: Vec<SemanticDecision> =
+            futures::future::join_all(semantic_futures).await;
+        for (idx, semantic) in semantic_order.into_iter().zip(semantic_results.into_iter()) {
+            semantics[idx] = semantic;
+        }
     }
     for (idx, (section, _labels, title, recommendation)) in checks.iter().copied().enumerate() {
         let (missing, invalid_values) = &section_missing[idx];
@@ -2737,7 +2740,7 @@ async fn validate_jira_and_reconcile(
             continue;
         }
         let project_match = issue.project_key.eq_ignore_ascii_case(jira_project_key);
-        let status_done = issue.status.eq_ignore_ascii_case("done");
+        let status_done = is_done_status(&issue.status);
         let mut execution = JiraExecutionSummary {
             key: key.clone(),
             summary: issue.summary.clone(),
@@ -2783,7 +2786,7 @@ async fn validate_jira_and_reconcile(
                 ),
                 "Selesaikan execution atau review statusnya.",
                 Some(key),
-                Some("DONE"),
+                Some("DONE atau SELESAI"),
                 Some(&issue.status),
                 Some(page_url(config, page)),
             );
@@ -3112,6 +3115,10 @@ fn finalize_counts(summary: &mut ReviewSummary) {
     .to_string();
 }
 
+fn is_done_status(status: &str) -> bool {
+    status.eq_ignore_ascii_case("done") || status.eq_ignore_ascii_case("selesai")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3121,7 +3128,8 @@ mod tests {
         extract_value_after_label, find_label_value_test_case_id, is_scenario_capture_sit_title,
         is_sit_review_candidate, is_suspicious_value, is_tmp_structure, matches_project_text,
         missing_labels, normalize, page_data, parse_html_tables, project_identity, Score,
-        suspicious_label_values, validate_scenario_capture_tables, SCENARIO_COMPLETENESS_WEIGHT,
+        suspicious_label_values, validate_scenario_capture_tables, is_done_status,
+        SCENARIO_COMPLETENESS_WEIGHT,
     };
     use crate::models::app_config::AppConfig;
     use crate::models::document_review::{JiraExecutionSummary, ReviewSummary};
@@ -3145,6 +3153,14 @@ mod tests {
             normalize("0. TEST MANAGEMENT PROCESS"),
             "0 test management process"
         );
+    }
+
+    #[test]
+    fn treats_selesai_as_done_status() {
+        assert!(is_done_status("SELESAI"));
+        assert!(is_done_status("selesai"));
+        assert!(is_done_status("DONE"));
+        assert!(!is_done_status("IN PROGRESS"));
     }
 
     #[test]

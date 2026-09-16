@@ -20,7 +20,13 @@ export default function NavigationButton({
   onClick,
 }: NavigationButtonProps) {
   return (
-    <button className={active ? "nav-item active" : "nav-item"} onClick={onClick} type="button">
+    <button
+      aria-current={active ? "page" : undefined}
+      className={active ? "nav-item active" : "nav-item"}
+      onClick={onClick}
+      title={item.label}
+      type="button"
+    >
       <span className={active ? "material-symbols nav-icon filled" : "material-symbols nav-icon"}>
         {active ? item.filledIcon || item.icon : item.icon}
       </span>

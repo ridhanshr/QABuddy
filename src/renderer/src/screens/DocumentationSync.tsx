@@ -242,6 +242,13 @@ export default function DocumentationSync() {
     setNewSectionName("");
   };
 
+  const evidenceSummary = useMemo(() => {
+    const passed = confEntries.filter((entry) => entry.result === "PASS").length;
+    const failed = confEntries.filter((entry) => entry.result === "FAILED").length;
+    const withEvidence = confEntries.filter((entry) => (entry.images?.length || 0) > 0 || (entry.screenCaptureFilenames?.length || 0) > 0).length;
+    return { total: confEntries.length, passed, failed, withEvidence, pending: Math.max(confEntries.length - passed - failed, 0) };
+  }, [confEntries]);
+
   const renderEntryCard = (item: any, globalIndex: number) => {
     const hasDeferredEntryImages = (item.screenCaptureFilenames?.length || 0) > 0 && (item.images?.length || 0) === 0;
     return (
@@ -427,10 +434,14 @@ export default function DocumentationSync() {
   return (
     <>
     <section style={{ maxWidth: 1000, margin: "0 auto", paddingBottom: 100 }}>
-      <div style={{ marginBottom: 32 }}>
-        <h2 className="text-display">Test Evidence Management</h2>
-        <p className="text-body-lg">Sync your testing documentation directly to Confluence pages.</p>
-        {confParseProgress && (
+       <div className="evidence-hero" style={{ marginBottom: 24 }}>
+         <div>
+           <div className="evidence-kicker"><span className="material-symbols" style={{ fontSize: 16 }}>fact_check</span> QA WORKSPACE</div>
+           <h2 className="text-display" style={{ marginBottom: 8 }}>Test Evidence Management</h2>
+           <p className="text-body-lg" style={{ maxWidth: 620 }}>Review hasil test, lengkapi screen capture, lalu kirim evidence terstruktur ke Confluence.</p>
+         </div>
+         <div className="evidence-hero-mark" aria-hidden="true"><span className="material-symbols">description</span></div>
+         {confParseProgress && (
           <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 12, border: `1px solid ${confParseProgress.stage === "error" ? "var(--error)" : "var(--outline-variant)"}`, background: confParseProgress.stage === "error" ? "color-mix(in srgb, var(--error) 8%, var(--surface))" : "var(--surface-container-low)", color: "var(--on-surface)", display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
               <div style={{ fontSize: 13, fontWeight: 700 }}>{confParseProgress.message}</div>
@@ -462,23 +473,24 @@ export default function DocumentationSync() {
         )}
       </div>
 
-      <div
-        className="card"
+       <div
+         className="card"
         style={{
           padding: "14px 20px",
-          marginBottom: 40,
+           marginBottom: 24,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 16,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           <span className="material-symbols" style={{ fontSize: 20, color: config.confluence.targetPageId ? "var(--success)" : "var(--on-surface-variant)" }}>
             {config.confluence.targetPageId ? "check_circle" : "tune"}
           </span>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600 }}>Confluence Sync Configuration</div>
+             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "var(--on-surface-variant)" }}>DESTINATION</div>
+             <div style={{ fontSize: 13.5, fontWeight: 650 }}>Confluence Sync Configuration</div>
             <div style={{ fontSize: 12, color: "var(--on-surface-variant)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {config.confluence.targetPageId
                 ? `Target Page ID: ${config.confluence.targetPageId}${config.confluence.jiraServerId ? ` · Server ID: ${config.confluence.jiraServerId}` : ""}`
@@ -498,10 +510,18 @@ export default function DocumentationSync() {
         </button>
       </div>
 
-      <>
-        <div className="page-header" style={{ marginBottom: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+       <>
+         <div className="evidence-summary" aria-label="Evidence summary">
+           <div><strong>{evidenceSummary.total}</strong><span>Total entries</span></div>
+           <div><strong className="summary-success">{evidenceSummary.passed}</strong><span>Passed</span></div>
+           <div><strong className="summary-danger">{evidenceSummary.failed}</strong><span>Failed</span></div>
+           <div><strong className="summary-accent">{evidenceSummary.withEvidence}</strong><span>With capture</span></div>
+           <div className="summary-note"><span className="material-symbols">info</span>{evidenceSummary.pending} belum punya status final</div>
+         </div>
+         <div className="page-header evidence-toolbar" style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <div>
-              <h4 style={{ margin: 0, color: 'var(--on-surface-variant)' }}>Enter Test Documentation</h4>
+              <h4 style={{ margin: 0 }}>Evidence entries</h4>
+              <p style={{ margin: '5px 0 0', fontSize: 12, color: 'var(--on-surface-variant)' }}>Susun evidence berdasarkan module dan status eksekusi.</p>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
@@ -542,10 +562,10 @@ export default function DocumentationSync() {
               const isCollapsed = collapsedSections.has(section);
               return (
                 <div key={section || '__uncategorized__'} className="card" style={{ border: '1px solid var(--outline-variant)', borderRadius: 16, background: 'var(--surface)', overflow: 'hidden' }}>
-                  <div onClick={() => toggleSection(section)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', cursor: 'pointer', background: 'var(--surface-container-low)', borderBottom: isCollapsed ? 'none' : '1px solid var(--outline-variant)', transition: 'background 0.2s' }}>
+                   <div onClick={() => toggleSection(section)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', cursor: 'pointer', background: 'var(--surface-container-low)', borderBottom: isCollapsed ? 'none' : '1px solid var(--outline-variant)', transition: 'background 0.2s' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <span className="material-symbols" style={{ fontSize: 20, color: 'var(--primary)', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>expand_more</span>
-                      <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--on-surface)' }}>{section || 'Uncategorized'}</span>
+                       <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--on-surface)' }}>{section || 'Uncategorized'}</span>
                       <span style={{ fontSize: 12, color: 'var(--on-surface-variant)', background: 'var(--surface-container-highest)', padding: '2px 8px', borderRadius: 10 }}>{entries.length} {entries.length === 1 ? 'entry' : 'entries'}</span>
                     </div>
                   </div>
@@ -577,7 +597,7 @@ export default function DocumentationSync() {
               <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 8, marginBottom: 0 }}>Kosongkan nama section untuk menambah entry tanpa grouping.</p>
             </div>
 
-            <button className="primary-button" onClick={() => void syncConfluence()} disabled={confLoading} style={{ padding: '10px 20px', borderRadius: 8, fontSize: 14, alignSelf: 'flex-end', marginTop: 8 }}>
+             <button className="primary-button evidence-sync-cta" onClick={() => void syncConfluence()} disabled={confLoading} style={{ padding: '10px 20px', borderRadius: 8, fontSize: 14, alignSelf: 'flex-end', marginTop: 8 }}>
               <span className="material-symbols" style={{ fontSize: 20 }}>{confLoading ? 'progress_activity' : 'cloud_upload'}</span>
               {confLoading ? 'Syncing...' : 'Sync to Confluence'}
             </button>

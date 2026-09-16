@@ -161,6 +161,11 @@ impl UpdateService {
             on_progress(DownloadProgress { progress, downloaded, total });
         }
 
+        let metadata = std::fs::metadata(&installer_path)?;
+        if !metadata.is_file() || metadata.len() == 0 {
+            return Err(ServiceError::Api("Installer hasil download tidak valid".into()));
+        }
+
         // Windows cannot replace the running executable while it's open, and
         // macOS Finder refuses to drag-replace the .app bundle for the same
         // reason ("can't be replaced because it's open"). Both branches spawn
@@ -187,7 +192,7 @@ impl UpdateService {
             );
             Command::new("cmd")
                 .args(["/C", &command])
-                .creation_flags(CREATE_NO_WINDOW)
+                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn()
                 .map_err(ServiceError::from)?;
             request_app_exit(app_handle);
@@ -245,12 +250,13 @@ fn pick_installer_asset(
     os: &str,
     arch: &str,
 ) -> Result<(String, String)> {
-    let wanted = |name: &str| -> bool {
-        match os {
-            "windows" => name.to_lowercase().ends_with(".exe"),
+        let wanted = |name: &str| -> bool {
+            let lower = name.to_lowercase();
+            match os {
+            "windows" => lower.ends_with(".exe"),
             "macos" => {
                 let dmg_arch = if arch == "aarch64" { "aarch64" } else { "x64" };
-                name.to_lowercase().ends_with(".dmg") && name.contains(dmg_arch)
+                lower.ends_with(".dmg") && lower.contains(dmg_arch)
             }
             _ => false,
         }

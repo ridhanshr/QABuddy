@@ -30,9 +30,9 @@ function csvField(value: unknown): string {
 function FindingCard({ finding }: { finding: ReviewFinding }) {
   const color = statusColor[finding.status] ?? "var(--on-surface-variant)";
   return (
-    <article className="card" style={{ padding: 16 }}>
+    <article className="card review-finding-card" style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{
+      <span className="review-status-badge" style={{
           color, fontWeight: 700, fontSize: 10.5, letterSpacing: "0.06em",
           background: `color-mix(in srgb, ${color} 12%, transparent)`,
           padding: "2px 8px", borderRadius: 999, textTransform: "uppercase",
@@ -63,7 +63,7 @@ function FindingCard({ finding }: { finding: ReviewFinding }) {
 
 function Metric({ label, value, tone }: { label: string; value: number | string; tone?: string }) {
   return (
-    <div className="card stat-card">
+    <div className="card stat-card review-metric-card">
       <div className="stat-label">{label}</div>
       <div className="stat-value" style={{ color: tone }}>{value}</div>
     </div>
@@ -80,6 +80,9 @@ export default function DocumentationReview() {
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [progressStep, setProgressStep] = useState<{ current: number; total: number } | null>(null);
   const [liveFindings, setLiveFindings] = useState<ReviewFinding[]>([]);
+  const [resultTab, setResultTab] = useState<"overview" | "findings" | "reconciliation">("overview");
+  const [findingFilter, setFindingFilter] = useState("ALL");
+  const [findingSearch, setFindingSearch] = useState("");
 
   useEffect(() => {
     return window.qaBuddy.onDocumentReviewProgress((progress) => {
@@ -112,6 +115,9 @@ export default function DocumentationReview() {
     setBusy(true);
     setError(null);
     setResult(null);
+    setResultTab("overview");
+    setFindingFilter("ALL");
+    setFindingSearch("");
     setLiveFindings([]);
     setProgressMessage("Menyiapkan review...");
     setProgressStep(null);
@@ -130,6 +136,12 @@ export default function DocumentationReview() {
   };
 
   const reconciliation = result?.reconciliation;
+  const filteredFindings = result?.findings.filter((finding) => {
+    const matchesStatus = findingFilter === "ALL" || finding.status === findingFilter;
+    const query = findingSearch.trim().toLowerCase();
+    const matchesSearch = !query || [finding.title, finding.description, finding.section, finding.recommendation].filter(Boolean).join(" ").toLowerCase().includes(query);
+    return matchesStatus && matchesSearch;
+  }) ?? [];
   const exportReviewXlsx = async () => {
     if (!result) return;
     const XLSX = await import("xlsx");
@@ -250,8 +262,8 @@ export default function DocumentationReview() {
     );
   };
   return (
-    <section style={{ maxWidth: 1180, margin: "0 auto", paddingBottom: 40 }}>
-      <header style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 28 }}>
+    <section className="review-page" style={{ maxWidth: 1180, margin: "0 auto", paddingBottom: 40 }}>
+      <header className="review-hero" style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 28 }}>
         <div className="screen-icon" style={{ width: 44, height: 44 }}>
           <span className="material-symbols" style={{ fontSize: 25 }}>fact_check</span>
         </div>
@@ -262,7 +274,7 @@ export default function DocumentationReview() {
         </div>
       </header>
 
-      <div className="card" style={{ marginBottom: 24, padding: 22, borderRadius: 18, border: "1px solid var(--outline-variant)", background: "var(--surface-container-low)" }}>
+      <div className="card review-settings-card" style={{ marginBottom: 24, padding: 22, borderRadius: 18, border: "1px solid var(--outline-variant)", background: "var(--surface-container-low)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 16 }}>
           <span className="material-symbols" style={{ color: "var(--primary)", fontSize: 22 }}>pin</span>
           <div>
@@ -305,7 +317,7 @@ export default function DocumentationReview() {
 
       {result ? (
         <>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }} aria-live="polite">
+           <div className="review-metrics" aria-live="polite">
             <Metric label="Score" value={`${result.score}/100`} tone={result.score >= 80 ? "var(--success)" : result.score >= 60 ? "var(--warning)" : "var(--error)"} />
             <Metric label="Overall status" value={result.overallStatus} tone={statusColor[result.overallStatus]} />
             <Metric label="Pass" value={result.passCount} tone="var(--success)" />
@@ -313,7 +325,7 @@ export default function DocumentationReview() {
             <Metric label="Fail" value={result.failCount} tone="var(--error)" />
           </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
+           <div className="review-actions">
             <button type="button" className="primary-button" onClick={() => { void exportReviewXlsx(); }} style={{ minHeight: 44, paddingInline: 18 }}>
               <span className="material-symbols" style={{ fontSize: 20 }}>download</span>
               Export XLSX
@@ -324,7 +336,15 @@ export default function DocumentationReview() {
             </button>
           </div>
 
-          <div className="card" style={{ marginBottom: 24, padding: 22, borderRadius: 18 }}>
+           <div className="review-tabs" role="tablist" aria-label="Review result sections">
+             {([["overview", "Overview", "dashboard"], ["findings", `Findings (${result.findings.length})`, "fact_check"], ["reconciliation", "Reconciliation", "compare_arrows"]] as const).map(([tab, label, icon]) => (
+               <button key={tab} type="button" role="tab" aria-selected={resultTab === tab} className={resultTab === tab ? "review-tab active" : "review-tab"} onClick={() => setResultTab(tab)}>
+                 <span className="material-symbols">{icon}</span>{label}
+               </button>
+             ))}
+           </div>
+
+           {resultTab === "overview" ? <div className="card review-document-card" style={{ marginBottom: 24, padding: 22, borderRadius: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ color: "var(--on-surface-variant)", fontSize: 12 }}>Document type</div>
@@ -345,12 +365,12 @@ export default function DocumentationReview() {
                 ))}
               </div>
             ) : null}
-          </div>
+           </div> : null}
 
-          {reconciliation ? (
+           {reconciliation && (resultTab === "overview" || resultTab === "reconciliation") ? (
             <div className="card" style={{ marginBottom: 24 }}>
               <h2 style={{ marginTop: 0 }}>Test Measures Reconciliation</h2>
-              <p style={{ color: "var(--on-surface-variant)" }}>Official metrics from Jira/Xray API. Only DONE executions are included.</p>
+               <p style={{ color: "var(--on-surface-variant)" }}>Official metrics from Jira/Xray API. DONE and SELESAI executions are included.</p>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <Metric label="Confluence executed" value={reconciliation.confluenceExecuted ?? "-"} />
                 <Metric label="Jira executed" value={reconciliation.jiraExecuted} tone={reconciliation.isMatch ? "var(--success)" : "var(--error)"} />
@@ -362,7 +382,7 @@ export default function DocumentationReview() {
             </div>
           ) : null}
 
-          {result.jiraExecutions.length > 0 ? (
+           {result.jiraExecutions.length > 0 && resultTab === "overview" ? (
             <div className="card" style={{ marginBottom: 24, overflowX: "auto" }}>
               <h2 style={{ marginTop: 0 }}>Jira Test Executions</h2>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -371,7 +391,7 @@ export default function DocumentationReview() {
                   <td style={{ padding: "8px 6px", fontFamily: "var(--font-mono)" }}>{execution.key}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.summary}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.projectKey}</td>
-                  <td style={{ padding: "8px 6px", color: execution.status.toLowerCase() === "done" ? "var(--success)" : "var(--warning)" }}>{execution.status}</td>
+                   <td style={{ padding: "8px 6px", color: ["done", "selesai"].includes(execution.status.toLowerCase()) ? "var(--success)" : "var(--warning)" }}>{execution.status}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.total}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.executed}</td>
                   <td style={{ padding: "8px 6px" }}>{execution.included ? "Yes" : "No"}</td>
@@ -380,12 +400,21 @@ export default function DocumentationReview() {
             </div>
           ) : null}
 
-          <div>
-            <h2 style={{ margin: "0 0 12px" }}>Findings</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10, alignItems: "start" }}>
-              {result.findings.map((finding, index) => <FindingCard key={`${finding.section}-${finding.title}-${index}`} finding={finding} />)}
-            </div>
-          </div>
+           {resultTab === "findings" ? <div className="review-findings-section">
+             <div className="review-findings-header">
+               <div><h2 style={{ margin: 0 }}>Findings</h2><span>{filteredFindings.length} dari {result.findings.length} temuan</span></div>
+               <div className="review-finding-tools">
+                 <input aria-label="Cari finding" value={findingSearch} onChange={(event) => setFindingSearch(event.target.value)} placeholder="Cari finding..." />
+                 <select aria-label="Filter status finding" value={findingFilter} onChange={(event) => setFindingFilter(event.target.value)}>
+                   <option value="ALL">Semua status</option><option value="FAIL">Fail</option><option value="WARNING">Warning</option><option value="PASS">Pass</option><option value="NOT_APPLICABLE">Not applicable</option>
+                 </select>
+               </div>
+             </div>
+             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10, alignItems: "start" }}>
+               {filteredFindings.map((finding, index) => <FindingCard key={`${finding.section}-${finding.title}-${index}`} finding={finding} />)}
+             </div>
+             {filteredFindings.length === 0 ? <div className="card review-empty-filter">Tidak ada finding yang cocok dengan filter.</div> : null}
+           </div> : null}
         </>
       ) : (
         <div className="card" style={{ minHeight: 250, display: "grid", placeItems: "center", textAlign: "center", padding: 32, borderRadius: 18, border: "1px dashed var(--outline)" }} aria-live="polite">

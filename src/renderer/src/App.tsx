@@ -68,7 +68,7 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-canvas font-sans text-ink">
       {/* ── Sidebar ── */}
-      <aside className="flex w-[264px] shrink-0 flex-col border-r border-line bg-surface">
+      <aside className="app-sidebar flex w-[264px] shrink-0 flex-col border-r border-line bg-surface" aria-label="Navigasi utama">
         <div className="border-b border-line px-5 pb-4 pt-6">
           <div className="flex items-center gap-2.5">
             <img src={logo} alt="QA Buddy Logo" className="h-8 w-8 object-contain" />
@@ -79,7 +79,8 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
           <p className="mt-1.5 text-[11px] font-medium text-faint">Buddy Up. Test Smarter.</p>
         </div>
 
-        <nav className="flex-1 space-y-0.5 overflow-y-auto p-2.5">
+        <nav className="app-nav flex-1 space-y-0.5 overflow-y-auto p-2.5">
+          <div className="nav-section-label">Workspace</div>
           {visibleNavigation.map((item) => (
             <NavigationButton
               active={item.key === activeView}
@@ -156,7 +157,8 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
           </div>
         )}
 
-        <div className="space-y-0.5 border-t border-line p-2.5">
+        <div className="app-nav-footer space-y-0.5 border-t border-line p-2.5">
+          <div className="nav-section-label">System</div>
           {footerNavigation.map((item) => (
             <NavigationButton
               active={item.key === activeView}
@@ -169,7 +171,7 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
       </aside>
 
       {/* ── Main column ── */}
-      <div className="flex min-w-0 flex-1 flex-col">
+       <div className="app-main flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line px-6"
           style={{ background: "var(--glass-topbar)", backdropFilter: "blur(12px)" }}
         >
@@ -230,7 +232,7 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="app-content flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[1440px] p-6">
             {banner ? (
               <div className={`app-banner ${banner.tone}`}>

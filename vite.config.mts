@@ -22,6 +22,12 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Keep feature screens out of initial renderer chunk. Desktop app loads
+          // many screens from one shell, but users usually open one at a time.
+          if (id.includes("/src/renderer/src/screens/")) {
+            const screen = id.split("/src/renderer/src/screens/")[1]?.split(".")[0];
+            return screen ? `screen-${screen.toLowerCase()}` : "screens";
+          }
           if (!id.includes("node_modules")) return undefined;
           if (id.includes("react") || id.includes("scheduler")) return "vendor-react";
           if (id.includes("xlsx")) return "vendor-xlsx";

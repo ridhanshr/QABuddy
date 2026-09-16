@@ -94,7 +94,15 @@ impl OllamaClient {
     }
 
     pub async fn validate_connection(&self) -> Result<String> {
-        let client = self.short_client()?;
+        self.validate_connection_with_timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .await
+    }
+
+    pub async fn validate_connection_with_timeout(&self, timeout: Duration) -> Result<String> {
+        let client = Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(ServiceError::from)?;
         let resp: TagsResponse = client
             .get(format!("{}/api/tags", self.endpoint))
             .send()
