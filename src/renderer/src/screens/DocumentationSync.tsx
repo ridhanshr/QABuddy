@@ -511,13 +511,13 @@ export default function DocumentationSync() {
       </div>
 
        <>
-         <div className="evidence-summary" aria-label="Evidence summary">
-           <div><strong>{evidenceSummary.total}</strong><span>Total entries</span></div>
-           <div><strong className="summary-success">{evidenceSummary.passed}</strong><span>Passed</span></div>
-           <div><strong className="summary-danger">{evidenceSummary.failed}</strong><span>Failed</span></div>
-           <div><strong className="summary-accent">{evidenceSummary.withEvidence}</strong><span>With capture</span></div>
-           <div className="summary-note"><span className="material-symbols">info</span>{evidenceSummary.pending} belum punya status final</div>
-         </div>
+         {/* <div className="evidence-summary" aria-label="Evidence summary"> */}
+           {/* <div><strong>{evidenceSummary.total}</strong><span>Total entries</span></div> */}
+           {/* <div><strong className="summary-success">{evidenceSummary.passed}</strong><span>Passed</span></div> */}
+           {/* <div><strong className="summary-danger">{evidenceSummary.failed}</strong><span>Failed</span></div> */}
+           {/* <div><strong className="summary-accent">{evidenceSummary.withEvidence}</strong><span>With capture</span></div> */}
+            {/* <div className="summary-note" title="Entry dengan hasil selain PASS atau FAILED, termasuk entry baru yang belum diperiksa."><span className="material-symbols">info</span><span>{evidenceSummary.pending} perlu hasil</span></div> */}
+         {/* </div> */}
          <div className="page-header evidence-toolbar" style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <div>
               <h4 style={{ margin: 0 }}>Evidence entries</h4>
@@ -597,10 +597,12 @@ export default function DocumentationSync() {
               <p style={{ fontSize: 12, color: 'var(--on-surface-variant)', marginTop: 8, marginBottom: 0 }}>Kosongkan nama section untuk menambah entry tanpa grouping.</p>
             </div>
 
-             <button className="primary-button evidence-sync-cta" onClick={() => void syncConfluence()} disabled={confLoading} style={{ padding: '10px 20px', borderRadius: 8, fontSize: 14, alignSelf: 'flex-end', marginTop: 8 }}>
-              <span className="material-symbols" style={{ fontSize: 20 }}>{confLoading ? 'progress_activity' : 'cloud_upload'}</span>
-              {confLoading ? 'Syncing...' : 'Sync to Confluence'}
-            </button>
+              <div className="evidence-sync-sticky">
+                <button className="primary-button evidence-sync-cta" onClick={() => void syncConfluence()} disabled={confLoading} style={{ padding: '10px 20px', borderRadius: 8, fontSize: 14 }}>
+               <span className="material-symbols" style={{ fontSize: 20 }}>{confLoading ? 'progress_activity' : 'cloud_upload'}</span>
+               {confLoading ? 'Syncing...' : 'Sync to Confluence'}
+                </button>
+              </div>
           </div>
         </>
     </section>

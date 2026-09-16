@@ -30,6 +30,8 @@
 .evidence-summary .summary-note { flex-direction: row; align-items: center; gap: 7px; min-width: 0; color: var(--on-surface-variant); font-size: 12px; }
 .evidence-summary .summary-note .material-symbols { color: var(--warning); font-size: 17px; }
 .evidence-sync-cta { min-height: 46px; box-shadow: 0 5px 0 color-mix(in srgb, var(--primary) 22%, transparent); }
+.evidence-sync-sticky { position: sticky; bottom: 16px; z-index: 10; display: flex; justify-content: flex-end; padding: 10px 0 5px; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--background) 94%, transparent) 22%); }
+.evidence-sync-sticky .evidence-sync-cta { min-width: 210px; }
 @media (max-width: 760px) {
   .evidence-hero { align-items: flex-start; padding: 22px; }
   .evidence-hero-mark { display: none; }
@@ -39,6 +41,8 @@
   .evidence-summary .summary-note { grid-column: 1 / -1; border-bottom: 0; }
   .evidence-toolbar { align-items: stretch !important; flex-direction: column; gap: 12px; }
   .evidence-toolbar > div:last-child { display: grid !important; grid-template-columns: 1fr; }
+  .evidence-sync-sticky { bottom: 8px; justify-content: stretch; }
+  .evidence-sync-sticky .evidence-sync-cta { width: 100%; }
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -305,7 +309,7 @@ a:hover { text-decoration: underline; }
   transition: background 0.15s ease, color 0.15s ease;
 }
 .nav-item:hover { background: var(--surface-container); color: var(--on-surface); transform: translateX(1px); }
-.nav-item.active { background: linear-gradient(90deg, var(--secondary-container), color-mix(in srgb, var(--secondary-container) 55%, transparent)); color: var(--tertiary); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); }
+.nav-item.active { background: linear-gradient(90deg, var(--secondary-container), color-mix(in srgb, var(--secondary-container) 55%, transparent)); color: var(--tertiary); font-weight: 600; }
 .nav-item:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .nav-section-label { padding: 12px 10px 6px; color: var(--font-disabled); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .app-nav-footer .nav-section-label { padding-top: 2px; }
