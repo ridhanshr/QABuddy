@@ -557,12 +557,7 @@ export default function DefectRepository() {
   if (app.defectTab === "sources") {
     return (
       <section className="defect-repo-section">
-        {/* Page Header */}
-        <div className="page-header" style={{ marginBottom: 16 }}>
-          <div className="page-header-left">
-            <h2 className="text-display">Jira Source Configuration</h2>
-            <p className="text-body-lg">Kelola project Jira yang menjadi sumber data defect.</p>
-          </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
           <button
             className="ghost-button"
             onClick={() => app.setDefectTab("repository")}
@@ -923,18 +918,15 @@ export default function DefectRepository() {
 
   return (
     <section className="defect-repo-section">
-      {/* Page Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--tertiary-container)", color: "var(--on-tertiary-container)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span className="material-symbols filled" style={{ fontSize: 22 }}>bug_report</span>
-          </div>
-          <div>
-            <h2 className="text-display" style={{ margin: 0 }}>Test Defect Management</h2>
-            <p className="text-body-lg" style={{ marginTop: 2 }}>Manage and track all system anomalies and test failures.</p>
-          </div>
+      <div className="defect-action-row">
+        <div className="defect-tabs" style={{ display: "flex", gap: 4 }}>
+          {(["repository", "sources"] as const).map(tab => (
+            <button key={tab} onClick={() => app.setDefectTab(tab)} className={`doc-sync-tab ${(app.defectTab as string) === tab ? "active" : ""}`} type="button">
+              {tab === "repository" ? "Repository" : "Sources"}
+            </button>
+          ))}
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           {app.defectSearchResults.length > 0 && app.defectSearchResults.every(d => defectsInDb.has(d.sourceIssueKey)) && !syncingAllDefects ? (
             <SyncedBadge onClick={handleSyncAllDefectsToDb} syncing={syncingAllDefects} justSynced={allDefectsSynced} />
           ) : (
@@ -967,20 +959,6 @@ export default function DefectRepository() {
             Add Defect
           </button>
         </div>
-      </div>
-
-      {/* Secondary Navigation (Tabs) */}
-      <div className="doc-sync-tabs" style={{ marginBottom: 20 }}>
-        {(["repository", "sources"] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => app.setDefectTab(tab)}
-            className={`doc-sync-tab ${(app.defectTab as string) === tab ? "active" : ""}`}
-            type="button"
-          >
-            {tab === "repository" ? "Repository" : "Sources"}
-          </button>
-        ))}
       </div>
 
       {/* Main Card Container */}
@@ -1108,8 +1086,16 @@ export default function DefectRepository() {
             <tbody>
               {paginatedDefects.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: "center", padding: "48px 16px", color: "var(--on-surface-variant)" }}>
-                    {app.defectSearching ? "Searching..." : "No defect records. Sync a Jira project source first."}
+                  <td colSpan={9} style={{ textAlign: "center", padding: "36px 16px", color: "var(--on-surface-variant)" }}>
+                    {app.defectSearching ? (
+                      "Searching..."
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                        <span className="material-symbols" style={{ fontSize: 30, color: "var(--primary)" }}>bug_report</span>
+                        <strong style={{ color: "var(--on-surface)" }}>Belum ada defect</strong>
+                        <span>Tambahkan Jira source lalu pilih Sync All Defect to DB.</span>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ) : (

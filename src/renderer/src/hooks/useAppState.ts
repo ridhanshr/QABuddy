@@ -714,7 +714,9 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   useEffect(() => {
     if (activeView !== "manual-test-case" && activeView !== "documentation-sync") return;
     window.qaBuddy.getTestRepositoriesInDb()
-      .then((repos) => setTestRepositoryProjects(repos.map((r) => ({ key: r.project_key, name: r.project_name }))))
+      .then((repos) => setTestRepositoryProjects(repos
+        .map((r) => ({ key: r.project_key.trim().toUpperCase(), name: r.project_name }))
+        .filter((r) => r.key)))
       .catch(() => {});
   }, [activeView]);
 

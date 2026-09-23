@@ -2,6 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes jira-sync-progress {
+  from { transform: translateX(-140%); }
+  to { transform: translateX(360%); }
+}
+.jira-sync-progress { animation: jira-sync-progress 1.4s ease-in-out infinite; }
+.review-hero .screen-icon { width: 44px; height: 44px; flex: 0 0 auto; }
+.screen-hero { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 28px; }
+.screen-hero-eyebrow { color: var(--primary); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 6px; }
+.screen-hero h1 { margin: 0; font-size: 30px; letter-spacing: -.03em; }
+.screen-hero p { margin: 8px 0 0; color: var(--on-surface-variant); max-width: 650px; line-height: 1.5; }
+.screen-progress-panel { margin: 0 0 18px; padding: 12px 16px; border: 1px solid var(--outline-variant); border-radius: 10px; background: var(--surface-container-low); }
+.screen-progress-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; }
+.screen-progress-title .material-symbols { color: var(--primary); font-size: 18px; }
+.screen-progress-track { height: 5px; margin-top: 9px; overflow: hidden; border-radius: 3px; background: var(--surface-container-high); }
+.screen-progress-bar { width: 38%; height: 100%; background: var(--primary); }
+.screen-progress-note { margin-top: 7px; color: var(--on-surface-variant); font-size: 11px; }
+
 /* Evidence workspace: a stronger scan path for status, destination, and sync. */
 .evidence-hero {
   position: relative;
@@ -1437,6 +1454,11 @@ select {
 .button-secondary:hover:not(:disabled) { background: var(--surface-container-low); }
 .table-wrapper { overflow-x: auto; width: 100%; }
 .defect-repo-section { display: flex; flex-direction: column; gap: 16px; }
+.defect-action-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 2px; min-height: 42px; }
+@media (max-width: 760px) {
+  .defect-action-row { align-items: stretch; flex-direction: column; }
+  .defect-action-row > div:last-child { justify-content: flex-start; }
+}
 .defect-create-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px 0; flex-shrink: 0; }
 .source-config-dialog { width: min(720px, calc(100vw - 48px)); }
 .skeleton { position: relative; overflow: hidden; background: var(--surface-container-high); animation: pulse 1.6s ease-in-out infinite; }
@@ -1546,6 +1568,7 @@ select {
   background: var(--surface-container-lowest);
 }
 .uqa-table-hero-copy { flex: 1 1 auto; min-width: 0; max-width: 560px; }
+.uqa-table-actions { margin-left: auto; }
 .uqa-table-eyebrow {
   display: inline-flex; align-items: center;
   padding: 3px 10px; border-radius: var(--radius-pill);
@@ -1698,6 +1721,7 @@ select {
 
 @media (max-width: 1180px) {
   .uqa-table-hero { flex-direction: column; align-items: stretch; }
+  .uqa-table-actions { margin-left: 0; align-self: flex-end; }
   .uqa-table-metrics { width: 100%; margin-left: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .uqa-table-controls { grid-template-columns: 1fr; }
 }

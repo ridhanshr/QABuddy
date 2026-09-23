@@ -666,6 +666,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [confluencePageId, setConfluencePageId] = useState("");
   const [generationProject, setGenerationProject] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
   const [syncResult, setSyncResult] = useState<{ success: number; failed: number; errors: string[] } | null>(null);
 
   // ── Bitbucket Creation Mode State ──
@@ -689,6 +690,7 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
   const [bitbucketSyncFolders, setBitbucketSyncFolders] = useState<{ label: string; value: string }[]>([]);
   const [bitbucketSyncFoldersLoading, setBitbucketSyncFoldersLoading] = useState(false);
   const [bitbucketSyncing, setBitbucketSyncing] = useState(false);
+  const [bitbucketSyncMessage, setBitbucketSyncMessage] = useState("");
   const [bitbucketSyncResult, setBitbucketSyncResult] = useState<import("@shared/types").BitbucketSyncScenariosResponse | null>(null);
   /** Maps a scenario index (position in bitbucketGenerateResult.scenarios) to
    *  the Jira issue key created for it. Index-based identity: scenario titles
@@ -902,12 +904,14 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
         .map((idx) => [idx, bitbucketGenerateResult.scenarios[idx]] as const)
         .filter(([, sc]) => !!sc);
       const scenarios = selectedPairs.map(([, sc]) => sc);
+      setBitbucketSyncMessage(`Mengirim ${scenarios.length} skenario ke Jira project ${bitbucketSyncProject}...`);
       const res = await window.qaBuddy.syncBitbucketScenariosToJira({
         projectKey: bitbucketSyncProject,
         folderPath: bitbucketSyncFolder || undefined,
         scenarios,
       });
       setBitbucketSyncResult(res);
+      setBitbucketSyncMessage(`${res.results.filter((r) => r.success).length} skenario berhasil dikirim.`);
       // MERGE into the existing map: previously-synced scenarios keep their
       // Jira keys across repeated syncs, so the UI never loses track of what
       // has already been created (and the user doesn't re-sync duplicates).
@@ -967,13 +971,18 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
     if (!generatedTestExecId || !generationProject) return;
     setSyncing(true);
     setSyncResult(null);
+    setSyncMessage(`Menyiapkan ${testCases.length} test case untuk project ${generationProject}...`);
     try {
+      setSyncMessage(`Mengirim ${testCases.length} test case ke Jira project ${generationProject}...`);
       const result = await window.qaBuddy.syncBRDTestCasesToJira(
         generatedTestExecId,
         generationProject,
         selectedFolder || undefined,
       );
       setSyncResult(result);
+      setSyncMessage(result.failed === 0
+        ? `${result.success} test case berhasil dikirim ke ${generationProject}.`
+        : `${result.success} berhasil dikirim, ${result.failed} gagal.`);
       const refreshed = await window.qaBuddy.getGeneratedTestCases(generatedTestExecId);
       setTestCases(refreshed);
     } catch (e: any) {
@@ -993,20 +1002,6 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
 
   return (
     <div>
-      {!initialTab && (
-        <div className="page-header" style={{ marginBottom: 20 }}>
-          <div className="page-header-left">
-            <div className="screen-icon">
-              <span className="material-symbols filled" style={{ fontSize: 22 }}>assignment</span>
-            </div>
-            <div>
-              <h2 className="text-display" style={{ margin: 0 }}>Test Case Search</h2>
-              <p className="text-body-lg" style={{ marginTop: 2 }}>Cari test scenario dari Jira Xray.</p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {!initialTab && (
         <div className="doc-sync-tabs" style={{ marginBottom: 20 }}>
           <button
@@ -1629,8 +1624,24 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
                       </button>
                     </div>
 
+                    {bitbucketSyncing && (
+                      <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 8, background: "var(--secondary-container)" }} role="status" aria-live="polite">
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 600 }}>
+                          <span className="material-symbols rotating" style={{ fontSize: 17, color: "var(--secondary)" }}>sync</span>
+                          {bitbucketSyncMessage}
+                        </div>
+                        <div style={{ height: 4, marginTop: 8, overflow: "hidden", borderRadius: 3, background: "var(--surface-container-high)" }}>
+                          <div className="jira-sync-progress" style={{ height: "100%", width: "38%", background: "var(--secondary)" }} />
+                        </div>
+                        <div style={{ marginTop: 6, fontSize: 11, color: "var(--on-surface-variant)" }}>Jangan tutup halaman sampai selesai.</div>
+                      </div>
+                    )}
+
                     {bitbucketSyncResult && (
                       <div style={{ marginTop: 10, fontSize: 12 }}>
+                        <div style={{ marginBottom: 6, color: "var(--on-surface-variant)" }}>
+                          Tujuan: <strong>{bitbucketSyncProject}</strong>{bitbucketSyncFolder ? ` / ${bitbucketSyncFolder}` : " / root repository"}. {bitbucketSyncMessage}
+                        </div>
                         {(() => {
                           const succeeded = bitbucketSyncResult.results.filter(r => r.success).length;
                           const failed = bitbucketSyncResult.results.filter(r => !r.success).length;
@@ -2082,16 +2093,25 @@ export default function TestCaseManager({ initialTab }: { initialTab?: Tab }) {
               </div>
 
               {syncing && (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "var(--secondary-container)", borderRadius: 8, marginBottom: 12 }}>
-                  <span className="material-symbols rotating" style={{ color: "var(--secondary)", fontSize: 20 }}>sync</span>
-                  <span style={{ fontSize: 13 }}>
-                    Sedang upload test cases ke Jira... Lihat terminal untuk progress detail.
-                  </span>
+                <div style={{ padding: "12px 14px", background: "var(--secondary-container)", borderRadius: 8, marginBottom: 12 }} role="status" aria-live="polite">
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span className="material-symbols rotating" style={{ color: "var(--secondary)", fontSize: 20 }}>sync</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{syncMessage}</span>
+                  </div>
+                  <div style={{ height: 5, marginTop: 10, overflow: "hidden", borderRadius: 3, background: "var(--surface-container-high)" }}>
+                    <div className="jira-sync-progress" style={{ height: "100%", width: "38%", background: "var(--secondary)" }} />
+                  </div>
+                  <p style={{ margin: "7px 0 0", fontSize: 11, color: "var(--on-surface-variant)" }}>
+                    Jangan tutup halaman sampai pengiriman selesai.
+                  </p>
                 </div>
               )}
 
               {syncResult && !syncing && (
                 <div style={{ marginBottom: 12 }}>
+                  <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--on-surface-variant)" }}>
+                    Tujuan pengiriman: <strong>{generationProject}</strong>{selectedFolder ? ` / ${selectedFolder}` : " / root repository"}
+                  </p>
                   {/* Summary row */}
                   <div style={{
                     display: "flex", alignItems: "center", gap: 12,

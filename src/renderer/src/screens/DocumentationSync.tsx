@@ -434,13 +434,7 @@ export default function DocumentationSync() {
   return (
     <>
     <section style={{ maxWidth: 1000, margin: "0 auto", paddingBottom: 100 }}>
-       <div className="evidence-hero" style={{ marginBottom: 24 }}>
-         <div>
-           <div className="evidence-kicker"><span className="material-symbols" style={{ fontSize: 16 }}>fact_check</span> QA WORKSPACE</div>
-           <h2 className="text-display" style={{ marginBottom: 8 }}>Test Evidence Management</h2>
-           <p className="text-body-lg" style={{ maxWidth: 620 }}>Review hasil test, lengkapi screen capture, lalu kirim evidence terstruktur ke Confluence.</p>
-         </div>
-         <div className="evidence-hero-mark" aria-hidden="true"><span className="material-symbols">description</span></div>
+       <div style={{ marginBottom: 24 }}>
          {confParseProgress && (
           <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 12, border: `1px solid ${confParseProgress.stage === "error" ? "var(--error)" : "var(--outline-variant)"}`, background: confParseProgress.stage === "error" ? "color-mix(in srgb, var(--error) 8%, var(--surface))" : "var(--surface-container-low)", color: "var(--on-surface)", display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>

@@ -273,18 +273,6 @@ export default function TestCycleManager() {
 
   return (
     <div>
-      <div className="page-header" style={{ marginBottom: 20 }}>
-        <div className="page-header-left">
-          <div className="screen-icon">
-            <span className="material-symbols filled" style={{ fontSize: 22 }}>fact_check</span>
-          </div>
-          <div>
-            <h2 className="text-display" style={{ margin: 0 }}>Test Cycle Manager</h2>
-            <p className="text-body-lg" style={{ marginTop: 2 }}>Kelola test plan dan monitoring eksekusi.</p>
-          </div>
-        </div>
-      </div>
-
       <div className="doc-sync-tabs" style={{ marginBottom: 20 }}>
         <button
           className={`doc-sync-tab ${activeTab === "plan" ? "active" : ""}`}

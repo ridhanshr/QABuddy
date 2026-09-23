@@ -17,6 +17,7 @@ import DocumentationReview from "./screens/DocumentationReview";
 import DefectRepository from "./screens/DefectRepository";
 import TestCycleManager from "./screens/TestCycleManager";
 import ProjectManagement from "./screens/ProjectManagement";
+import ScreenHero from "./components/ScreenHero";
 
 const primaryNavigation: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: "grid_view", filledIcon: "grid_view" },
@@ -36,6 +37,19 @@ const footerNavigation: NavItem[] = [
 
 const allNavigation = [...primaryNavigation, ...footerNavigation];
 
+const screenHero: Record<string, { icon: string; title: string; description: string }> = {
+  dashboard: { icon: "dashboard", title: "QA Dashboard", description: "Pantau kualitas, aktivitas, dan pekerjaan QA dari satu workspace." },
+  "project-management": { icon: "folder_open", title: "Project Management", description: "Kelola project, test plan, dan test execution Jira." },
+  "manual-test-case": { icon: "assignment", title: "Test Cases Management", description: "Create, organize, extract, and sync your manual test repository." },
+  "documentation-sync": { icon: "description", title: "Test Evidence Management", description: "Review evidence dan sinkronkan hasil pengujian dengan Jira dan Confluence." },
+  "defect-repository": { icon: "inventory_2", title: "Test Defect Management", description: "Cari, kelola, dan sinkronkan defect dari Jira." },
+  "daily-uqa": { icon: "edit_note", title: "Daily Activities", description: "Pantau aktivitas UQA dan status pekerjaan harian." },
+  "document-review": { icon: "fact_check", title: "QA Document Review", description: "Validate document content, hierarchy, and Jira/Xray execution metrics." },
+  logs: { icon: "notifications", title: "Logs", description: "Lihat riwayat aktivitas dan hasil operasi QA Buddy." },
+  settings: { icon: "settings", title: "Settings", description: "Atur koneksi, preferensi, dan integrasi workspace." },
+  documentation: { icon: "menu_book", title: "Documentation", description: "Pelajari fitur dan alur kerja QA Buddy." },
+};
+
 function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => void; loggedInUser: string; loggedInRole: string }) {
   const {
     activeView,
@@ -54,6 +68,7 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
     setShowDetailedProgress,
     brdGenerating,
     brdChunkProgress,
+    manualLoading,
     flushTokensOnLogout,
   } = useApp();
 
@@ -125,6 +140,20 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
               )}
             </div>
           </div>
+        )}
+
+        {(brdGenerating || downloadingUpdate) && (
+          <div className="mx-2.5 mb-2 rounded-lg border border-line bg-surface-low px-3 py-2.5" role="status" aria-live="polite">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols rotating text-[17px]" style={{ color: "var(--primary)" }}>sync</span>
+              <span className="truncate text-[11px] font-semibold" style={{ color: "var(--on-surface)" }}>
+                {brdGenerating ? "AI sedang membuat test case..." : "Update sedang diunduh..."}
+              </span>
+            </div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface-high">
+              <div className="jira-sync-progress h-full rounded-full" style={{ width: brdGenerating && brdChunkProgress ? `${Math.round((brdChunkProgress.done / Math.max(brdChunkProgress.total, 1)) * 100)}%` : "38%", background: "var(--primary)" }} />
+            </div>
+            </div>
         )}
 
         {downloadingUpdate && (
@@ -247,6 +276,14 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
 
             {!loading && (
               <>
+                {manualLoading && (
+                  <div className="screen-progress-panel" role="status" aria-live="polite">
+                    <div className="screen-progress-title"><span className="material-symbols rotating">sync</span> Mengirim test case ke Jira...</div>
+                    <div className="screen-progress-track"><div className="screen-progress-bar jira-sync-progress" /></div>
+                    <div className="screen-progress-note">Memeriksa duplikat, membuat test case, dan menghubungkan execution. Jangan tutup halaman.</div>
+                  </div>
+                )}
+                {screenHero[activeView] && <ScreenHero {...screenHero[activeView]} />}
                 {activeView === "dashboard" && <Dashboard />}
                 {activeView === "project-management" && <ProjectManagement />}
                 {activeView === "chat-assistant" && <ChatAssistant />}

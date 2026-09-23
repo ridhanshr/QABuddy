@@ -469,34 +469,6 @@ export default function DailyUQA() {
 
   return (
     <div className="daily-uqa">
-      <div className="page-header">
-        <div className="page-header-left">
-          <h2 className="text-display">Daily Activities</h2>
-        </div>
-        <div className="page-header-right" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {!uqaSyncing && (
-            <button className="secondary-button" onClick={syncUqaIssues} type="button" title="Sync dari Jira">
-              <span className="material-symbols">sync</span>
-            </button>
-          )}
-          {uqaSyncing && (
-            <button className="secondary-button" type="button" disabled>
-              <span className="material-symbols spin">sync</span>
-            </button>
-          )}
-          <button
-            className={`icon-button ${showSettings ? "active" : ""}`}
-            onClick={() => setShowSettings((v) => !v)}
-            type="button"
-            title="Pengaturan UQA"
-          >
-            <span className="material-symbols">
-              {showSettings ? "close" : "settings"}
-            </span>
-          </button>
-        </div>
-       </div>
-
       {uqaSyncing && uqaSyncProgress && (
         <div className="card uqa-progress-card" style={{ margin: "16px 0", padding: "12px 16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -650,12 +622,31 @@ export default function DailyUQA() {
       ) : (
         <>
           <div className="card uqa-table-shell">
-              <div className="uqa-table-hero">
-                <div className="uqa-table-hero-copy">
-                <h4>Daily Activities board</h4>
-                <p>Prioritizes issues that need attention today and keeps the latest activity easy to scan.</p>
-              </div>
-            </div>
+               <div className="uqa-table-hero">
+                 <div className="uqa-table-hero-copy">
+                 <h4>Daily Activities board</h4>
+                 <p>Prioritizes issues that need attention today and keeps the latest activity easy to scan.</p>
+               </div>
+               <div className="uqa-table-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                 {!uqaSyncing ? (
+                   <button className="secondary-button" onClick={syncUqaIssues} type="button" title="Sync dari Jira">
+                     <span className="material-symbols">sync</span>
+                   </button>
+                 ) : (
+                   <button className="secondary-button" type="button" disabled title="Sedang sync">
+                     <span className="material-symbols spin">sync</span>
+                   </button>
+                 )}
+                 <button
+                   className={`icon-button ${showSettings ? "active" : ""}`}
+                   onClick={() => setShowSettings((v) => !v)}
+                   type="button"
+                   title="Pengaturan UQA"
+                 >
+                   <span className="material-symbols">{showSettings ? "close" : "settings"}</span>
+                 </button>
+               </div>
+             </div>
 
             <div className="uqa-table-toolbar">
               <div className="uqa-table-controls">

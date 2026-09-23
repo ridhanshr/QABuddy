@@ -518,7 +518,7 @@ export default function Documentation() {
             <section id="daily-activities" className="doc-section">
               <div className="section-title">
                 <span className="material-symbols text-primary">event_note</span>
-                <h2>9. Daily Activities</h2>
+                {/* <h2>9. Daily Activities</h2> */}
               </div>
               <p>
                 Papan tiket UQA yang ditugaskan ke Anda, dengan pencarian, filter status, dan

@@ -79,13 +79,7 @@ export default function AdvancedJiraOrganizer() {
 
   return (
     <section style={{ maxWidth: 1280, margin: "0 auto", paddingBottom: 100 }}>
-      <div className="page-header" style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <h2 className="text-display" style={{ marginBottom: 6 }}>Advanced Jira Organizer</h2>
-          <p className="text-body-lg" style={{ maxWidth: 760 }}>
-            Visual JQL builder untuk menyusun query lebih cepat, termasuk custom field Jira, lalu menjalankan pencarian dan bulk actions dari satu layar.
-          </p>
-        </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <span style={{ padding: "8px 12px", borderRadius: 999, background: "var(--surface-container-low)", border: "1px solid var(--outline-variant)", fontSize: 12, color: "var(--on-surface-variant)" }}>Searchable filters</span>
           <span style={{ padding: "8px 12px", borderRadius: 999, background: "var(--surface-container-low)", border: "1px solid var(--outline-variant)", fontSize: 12, color: "var(--on-surface-variant)" }}>Custom fields</span>

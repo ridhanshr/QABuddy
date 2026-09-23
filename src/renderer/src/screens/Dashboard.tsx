@@ -316,13 +316,6 @@ export default function Dashboard() {
           border-radius: 6px;
         }
       `}</style>
-      {/* Dashboard header */}
-      <div className="section-header-row" style={{ marginBottom: 0 }}>
-        <div>
-          <h2 className="text-display" style={{ margin: 0 }}>Dashboard</h2>
-        </div>
-      </div>
-
       {/* My UQA Projects by Status */}
       <div style={{ marginBottom: 24 }}>
         <div className="card" style={{ padding: 24 }}>

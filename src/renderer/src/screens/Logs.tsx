@@ -66,11 +66,7 @@ export default function Logs() {
 
   return (
     <section style={{ maxWidth: 1000, margin: "0 auto", paddingBottom: 100 }}>
-      <div className="page-header" style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h2 className="text-display">Logs</h2>
-          <p className="text-body-lg">Activity history for sync, submit, and organize operations.</p>
-        </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20 }}>
         <button
           className="secondary-button"
           onClick={() => {

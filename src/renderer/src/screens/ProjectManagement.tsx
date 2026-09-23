@@ -886,19 +886,6 @@ export default function ProjectManagement() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
-      {/* ── Page Header ── */}
-      <div className="page-header" style={{ marginBottom: 20 }}>
-        <div className="page-header-left">
-          <div className="screen-icon">
-            <span className="material-symbols filled" style={{ fontSize: 22 }}>folder_open</span>
-          </div>
-          <div>
-            <h2 className="text-display" style={{ margin: 0 }}>Project Management</h2>
-            <p className="text-body-lg" style={{ marginTop: 2 }}>Kelola repository test, project UQA, plan, dan eksekusi.</p>
-          </div>
-        </div>
-      </div>
-
       {/* ── Tab Bar ── */}
       <div className="doc-sync-tabs" style={{ marginBottom: 20, flexShrink: 0 }}>
         {tabs.map((t) => (

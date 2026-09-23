@@ -189,11 +189,8 @@ export default function ManualTestCaseScreen() {
   return (
     <section style={{ maxWidth: 1000, margin: "0 auto", paddingBottom: 100 }}>
       <div style={{ marginBottom: 32 }}>
-        <h2 className="text-display">Test Cases Management</h2>
-        <p className="text-body-lg">Create, organize, extract, and sync your manual test repository.</p>
-        
         {/* Primary tab bar */}
-        <div style={{ display: 'flex', gap: 24, marginTop: 24, borderBottom: '1px solid var(--outline-variant)' }}>
+        <div style={{ display: 'flex', gap: 24, marginTop: 0, borderBottom: '1px solid var(--outline-variant)' }}>
           {(
             [
               { key: "search", label: "Test Case Search", icon: "search" },
@@ -267,7 +264,7 @@ export default function ManualTestCaseScreen() {
 
       {manualTab === "creator" && (
         <>
-          <div className="page-header" style={{ marginBottom: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <div style={{ marginBottom: 40, display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
             <div>
               <h4 style={{ margin: 0, color: 'var(--on-surface-variant)' }}>Create New Scenarios</h4>
             </div>

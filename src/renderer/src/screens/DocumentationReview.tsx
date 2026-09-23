@@ -263,7 +263,7 @@ export default function DocumentationReview() {
   };
   return (
     <section className="review-page" style={{ maxWidth: 1180, margin: "0 auto", paddingBottom: 40 }}>
-      <header className="review-hero" style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 28 }}>
+      {/* <header className="review-hero" style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 28 }}>
         <div className="screen-icon" style={{ width: 44, height: 44 }}>
           <span className="material-symbols" style={{ fontSize: 25 }}>fact_check</span>
         </div>
@@ -272,7 +272,7 @@ export default function DocumentationReview() {
           <h1 style={{ margin: 0, fontSize: 30, letterSpacing: "-0.03em" }}>QA Documentation Review</h1>
           <p style={{ margin: "8px 0 0", color: "var(--on-surface-variant)", maxWidth: 650, lineHeight: 1.5 }}>Validate TMP and SIT content, hierarchy, and Jira/Xray execution metrics from one focused review.</p>
         </div>
-      </header>
+      </header> */}
 
       <div className="card review-settings-card" style={{ marginBottom: 24, padding: 22, borderRadius: 18, border: "1px solid var(--outline-variant)", background: "var(--surface-container-low)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 16 }}>

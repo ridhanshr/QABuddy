@@ -61,10 +61,6 @@ export default function Settings() {
 
   return (
     <section style={{ maxWidth: 800, margin: "0 auto" }}>
-      <div className="page-header" style={{ marginBottom: 32 }}>
-        <h2 className="text-display">Settings</h2>
-      </div>
-
       <div className="tab-container" style={{ marginBottom: 24, borderBottom: "1px solid var(--outline-variant)" }}>
         <button 
           className={`tab-btn ${settingsTab === "general" ? "active" : ""}`}

@@ -99,18 +99,6 @@ export default function TestExecutions() {
 
   return (
     <div>
-      <div className="page-header" style={{ marginBottom: 20 }}>
-        <div className="page-header-left">
-          <div className="screen-icon">
-            <span className="material-symbols filled" style={{ fontSize: 22 }}>assignment_turned_in</span>
-          </div>
-          <div>
-            <h2 className="text-display" style={{ margin: 0 }}>Test Executions</h2>
-            <p className="text-body-lg" style={{ marginTop: 2 }}>Monitoring hasil eksekusi test case dari Jira Xray.</p>
-          </div>
-        </div>
-      </div>
-
       {/* ── Test Execution Monitoring ── */}
       {activeTab === "monitoring" && (
         <div>
