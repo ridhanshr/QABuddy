@@ -30,7 +30,7 @@ function csvField(value: unknown): string {
 function FindingCard({ finding }: { finding: ReviewFinding }) {
   const color = statusColor[finding.status] ?? "var(--on-surface-variant)";
   return (
-    <article className="card review-finding-card" style={{ padding: 16 }}>
+    <article className="card review-finding-card" style={{ padding: 16, height: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
       <span className="review-status-badge" style={{
           color, fontWeight: 700, fontSize: 10.5, letterSpacing: "0.06em",
@@ -53,7 +53,7 @@ function FindingCard({ finding }: { finding: ReviewFinding }) {
         <p style={{ margin: 0, fontSize: 13 }}><strong>Recommendation:</strong> {finding.recommendation}</p>
       ) : null}
       {finding.sourceUrl ? (
-        <button type="button" className="link-button" style={{ padding: 0, marginTop: 10 }} onClick={() => window.qaBuddy.openExternal(finding.sourceUrl!)}>
+        <button type="button" className="link-button" style={{ padding: 0, marginTop: "auto", paddingTop: 10, alignSelf: "flex-start" }} onClick={() => window.qaBuddy.openExternal(finding.sourceUrl!)}>
           Open source page
         </button>
       ) : null}
@@ -410,7 +410,7 @@ export default function DocumentationReview() {
                  </select>
                </div>
              </div>
-             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10, alignItems: "start" }}>
+             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10 }}>
                {filteredFindings.map((finding, index) => <FindingCard key={`${finding.section}-${finding.title}-${index}`} finding={finding} />)}
              </div>
              {filteredFindings.length === 0 ? <div className="card review-empty-filter">Tidak ada finding yang cocok dengan filter.</div> : null}
@@ -452,7 +452,7 @@ export default function DocumentationReview() {
                   <div style={{ color: "var(--on-surface-variant)", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
                     Temuan sejauh ini ({liveFindings.length})
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10, alignItems: "start" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10 }}>
                     {liveFindings.map((finding, index) => (
                       <FindingCard key={`${finding.section}-${finding.title}-${index}`} finding={finding} />
                     ))}

@@ -6,6 +6,7 @@
 //! in isolation.
 
 use regex::Regex;
+use std::sync::OnceLock;
 
 use crate::models::test_case::ExtractedTestCase;
 
@@ -233,26 +234,22 @@ pub fn slugify(text: &str, max_len: usize) -> String {
 
 /// Strip HTML tags and decode common entities, collapsing whitespace.
 pub fn strip_html(html: &str) -> String {
-    let style = Regex::new(r"(?is)<style[\s\S]*?</style>").unwrap();
-    let script = Regex::new(r"(?is)<script[\s\S]*?</script>").unwrap();
-    let jira_macro = Regex::new(
-        r#"(?is)<ac:structured-macro\b[^>]*\bac:name\s*=\s*["']jira["'][^>]*>(.*?)</ac:structured-macro>"#,
-    )
-    .unwrap();
-    let jira_key = Regex::new(
-        r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*["']key["'][^>]*>([\s\S]*?)</ac:parameter>"#,
-    )
-    .unwrap();
-    let jira_jql = Regex::new(
-        r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*["']jql["'][^>]*>([\s\S]*?)</ac:parameter>"#,
-    )
-    .unwrap();
-    let inline_link = Regex::new(
-        r#"(?is)<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)</a>"#,
-    )
-    .unwrap();
-    let tag_strip = Regex::new(r"<[^>]+>").unwrap();
-    let whitespace = Regex::new(r"\s+").unwrap();
+    static STYLE: OnceLock<Regex> = OnceLock::new();
+    static SCRIPT: OnceLock<Regex> = OnceLock::new();
+    static JIRA_MACRO: OnceLock<Regex> = OnceLock::new();
+    static JIRA_KEY: OnceLock<Regex> = OnceLock::new();
+    static JIRA_JQL: OnceLock<Regex> = OnceLock::new();
+    static INLINE_LINK: OnceLock<Regex> = OnceLock::new();
+    static TAG_STRIP: OnceLock<Regex> = OnceLock::new();
+    static WHITESPACE: OnceLock<Regex> = OnceLock::new();
+    let style = STYLE.get_or_init(|| Regex::new(r"(?is)<style[\s\S]*?</style>").unwrap());
+    let script = SCRIPT.get_or_init(|| Regex::new(r"(?is)<script[\s\S]*?</script>").unwrap());
+    let jira_macro = JIRA_MACRO.get_or_init(|| Regex::new(r#"(?is)<ac:structured-macro\b[^>]*\bac:name\s*=\s*["']jira["'][^>]*>(.*?)</ac:structured-macro>"#).unwrap());
+    let jira_key = JIRA_KEY.get_or_init(|| Regex::new(r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*["']key["'][^>]*>([\s\S]*?)</ac:parameter>"#).unwrap());
+    let jira_jql = JIRA_JQL.get_or_init(|| Regex::new(r#"(?is)<ac:parameter\b[^>]*\bac:name\s*=\s*["']jql["'][^>]*>([\s\S]*?)</ac:parameter>"#).unwrap());
+    let inline_link = INLINE_LINK.get_or_init(|| Regex::new(r#"(?is)<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)</a>"#).unwrap());
+    let tag_strip = TAG_STRIP.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
+    let whitespace = WHITESPACE.get_or_init(|| Regex::new(r"\s+").unwrap());
 
     let mut s = style.replace_all(html, " ").to_string();
     s = script.replace_all(&s, " ").to_string();

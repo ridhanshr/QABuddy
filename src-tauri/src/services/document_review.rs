@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use regex::Regex;
+use tokio::time::timeout;
 use serde_json::Value;
 use tauri::Emitter;
 
@@ -114,6 +116,7 @@ pub async fn review_document(
         ));
     }
 
+    let started_at = Instant::now();
     emit_progress(app, "fetch", "Mengambil halaman Confluence...".to_string(), 0, 0);
     let root_raw = confluence
         .get_page(&config.confluence, page_id.trim())
@@ -135,6 +138,13 @@ pub async fn review_document(
         .filter_map(|v| page_data(v).ok())
         .filter(|page| seen_page_ids.insert(page.id.clone()))
         .collect();
+    emit_progress(
+        app,
+        "fetch",
+        format!("{} halaman terkumpul dalam {:.1}s. Menyiapkan pemeriksaan...", pages.len(), started_at.elapsed().as_secs_f64()),
+        0,
+        0,
+    );
 
     let mut summary = ReviewSummary {
         document_type: "Unknown".to_string(),
@@ -221,6 +231,7 @@ pub async fn review_document(
             completed_units,
             total_units,
         );
+        let validation_started_at = Instant::now();
         validate_tmp(
             &root,
             &mut summary,
@@ -232,6 +243,7 @@ pub async fn review_document(
         )
         .await?;
         flush_new_findings(app, &summary, &mut emitted_findings);
+        emit_progress(app, "check", format!("TMP selesai dalam {:.1}s", validation_started_at.elapsed().as_secs_f64()), completed_units, total_units);
         if sit_review_pages.is_empty() {
             add_missing_sit_finding(&mut summary, config, &root, &pages);
         }
@@ -246,6 +258,7 @@ pub async fn review_document(
                 completed_units,
                 total_units,
             );
+            let validation_started_at = Instant::now();
             validate_sit(
                 sit,
                 &mut summary,
@@ -260,6 +273,7 @@ pub async fn review_document(
             )
             .await?;
             flush_new_findings(app, &summary, &mut emitted_findings);
+            emit_progress(app, "check", format!("SIT {} selesai dalam {:.1}s: {}", idx + 1, validation_started_at.elapsed().as_secs_f64(), sit.title), completed_units, total_units);
         }
     } else if (root_type == "SIT" && is_sit_review_candidate(&root))
         || !sit_review_pages.is_empty()
@@ -282,6 +296,7 @@ pub async fn review_document(
                 completed_units,
                 total_units,
             );
+            let validation_started_at = Instant::now();
             validate_sit(
                 sit,
                 &mut summary,
@@ -296,6 +311,7 @@ pub async fn review_document(
             )
             .await?;
             flush_new_findings(app, &summary, &mut emitted_findings);
+            emit_progress(app, "check", format!("SIT {} selesai dalam {:.1}s: {}", idx + 1, validation_started_at.elapsed().as_secs_f64(), sit.title), completed_units, total_units);
         }
     } else {
         summary.document_type = "Unknown".to_string();
@@ -325,8 +341,22 @@ pub async fn review_document(
             completed_units,
             total_units,
         );
+        let target_started_at = Instant::now();
         validate_scenario_capture_tables(target, config, &mut summary, &mut score);
         flush_new_findings(app, &summary, &mut emitted_findings);
+        emit_progress(
+            app,
+            "check",
+            format!(
+                "Scenario Detail {}/{} selesai dalam {:.1}s: {}",
+                idx + 1,
+                scenario_count,
+                target_started_at.elapsed().as_secs_f64(),
+                target.title
+            ),
+            completed_units,
+            total_units,
+        );
     }
 
     summary.score = score_to_percent(score);
@@ -365,26 +395,10 @@ async fn collect_children(
         let fetches = level.iter().map(|current| {
             let current = current.clone();
             async move {
-                let mut children = confluence
+                let children = confluence
                     .list_child_pages(config, &current)
                     .await
                     .unwrap_or_default();
-                if children.is_empty() {
-                    if let Ok(mut listed) = confluence.list_pages(config, &current).await {
-                        listed.retain(|page| {
-                            page["id"].as_str() != Some(current.as_str())
-                                && page["ancestors"]
-                                    .as_array()
-                                    .map(|ancestors| {
-                                        ancestors
-                                            .iter()
-                                            .any(|ancestor| ancestor["id"].as_str() == Some(current.as_str()))
-                                    })
-                                    .unwrap_or(true)
-                        });
-                        children = listed;
-                    }
-                }
                 (current, children)
             }
         });
@@ -441,7 +455,11 @@ fn page_data(raw: Value) -> Result<PageData> {
         (true, false) => view.to_string(),
         (true, true) => String::new(),
     };
-    let plain = strip_html(&content);
+    let plain = if is_scenario_capture_sit_title(&title) {
+        String::new()
+    } else {
+        strip_html(&content)
+    };
     let parent_id = raw["ancestors"]
         .as_array()
         .and_then(|ancestors| ancestors.last())
@@ -1485,16 +1503,25 @@ async fn validate_sit(
     let mut semantics: Vec<SemanticDecision> =
         vec![SemanticDecision::Skipped; checks.len()];
     if ollama_ready {
-        let semantic_futures: Vec<_> = semantic_order
-            .iter()
-            .map(|&idx| {
+        // Limit AI calls: deterministic checks already cover missing and placeholder values.
+        // One request per page gives enough semantic coverage without multiplying model latency.
+        const MAX_SEMANTIC_CHECKS_PER_PAGE: usize = 2;
+        let selected = semantic_order.into_iter().take(MAX_SEMANTIC_CHECKS_PER_PAGE);
+        let semantic_futures: Vec<_> = selected
+            .map(|idx| {
                 let (section, labels, _, _) = checks[idx];
-                semantic_validate_section(page, section, labels, config, ollama, true)
+                async move {
+                    let result = timeout(
+                        Duration::from_secs(30),
+                        semantic_validate_section(page, section, labels, config, ollama, true),
+                    )
+                    .await
+                    .unwrap_or_else(|_| SemanticDecision::Unavailable("Semantic validation timeout setelah 30 detik.".to_string()));
+                    (idx, result)
+                }
             })
             .collect();
-        let semantic_results: Vec<SemanticDecision> =
-            futures::future::join_all(semantic_futures).await;
-        for (idx, semantic) in semantic_order.into_iter().zip(semantic_results.into_iter()) {
+        for (idx, semantic) in futures::future::join_all(semantic_futures).await {
             semantics[idx] = semantic;
         }
     }
@@ -1728,7 +1755,8 @@ fn parse_html_tables(html: &str) -> Vec<Vec<Vec<HtmlCell>>> {
     let mut current_cell: Option<HtmlCell> = None;
     let mut cell_text = String::new();
 
-    let tag_re = Regex::new(r"(?is)<(/?)([a-zA-Z][a-zA-Z0-9:_-]*)\b[^>]*>").unwrap();
+    static TAG_RE: OnceLock<Regex> = OnceLock::new();
+    let tag_re = TAG_RE.get_or_init(|| Regex::new(r"(?is)<(/?)([a-zA-Z][a-zA-Z0-9:_-]*)\b[^>]*>").unwrap());
     let mut last_end = 0usize;
 
     for cap in tag_re.captures_iter(html) {
