@@ -1014,85 +1014,70 @@ Output JSON format:
             Err(_) => None,
         };
 
-        // (scenario title, success, jira_key, error)
-        let mut results: Vec<(String, bool, Option<String>, Option<String>)> = Vec::new();
-        let mut synced_keys: Vec<String> = Vec::new();
-
-        for sc in &req.scenarios {
-            // Guard against creating empty Jira issues from malformed AI
-            // output (or legacy cached scenarios): title + at least one step
-            // with non-empty action & expected are mandatory.
-            if sc.scenario.trim().is_empty() {
-                results.push((String::new(), false, None, Some("Scenario tanpa judul".to_string())));
-                continue;
-            }
-            if sc.steps.is_empty()
-                || sc.steps.iter().any(|s| s.action.trim().is_empty() || s.expected.trim().is_empty())
-            {
-                results.push((
-                    sc.scenario.clone(),
-                    false,
-                    None,
-                    Some("Scenario tidak punya steps lengkap (action/expected wajib)".to_string()),
-                ));
-                continue;
-            }
-            let steps_lines: String = sc
-                .steps
-                .iter()
-                .map(|s| format!("{}. {}", s.step, s.action))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let expected_lines: String = sc
-                .steps
-                .iter()
-                .map(|s| format!("{}. {}", s.step, s.expected))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let preconditions = sc.preconditions.join("\n");
-            let mut description = String::new();
-            if !preconditions.is_empty() {
-                description.push_str(&format!("Preconditions\n{preconditions}\n\n"));
-            }
-            description.push_str(&format!("Test Steps\n{steps_lines}\n\nExpected Result\n{expected_lines}"));
-
-            let mut fields = serde_json::json!({
-                "project":   { "key": jira_cfg.project_key },
-                "summary":   sc.scenario,
-                "issuetype": { "name": "Test" },
-                "description": description,
-                "labels": [sc.scenario_type.clone()],
-            });
-            if let Some(ref account_id) = assignee_account_id {
-                fields["assignee"] = serde_json::json!({ "accountId": account_id });
-            }
-            let body = serde_json::json!({ "fields": fields });
-
-            match jira.client(&jira_cfg) {
-                Err(e) => results.push((sc.scenario.clone(), false, None, Some(format!("Client error: {e}")))),
-                Ok(client) => match client.api.post_json("/issue", &body).await {
-                    Ok(resp) => {
-                        // HTTP success with no usable "key" is a failure: the
-                        // scenario cannot be tracked, deselected, or moved to
-                        // a folder, and must stay retryable.
-                        match resp["key"].as_str().map(str::trim).filter(|k| !k.is_empty()) {
-                            Some(key) => {
-                                let key = key.to_string();
-                                synced_keys.push(key.clone());
-                                results.push((sc.scenario.clone(), true, Some(key), None));
-                            }
-                            None => results.push((
-                                sc.scenario.clone(),
-                                false,
-                                None,
-                                Some("Jira tidak mengembalikan issue key pada response sukses".to_string()),
-                            )),
-                        }
+        // Validate and create all issues concurrently. Keep result order equal to
+        // request order so frontend can map each error to its scenario.
+        let jobs = req.scenarios.iter().map(|sc| {
+            let sc = sc.clone();
+            let jira_cfg = jira_cfg.clone();
+            let assignee_account_id = assignee_account_id.clone();
+            async move {
+                let title = sc.scenario.clone();
+                let result = async {
+                    if title.trim().is_empty() {
+                        return Err("Scenario tanpa judul".to_string());
                     }
-                    Err(e) => results.push((sc.scenario.clone(), false, None, Some(e.to_string()))),
-                },
+                    if sc.steps.is_empty()
+                        || sc.steps.iter().any(|s| s.action.trim().is_empty() || s.expected.trim().is_empty())
+                    {
+                        return Err("Scenario tidak punya steps lengkap (action/expected wajib)".to_string());
+                    }
+
+                    let steps_lines = sc.steps.iter()
+                        .map(|s| format!("{}. {}", s.step, s.action))
+                        .collect::<Vec<_>>().join("\n");
+                    let expected_lines = sc.steps.iter()
+                        .map(|s| format!("{}. {}", s.step, s.expected))
+                        .collect::<Vec<_>>().join("\n");
+                    let mut description = String::new();
+                    let preconditions = sc.preconditions.join("\n");
+                    if !preconditions.is_empty() {
+                        description.push_str(&format!("Preconditions\n{preconditions}\n\n"));
+                    }
+                    description.push_str(&format!("Test Steps\n{steps_lines}\n\nExpected Result\n{expected_lines}"));
+
+                    let mut fields = serde_json::json!({
+                        "project": { "key": jira_cfg.project_key },
+                        "summary": sc.scenario,
+                        "issuetype": { "name": "Test" },
+                        "description": description,
+                        "labels": [sc.scenario_type],
+                    });
+                    if let Some(account_id) = assignee_account_id {
+                        fields["assignee"] = serde_json::json!({ "accountId": account_id });
+                    }
+                    let client = crate::services::jira::JiraService::new()
+                        .client(&jira_cfg)
+                        .map_err(|e| format!("Client error: {e}"))?;
+                    let resp = client.api.post_json("/issue", &serde_json::json!({ "fields": fields })).await
+                        .map_err(|e| e.to_string())?;
+                    resp["key"].as_str().map(str::trim).filter(|key| !key.is_empty())
+                        .map(str::to_string)
+                        .ok_or_else(|| "Jira tidak mengembalikan issue key pada response sukses".to_string())
+                }.await;
+
+                match result {
+                    Ok(key) => (title, true, Some(key), None),
+                    Err(error) => {
+                        log::error!(target: "Bitbucket", "Submit Jira gagal untuk scenario '{}': {}", title, error);
+                        (title, false, None, Some(error))
+                    }
+                }
             }
-        }
+        });
+        let results = futures::future::join_all(jobs).await;
+        let synced_keys: Vec<String> = results.iter()
+            .filter_map(|(_, success, key, _)| success.then(|| key.clone()).flatten())
+            .collect();
 
         if let Some(fp) = req.folder_path.as_deref() {
             if !fp.is_empty() && !synced_keys.is_empty() {
