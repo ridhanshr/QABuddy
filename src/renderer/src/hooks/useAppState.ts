@@ -248,6 +248,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   const [chatAttachments, setChatAttachments] = useState<{ name: string; text: string }[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [manualLoading, setManualLoading] = useState(false);
+  const [manualProgress, setManualProgress] = useState("Menyiapkan pengiriman...");
   const [progressHidden, setProgressHidden] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [manualTab, setManualTab] = useState<"creator" | "generate-with-ai" | "organizer" | "update-from-conf" | "extractor" | "search" | "monitoring">("creator");
@@ -1503,13 +1504,18 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
   const doSubmitManualCases = async () => {
     setManualLoading(true);
+    setManualProgress(`Mengirim ${manualCases.length} scenario ke Jira...`);
     setProgressHidden(false);
     try {
       const casesToSubmit = manualCases.map(c => ({
         ...c,
         projectKey: manualProjectKey || config.jira.projectKey,
       }));
-      const result = await window.qaBuddy.createManualTestCases(casesToSubmit, loggedInUser || undefined);
+      setManualProgress("Membuat test case dan menambahkan detail Xray...");
+      const result = await Promise.race([
+        window.qaBuddy.createManualTestCases(casesToSubmit, loggedInUser || undefined),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Submit Jira timeout setelah 5 menit.")), 5 * 60 * 1000)),
+      ]);
 
       // Group newly created test case keys by their target Test Execution key.
       // testExecutionKey supports multiple comma-separated TE keys (e.g.
@@ -1518,6 +1524,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       // and the same TC key is added under every TE the user listed.
       const execMap: Record<string, string[]> = {};
       result.created.forEach((created, idx) => {
+        if (!created.key) return;
         const teKeys = (manualCases[idx]?.testExecutionKey || "")
           .split(",")
           .map(k => k.trim())
@@ -1530,6 +1537,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
       // Attach test cases to their respective Test Executions
       const execEntries = Object.entries(execMap);
+      setManualProgress(`Menghubungkan ${execEntries.length} test execution...`);
       const attachResults = await Promise.allSettled(
         execEntries.map(([execKey, testKeys]) =>
           window.qaBuddy.addTestsToExecution(execKey, testKeys)
@@ -1719,6 +1727,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   };
 
   const checkManualDuplicate = async (id: string, title: string, folderPath?: string) => {
+    return;
     if (!title.trim() || !manualProjectKey) {
       setManualDuplicateResults(prev => ({ ...prev, [id]: { matches: [], checked: true } }));
       return;
@@ -1738,7 +1747,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
           5
         );
         const match = findBestMatch(title, issues);
-        matches = match ? [{ key: match.key, summary: match.summary, score: 1 }] : [];
+        matches = match ? [{ key: match!.key, summary: match!.summary, score: 1 }] : [];
       }
       setManualDuplicateResults(prev => ({
         ...prev,
@@ -3188,6 +3197,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     setModelsLoading,
     manualLoading,
     setManualLoading,
+    manualProgress,
     progressHidden,
     setProgressHidden,
     aiLoading,

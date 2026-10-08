@@ -171,7 +171,7 @@ const api = {
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) =>
     on<UpdateProgress>("update-progress", callback),
   findTestCasesByJql: (jql: string, maxResults: number) =>
-    cmd<JiraIssueSummary[]>("find_test_cases_by_jql", { jql, maxResults }),
+    cmd<JiraIssueSummary[]>("find_issues_by_jql", { jql, maxResults }),
   semanticSearchTestCases: (query: string, projectKey: string) =>
     cmd<SemanticSearchResult[]>("semantic_search_test_cases", { query, projectKey }),
   findTestCaseDuplicateCandidates: (projectKey: string, candidates: { title: string; folderPath?: string }[]) =>

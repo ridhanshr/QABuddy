@@ -18,6 +18,13 @@
 .screen-progress-track { height: 5px; margin-top: 9px; overflow: hidden; border-radius: 3px; background: var(--surface-container-high); }
 .screen-progress-bar { width: 38%; height: 100%; background: var(--primary); }
 .screen-progress-note { margin-top: 7px; color: var(--on-surface-variant); font-size: 11px; }
+.manual-toolbar > div:nth-child(2) { max-width: 100%; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.manual-toolbar-actions { max-width: 100%; }
+@media (max-width: 720px) {
+  .manual-toolbar { align-items: flex-start !important; }
+  .manual-toolbar-actions { width: 100%; justify-content: flex-start !important; }
+  .manual-toolbar-actions button { min-height: 44px !important; }
+}
 
 /* Evidence workspace: a stronger scan path for status, destination, and sync. */
 .evidence-hero {

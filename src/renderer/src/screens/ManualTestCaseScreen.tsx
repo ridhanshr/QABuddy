@@ -264,7 +264,7 @@ export default function ManualTestCaseScreen() {
 
       {manualTab === "creator" && (
         <>
-          <div style={{ marginBottom: 40, display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
+          <div className="manual-toolbar" style={{ marginBottom: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
             <div>
               <h4 style={{ margin: 0, color: 'var(--on-surface-variant)' }}>Create New Scenarios</h4>
             </div>
@@ -397,7 +397,7 @@ export default function ManualTestCaseScreen() {
                         placeholder="e.g. Validasi Login dengan data benar" 
                         value={item.title}
                         onChange={(e) => updateManualCase(item.id, "title", e.target.value)}
-                        onBlur={() => checkManualDuplicate(item.id, item.title, item.xrayFolder)}
+                        // Duplicate check runs only during Submit to Jira.
                       />
                     </div>
                     <div className="field-group">

@@ -69,6 +69,7 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
     brdGenerating,
     brdChunkProgress,
     manualLoading,
+    manualProgress,
     flushTokensOnLogout,
   } = useApp();
 
@@ -278,7 +279,7 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
               <>
                 {manualLoading && (
                   <div className="screen-progress-panel" role="status" aria-live="polite">
-                    <div className="screen-progress-title"><span className="material-symbols rotating">sync</span> Mengirim test case ke Jira...</div>
+                    <div className="screen-progress-title"><span className="material-symbols rotating">sync</span> {manualProgress}</div>
                     <div className="screen-progress-track"><div className="screen-progress-bar jira-sync-progress" /></div>
                     <div className="screen-progress-note">Memeriksa duplikat, membuat test case, dan menghubungkan execution. Jangan tutup halaman.</div>
                   </div>

@@ -1911,6 +1911,11 @@ Output HANYA raw JSON:
         let endpoint = &config.ollama.endpoint;
 
         let ollama_client = OllamaClient::new(endpoint, embed_model);
+        if let Err(error) = ollama_client.validate_connection_with_timeout(std::time::Duration::from_secs(2)).await {
+            return Err(ServiceError::Api(format!(
+                "Ollama tidak aktif, lewati pemeriksaan AI: {error}"
+            )));
+        }
 
         // For each distinct xray folder, fetch + embed its issues once.
         let mut scope_cache: std::collections::HashMap<
@@ -1985,7 +1990,12 @@ Output HANYA raw JSON:
                         existing_emb.push((key.clone(), text.to_string(), emb));
                     }
                     Ok(_) => eprintln!("[BRD DuplicateCheck] empty embedding for {}", key),
-                    Err(e) => eprintln!("[BRD DuplicateCheck] embed failed for {}: {e}", key),
+                    Err(e) => {
+                        eprintln!("[BRD DuplicateCheck] embedding unavailable for {}: {e}", key);
+                        return Err(ServiceError::Api(
+                            "Ollama embedding tidak tersedia. Pemeriksaan duplikat dilanjutkan dengan pencocokan judul.".into(),
+                        ));
+                    }
                 }
             }
 

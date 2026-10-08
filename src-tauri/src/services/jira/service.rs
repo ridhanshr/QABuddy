@@ -824,6 +824,81 @@ impl JiraService {
     ) -> Result<Vec<CreatedIssue>> {
         self.assert_configured(config)?;
         let client = self.client(config)?;
+        let folder_cache = std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::<String, Vec<XrayFolder>>::new()));
+        let jobs = cases.iter().cloned().map(|item| {
+            let client = client.clone();
+            let assignee = assignee.map(str::to_owned);
+            let folder_cache = folder_cache.clone();
+            async move {
+                let project_key = item
+                    .project_key
+                    .clone()
+                    .unwrap_or_else(|| client.config.project_key.clone());
+                let full_description = format!(
+                    "{}\n\nh4. Steps to Reproduce\n{}\n\nh4. Expected Result\n{}",
+                    item.description, item.steps, item.expected_result
+                );
+                let custom_labels: Vec<String> = item.labels.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                let mut fields = json!({
+                    "project": { "key": project_key }, "summary": item.title,
+                    "issuetype": { "name": "Test" }, "description": full_description,
+                    "labels": custom_labels,
+                });
+                if let Some(name) = assignee.filter(|s| !s.is_empty()) { fields["assignee"] = json!({ "name": name }); }
+                let resp: Value = match client.api.post_json("/issue", &json!({ "fields": fields.clone() })).await {
+                    Ok(resp) => resp,
+                    Err(e) if fields.get("assignee").is_some() => {
+                        let mut stripped = fields.clone();
+                        stripped.as_object_mut().unwrap().remove("assignee");
+                        client.api.post_json("/issue", &json!({ "fields": stripped })).await.map_err(|_| e)?
+                    }
+                    Err(e) => return Err(e),
+                };
+                let key = resp["key"].as_str().unwrap_or("").to_string();
+                if !item.steps.trim().is_empty() {
+                    let result_text = if item.expected_result.is_empty() { String::new() } else { format_bullets(&item.expected_result) };
+                    let step = json!({ "step": format_bullets(&item.steps), "data": "", "result": result_text });
+                    let _ = client.xray.put_json_void(&format!("/test/{key}/step"), &step).await;
+                }
+                if !item.xray_folder.trim().is_empty() {
+                    let folders = {
+                        let mut cache = folder_cache.lock().await;
+                        if let Some(folders) = cache.get(&project_key) {
+                            folders.clone()
+                        } else {
+                            let folders = client.get_xray_folders(&project_key).await.unwrap_or_default();
+                            cache.insert(project_key.clone(), folders.clone());
+                            folders
+                        }
+                    };
+                    if let Some(folder_id) = JiraClient::find_folder_id(&folders, &JiraClient::split_folder_path(&item.xray_folder)) {
+                        let _ = client.add_tests_to_folder(&project_key, folder_id, &[key.clone()]).await;
+                    }
+                }
+                Ok(CreatedIssue { key: key.clone(), url: client.issue_url(&key) })
+            }
+        });
+        let results = futures::future::join_all(jobs).await;
+        let mut created = Vec::with_capacity(results.len());
+        for (index, result) in results.into_iter().enumerate() {
+            match result {
+                Ok(issue) => created.push(issue),
+                Err(error) => {
+                    log::error!("Submit Jira gagal untuk scenario '{}': {}", cases[index].title, error);
+                    created.push(CreatedIssue { key: String::new(), url: String::new() });
+                }
+            }
+        }
+        Ok(created)
+    }
+
+    pub async fn create_manual_test_cases_sequential_legacy(
+        &self,
+        config: &JiraConfig,
+        cases: &[ManualTestCase],
+        assignee: Option<&str>,
+    ) -> Result<Vec<CreatedIssue>> {
+        let client = self.client(config)?;
         let mut created: Vec<CreatedIssue> = Vec::new();
         let mut all_folders: Option<Vec<XrayFolder>> = None;
 
