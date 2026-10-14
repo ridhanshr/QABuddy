@@ -163,6 +163,17 @@ pub async fn get_xray_folder_issues(
 }
 
 #[tauri::command]
+pub async fn copy_tests_to_execution(
+    state: State<'_, AppState>,
+    source_key: String,
+    target_key: String,
+) -> Result<(usize, usize, Vec<String>), String> {
+    let config = load_config(state.clone()).await?;
+    let jira_service = state.jira_service.lock().await;
+    jira_service.copy_tests_to_execution(&config.jira, &source_key, &target_key).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn add_tests_to_execution(
     state: State<'_, AppState>,
     exec_key: String,

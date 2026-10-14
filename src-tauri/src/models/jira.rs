@@ -263,6 +263,8 @@ pub struct XrayTestRun {
     pub key: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defects: Option<Vec<XrayTestDefect>>,
 }
 

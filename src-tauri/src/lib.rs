@@ -175,6 +175,7 @@ pub fn run() {
             commands::jira::get_xray_folders,
             commands::jira::get_xray_folder_issues,
             commands::jira::add_tests_to_execution,
+            commands::jira::copy_tests_to_execution,
             commands::jira::check_test_steps,
             commands::jira::fetch_test_steps,
             commands::jira::fetch_tc_details_batch,

@@ -715,6 +715,7 @@ export interface DesktopApi {
   findTestCasesByJql: (jql: string, maxResults: number) => Promise<JiraIssueSummary[]>;
   getXrayFolderIssues: (projectKey: string, folderId: number, folderPath?: string) => Promise<{ key: string; summary: string }[]>;
   addTestsToExecution: (execKey: string, testKeys: string[]) => Promise<void>;
+  copyTestsToExecution: (sourceKey: string, targetKey: string) => Promise<[number, number, string[]]>;
   syncToConfluence: (pageId: string, payload: SyncToConfluencePayload) => Promise<SyncToConfluenceResult>;
   openExternal: (url: string) => Promise<void>;
   getOllamaModels: (endpoint: string) => Promise<string[]>;

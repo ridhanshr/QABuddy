@@ -609,6 +609,7 @@ impl JiraClient {
                 id: t["id"].as_u64().unwrap_or(0) as u32,
                 key: t["key"].as_str().unwrap_or("").to_string(),
                 status: t["status"].as_str().unwrap_or("").to_string(),
+                assignee: t["assignee"].as_str().map(str::to_string),
                 defects: t.get("defects").and_then(|d| d.as_array()).map(|d| {
                     d.iter()
                         .map(|x| crate::models::jira::XrayTestDefect {

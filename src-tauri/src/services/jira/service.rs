@@ -1250,6 +1250,38 @@ impl JiraService {
         Ok(vec![])
     }
 
+    pub async fn copy_tests_to_execution(
+        &self,
+        config: &JiraConfig,
+        source_key: &str,
+        target_key: &str,
+    ) -> Result<(usize, usize, Vec<String>)> {
+        self.assert_configured(config)?;
+        let client = self.client(config)?;
+        let source_runs = client.get_xray_test_execution_tests(source_key).await?;
+        let target_runs = client.get_xray_test_execution_tests(target_key).await?;
+        let target_keys: std::collections::HashSet<String> = target_runs.iter().map(|run| run.key.to_uppercase()).collect();
+        let to_copy: Vec<_> = source_runs.iter().filter(|run| !target_keys.contains(&run.key.to_uppercase())).collect();
+        if to_copy.is_empty() { return Ok((0, source_runs.len(), Vec::new())); }
+        let keys: Vec<String> = to_copy.iter().map(|run| run.key.clone()).collect();
+        client.add_tests_to_execution(target_key, &keys).await?;
+        let target_runs = client.get_xray_test_execution_tests(target_key).await?;
+        let target_by_key: std::collections::HashMap<String, u32> = target_runs.iter().map(|run| (run.key.to_uppercase(), run.id)).collect();
+        let mut errors = Vec::new();
+        for chunk in to_copy.chunks(10) {
+            let futures = chunk.iter().filter_map(|source| {
+                let assignee = source.assignee.as_deref()?.to_string();
+                let run_id = target_by_key.get(&source.key.to_uppercase()).copied()?;
+                let client = client.clone();
+                Some(async move { (source.key.clone(), client.update_test_run_assignee(run_id, &assignee).await) })
+            });
+            for (key, result) in futures::future::join_all(futures).await {
+                if let Err(error) = result { errors.push(format!("{key}: {error}")); }
+            }
+        }
+        Ok((keys.len(), target_keys.len(), errors))
+    }
+
     pub async fn add_tests_to_execution(
         &self,
         config: &JiraConfig,

@@ -157,6 +157,8 @@ const api = {
     cmd<{ key: string; summary: string }[]>("get_xray_folder_issues", { projectKey, folderId, folderPath: folderPath || null }),
   addTestsToExecution: (execKey: string, testKeys: string[]) =>
     cmd<void>("add_tests_to_execution", { execKey, testKeys }),
+  copyTestsToExecution: (sourceKey: string, targetKey: string) =>
+    cmd<[number, number, string[]]>("copy_tests_to_execution", { sourceKey, targetKey }),
   checkTestSteps: (entries: ConfluenceTestImportEntry[]) =>
     cmd<StepConflictCheck>("check_test_steps", { entries }),
   fetchTestSteps: (issueKey: string) =>
