@@ -1092,6 +1092,7 @@ export interface XrayExecutionDetails {
   inProgress: number;
   passRate: number;
   history: XrayExecutionSnapshot[];
+  testKeys: string[];
 }
 
 export interface PhaseTestSummary {

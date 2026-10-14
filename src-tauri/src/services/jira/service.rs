@@ -871,9 +871,21 @@ impl JiraService {
                             folders
                         }
                     };
-                    if let Some(folder_id) = JiraClient::find_folder_id(&folders, &JiraClient::split_folder_path(&item.xray_folder)) {
-                        let _ = client.add_tests_to_folder(&project_key, folder_id, &[key.clone()]).await;
-                    }
+                    let folder_path = item.xray_folder.trim();
+                    let folder_parts = JiraClient::split_folder_path(folder_path);
+                    let folder_id = JiraClient::find_folder_id(&folders, &folder_parts).ok_or_else(|| {
+                        crate::services::error::ServiceError::Api(format!(
+                            "Xray folder tidak ditemukan: '{}' untuk project {}",
+                            folder_path, project_key
+                        ))
+                    })?;
+                    client
+                        .add_tests_to_folder(&project_key, folder_id, &[key.clone()])
+                        .await
+                        .map_err(|error| crate::services::error::ServiceError::Api(format!(
+                            "Gagal memasukkan {} ke Xray folder '{}': {}",
+                            key, folder_path, error
+                        )))?;
                 }
                 Ok(CreatedIssue { key: key.clone(), url: client.issue_url(&key) })
             }
@@ -2044,6 +2056,7 @@ impl JiraService {
             in_progress,
             pass_rate,
             history,
+            test_keys: runs.iter().map(|run| run.key.clone()).filter(|key| !key.is_empty()).collect(),
         })
     }
 }

@@ -303,6 +303,7 @@ pub struct XrayExecutionDetails {
     pub in_progress: u32,
     pub pass_rate: f64,
     pub history: Vec<XrayExecutionSnapshot>,
+    pub test_keys: Vec<String>,
 }
 
 /// Result of creating an issue: `{ key, url }`.

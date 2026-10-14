@@ -251,6 +251,12 @@ export default function ProjectManagement() {
   // Per-TE TC sync state
   const [syncingTcForExec, setSyncingTcForExec] = useState<Set<string>>(new Set());
   const [tcSyncResultForExec, setTcSyncResultForExec] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  const [copySourceKey, setCopySourceKey] = useState("");
+  const [copyTargetKey, setCopyTargetKey] = useState("");
+  const [copyPreview, setCopyPreview] = useState<{ source: string; target: string; add: string[]; skip: string[] } | null>(null);
+  const [copyLoading, setCopyLoading] = useState(false);
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
+  const [copyResult, setCopyResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // ── Fetch UQA ──
   const UQA_CACHE_KEY = `qabuddy_uqa_cache_${config.jira.username}`;
@@ -1781,13 +1787,19 @@ export default function ProjectManagement() {
               Kembali ke Test Plans
             </button>
 
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--on-surface)" }}>
-                Test Executions — {breadcrumb.planKey}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--on-surface)" }}>
+                  Test Executions — {breadcrumb.planKey}
+                </div>
+                {breadcrumb.planSummary && (
+                  <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginTop: 2 }}>{breadcrumb.planSummary}</div>
+                )}
               </div>
-              {breadcrumb.planSummary && (
-                <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginTop: 2 }}>{breadcrumb.planSummary}</div>
-              )}
+              <button type="button" className="button-primary" onClick={() => { setCopyResult(null); setCopyPreview(null); setCopySourceKey(""); setCopyTargetKey(""); setCopyLoading(false); setCopyModalOpen(true); }} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                <span className="material-symbols" style={{ fontSize: 16 }}>content_copy</span>
+                Copy Test Cases
+              </button>
             </div>
 
             {execError && (
@@ -1806,6 +1818,31 @@ export default function ProjectManagement() {
 
             {!execLoading && !execError && (
               <>
+                {copyModalOpen && <div role="dialog" aria-modal="true" aria-label="Copy Test Cases" style={{ position: "fixed", inset: 0, zIndex: 20, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setCopyModalOpen(false)}>
+                  <div className="card" style={{ width: "min(620px, 100%)", padding: 20 }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><div style={{ fontWeight: 700 }}>Copy Test Cases</div><button type="button" className="ghost-button" aria-label="Tutup" onClick={() => setCopyModalOpen(false)}>×</button></div>
+                    <div style={{ fontSize: 12, color: "var(--on-surface-variant)", marginBottom: 12 }}>Attach test case Xray yang sama ke Test Execution lain. Test case yang sudah ada akan dilewati.</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "end" }}>
+                      <label style={{ fontSize: 12 }}>Source Test Execution<input value={copySourceKey} onChange={e => setCopySourceKey(e.target.value)} placeholder="PROJ-123" style={{ display: "block", width: "100%", boxSizing: "border-box", marginTop: 5, padding: "9px 10px" }} /></label>
+                      <label style={{ fontSize: 12 }}>Target Test Execution<input value={copyTargetKey} onChange={e => setCopyTargetKey(e.target.value)} placeholder="PROJ-456" style={{ display: "block", width: "100%", boxSizing: "border-box", marginTop: 5, padding: "9px 10px" }} /></label>
+                      <button type="button" className="button-primary" disabled={copyLoading || !copySourceKey.trim() || !copyTargetKey.trim()} onClick={async () => {
+                        setCopyLoading(true); setCopyResult(null); setCopyPreview(null);
+                        try {
+                          const [source, target] = await Promise.all([window.qaBuddy.getXrayExecutionDetails(copySourceKey.trim().toUpperCase()), window.qaBuddy.getXrayExecutionDetails(copyTargetKey.trim().toUpperCase())]);
+                          const sourceKeys = source.testKeys;
+                          const targetKeys = new Set(target.testKeys);
+                          const add = sourceKeys.filter(key => !targetKeys.has(key));
+                          const skip = sourceKeys.filter(key => targetKeys.has(key));
+                          setCopyPreview({ source: source.key, target: target.key, add, skip });
+                          setCopyResult(null);
+                        } catch (e: any) { setCopyResult({ ok: false, msg: e?.message || String(e) }); }
+                        finally { setCopyLoading(false); }
+                      }}>{copyLoading ? "Memuat..." : "Preview"}</button>
+                    </div>
+                    {copyPreview && <div style={{ marginTop: 12, fontSize: 12 }}>Akan ditambahkan: <strong>{copyPreview.add.length}</strong> · Dilewati: <strong>{copyPreview.skip.length}</strong><br />{copyPreview.add.length > 0 && <button type="button" className="button-primary" style={{ marginTop: 10 }} onClick={async () => { setCopyLoading(true); try { await window.qaBuddy.addTestsToExecution(copyPreview.target, copyPreview.add); setCopyResult({ ok: true, msg: `${copyPreview.add.length} test case berhasil ditambahkan ke ${copyPreview.target}.` }); setCopyPreview(null); } catch (e: any) { setCopyResult({ ok: false, msg: e?.message || String(e) }); } finally { setCopyLoading(false); } }}>Attach Test Cases</button>}</div>}
+                    {copyResult && <div style={{ marginTop: 8, color: copyResult.ok ? "var(--success)" : "var(--error)", fontSize: 12 }}>{copyResult.msg}</div>}
+                  </div>
+                </div>}
                 {executions.length === 0 ? (
                   <div style={{ color: "var(--on-surface-variant)", fontSize: 13, padding: "24px 0", textAlign: "center" }}>
                     Tidak ada Test Execution ditemukan dalam Test Plan ini.
