@@ -9,6 +9,8 @@ pub struct SyncToConfluencePayload {
     pub entries: Vec<serde_json::Value>,
     #[serde(default)]
     pub deleted_table_indices: Vec<usize>,
+    #[serde(default)]
+    pub invalid_jira_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +21,8 @@ pub struct SyncToConfluenceResult {
     pub entry_count: u32,
     pub image_count: u32,
     pub attachment_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jira_warnings: Vec<String>,
     /// Status upload setiap attachment per entry — dirender sebagai satu
     /// card log dengan rincian sukses/gagal per tabel/gambar.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

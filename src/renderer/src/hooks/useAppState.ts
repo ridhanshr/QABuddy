@@ -397,6 +397,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
   const [confLoading, setConfLoading] = useState(false);
   const [confProgressHidden, setConfProgressHidden] = useState(false);
+  const [confProgressMinimized, setConfProgressMinimized] = useState(false);
   // Max width (px) gambar yang diupload ke Confluence. 0 = kirim resolusi asli.
   const confImageWidth = Math.max(0, config.confluence.imageMaxWidth ?? 1920);
   const [confPageLoading, setConfPageLoading] = useState(false);
@@ -1590,16 +1591,20 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
         // DB save failure is non-critical — Jira create already succeeded
       }
 
-      let bannerText = `Berhasil membuat ${result.created.length} test case di Jira.`;
+      const failedScenarios = result.created.filter(c => !c.key).length;
+      const successfulCreated = result.created.filter(c => c.key);
+      let bannerText = failedScenarios > 0
+        ? `Gagal mengirim ${failedScenarios} scenario ke Jira.`
+        : `Berhasil membuat ${successfulCreated.length} test case di Jira.`;
       if (execEntries.length > 0) {
         bannerText += ` ${attachedCount}/${execEntries.length} Test Execution berhasil dilampirkan.`;
         if (failedExecs.length > 0) bannerText += ` Gagal: ${failedExecs.join(", ")}.`;
       }
 
-      setBanner({ tone: failedExecs.length > 0 ? "error" : "success", text: bannerText });
+      setBanner({ tone: failedScenarios > 0 || failedExecs.length > 0 ? "error" : "success", text: bannerText });
       addLog("Submit to Jira", failedExecs.length > 0 ? "error" : "success",
-        `Berhasil membuat ${result.created.length} test case di Jira`,
-        result.created.map(c => c.key).join(", ")
+        failedScenarios > 0 ? `Gagal mengirim ${failedScenarios} scenario ke Jira` : `Berhasil membuat ${successfulCreated.length} test case di Jira`,
+        successfulCreated.map(c => c.key).join(", ")
       );
       setManualCases([{ id: crypto.randomUUID(), title: "", description: "", steps: "", expectedResult: "", xrayFolder: "", labels: "", testExecutionKey: "" }]);
       setManualDuplicateResults({});
@@ -2365,6 +2370,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
 
     setConfLoading(true);
     setConfProgressHidden(false);
+    setConfProgressMinimized(false);
     setConfSyncProgress(null);
     setConfSyncSteps([]);
     try {
@@ -2441,6 +2447,7 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       // One log card per sync run — detail lists upload status of every
       // attachment grouped per table entry (success and failures).
       const uploadResults = result.uploadResults ?? [];
+      const jiraWarnings = result.jiraWarnings ?? [];
       const failedCount = uploadResults.filter((r) => !r.success).length;
       const okCount = uploadResults.length - failedCount;
 
@@ -2468,11 +2475,14 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
           .join("\n\n");
       }
 
+      if (jiraWarnings.length > 0) {
+        addLog("Sync to Confluence", "info", "Jira warning", jiraWarnings.join("\n"));
+      }
       setBanner(
         effectiveRefreshed.contentLoaded
           ? {
               tone: failedCount > 0 ? "info" : "success",
-              text: `Berhasil sync ${result.entryCount} entry yang berubah (${okCount} gambar terupload${failedCount > 0 ? `, ${failedCount} gagal` : ""}) ke "${result.pageTitle}".${failedCount > 0 ? " Cek detail di menu Log." : ""}`,
+              text: `Berhasil sync ${result.entryCount} entry yang berubah (${okCount} gambar terupload${failedCount > 0 ? `, ${failedCount} gagal` : ""}) ke "${result.pageTitle}".${failedCount > 0 ? " Cek detail di menu Log." : ""}${jiraWarnings.length > 0 ? ` Warning: ${jiraWarnings.join(" ")}` : ""}`,
             }
           : {
               tone: "error",
@@ -3313,6 +3323,8 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
     confLoading,
     confProgressHidden,
     setConfProgressHidden,
+    confProgressMinimized,
+    setConfProgressMinimized,
     confPageLoading,
     confAttachmentHydrating,
     confParseStatus,

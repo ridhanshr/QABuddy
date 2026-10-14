@@ -399,7 +399,11 @@ impl ConfluenceService {
                 ),
                 (
                     "scenario",
-                    scenario_to_html(entry["scenario"].as_str().unwrap_or(""), jira_server_id),
+                    scenario_to_html(
+                        entry["scenario"].as_str().unwrap_or(""),
+                        jira_server_id,
+                        entry["invalidJiraKeys"].as_array().map(|keys| keys.iter().filter_map(|key| key.as_str().map(String::from)).collect::<Vec<_>>()).as_deref().unwrap_or(&[]),
+                    ),
                 ),
                 ("kategori", category_html.clone()),
                 ("category", category_html),
@@ -475,7 +479,11 @@ impl ConfluenceService {
 
             let screen_capture_html = Self::screen_capture_cell_html(&id, &images, uploaded);
             let result_html = Self::result_cell_html(&result);
-            let scenario_html = scenario_to_html(&scenario, jira_server_id);
+            let scenario_html = scenario_to_html(
+                &scenario,
+                jira_server_id,
+                entry["invalidJiraKeys"].as_array().map(|keys| keys.iter().filter_map(|key| key.as_str().map(String::from)).collect::<Vec<_>>()).as_deref().unwrap_or(&[]),
+            );
 
             html.push_str(r#"<table class="wrapped confluenceTable"><colgroup><col style="width: 200px;"/><col/></colgroup><tbody>"#);
             html.push_str(&format!("<tr><th class=\"confluenceTh\">No. Test Case</th><td class=\"confluenceTd\"><p>{}</p></td></tr>", escape_html(&test_case_no)));
@@ -546,7 +554,7 @@ impl ConfluenceService {
             None,
         );
         let (title, raw_content, version) = self.get_page_preview(config, page_id).await?;
-        let content = sanitize_confluence_storage_html(&raw_content);
+        let mut content = sanitize_confluence_storage_html(&raw_content);
 
         let entry_count = payload.entries.len() as u32;
 
@@ -803,7 +811,35 @@ impl ConfluenceService {
             }
         }
 
-        // ── 3. Patch existing tables in-place ────────────────────────────
+        // ── 3. Delete tables explicitly removed in UI ─────────────────────
+        if !payload.deleted_table_indices.is_empty() {
+            let deleted: std::collections::HashSet<usize> =
+                payload.deleted_table_indices.iter().copied().collect();
+            let mut rebuilt = String::with_capacity(content.len());
+            let mut cursor = 0usize;
+            let mut vertical_index = 0usize;
+            for (start, end) in iter_table_positions(&content) {
+                rebuilt.push_str(&content[cursor..start]);
+                let table = &content[start..end];
+                let mut parse_index = 0usize;
+                let is_entry_table = is_vertical_table(table)
+                    && parse_vertical_table(table, &mut parse_index).is_some();
+                if is_entry_table {
+                    if deleted.contains(&vertical_index) {
+                        cursor = end;
+                        vertical_index += 1;
+                        continue;
+                    }
+                    vertical_index += 1;
+                }
+                rebuilt.push_str(table);
+                cursor = end;
+            }
+            rebuilt.push_str(&content[cursor..]);
+            content = rebuilt;
+        }
+
+        // ── 4. Patch existing tables in-place ────────────────────────────
         let jira_server_id = config.jira_server_id.as_deref();
         let (mut content, matched_ids) =
             Self::patch_existing_tables(&content, &payload.entries, &uploaded, jira_server_id);
@@ -913,6 +949,7 @@ impl ConfluenceService {
             image_count: total_images,
             attachment_count: total_images,
             upload_results,
+            jira_warnings: Vec::new(),
         })
     }
 
@@ -1722,16 +1759,24 @@ fn escape_html(s: &str) -> String {
 /// Convert scenario text to Confluence HTML.
 /// Any Jira issue URL (https://.../browse/KEY-123) is turned into a Jira macro.
 /// Non-URL text on other lines is emitted as a plain <p>.
-fn scenario_to_html(scenario: &str, jira_server_id: Option<&str>) -> String {
+fn scenario_to_html(scenario: &str, jira_server_id: Option<&str>, invalid_jira_keys: &[String]) -> String {
     let url_re = regex::Regex::new(r"https?://[^\s]+/browse/([A-Z][A-Z0-9_]+-\d+)").unwrap();
+    let key_re = regex::Regex::new(r"^[A-Z][A-Z0-9_]+-\d+$").unwrap();
     let mut html = String::new();
     for line in scenario.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if let Some(cap) = url_re.captures(trimmed) {
-            let issue_key = &cap[1];
+        let issue_key = url_re
+            .captures(trimmed)
+            .map(|cap| cap[1].to_string())
+            .or_else(|| key_re.is_match(trimmed).then(|| trimmed.to_string()));
+        if let Some(issue_key) = issue_key {
+            if invalid_jira_keys.iter().any(|key| key == &issue_key) {
+                html.push_str(&format!("<p>{}</p>", escape_html(trimmed)));
+                continue;
+            }
             let server_id = jira_server_id.unwrap_or("jira");
             html.push_str(&format!(
                 r#"<p><ac:structured-macro ac:name="jira"><ac:parameter ac:name="server">System JIRA</ac:parameter><ac:parameter ac:name="serverId">{server_id}</ac:parameter><ac:parameter ac:name="key">{issue_key}</ac:parameter></ac:structured-macro></p>"#,

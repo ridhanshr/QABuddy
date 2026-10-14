@@ -278,10 +278,11 @@ function AppContent({ onLogout, loggedInUser, loggedInRole }: { onLogout: () => 
             {!loading && (
               <>
                 {manualLoading && (
-                  <div className="screen-progress-panel" role="status" aria-live="polite">
-                    <div className="screen-progress-title"><span className="material-symbols rotating">sync</span> {manualProgress}</div>
+                  <div className="screen-progress-panel" role="status" aria-live="polite" style={{ position: "fixed", right: 24, bottom: 24, width: 340, zIndex: 900, margin: 0, padding: 16, borderRadius: 14, background: "var(--surface-container-lowest)", border: "1px solid var(--outline-variant)", boxShadow: "0 12px 40px rgba(0,0,0,0.22)" }}>
+                    <div className="screen-progress-title"><span className="material-symbols rotating">sync</span> Submit ke Jira</div>
+                    <div style={{ fontSize: 11, color: "var(--on-surface-variant)" }}>{manualProgress}</div>
                     <div className="screen-progress-track"><div className="screen-progress-bar jira-sync-progress" /></div>
-                    <div className="screen-progress-note">Memeriksa duplikat, membuat test case, dan menghubungkan execution. Jangan tutup halaman.</div>
+                    <div className="screen-progress-note">Memproses test case. Jangan tutup halaman.</div>
                   </div>
                 )}
                 {screenHero[activeView] && <ScreenHero {...screenHero[activeView]} />}

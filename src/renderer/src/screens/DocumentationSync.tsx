@@ -36,6 +36,8 @@ export default function DocumentationSync() {
     confAttachmentHydrating,
     confSyncProgress,
     confSyncSteps,
+    confProgressMinimized,
+    setConfProgressMinimized,
     fetchConfSteps,
     confFetchingSteps,
     saveSettings,
@@ -603,8 +605,9 @@ export default function DocumentationSync() {
 
       {/* ── Live sync progress sidebar ──────────────────────────────── */}
       {confSyncProgress && (
-        <div style={{ position: "fixed", right: 24, top: 90, width: 340, maxHeight: "calc(100vh - 120px)", display: "flex", flexDirection: "column", zIndex: 900, background: "var(--surface-container-lowest)", border: `1px solid ${confSyncProgress.stage === "error" ? "var(--error)" : "var(--outline-variant)"}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.22)", overflow: "hidden" }}>
+        <div style={{ position: "fixed", right: 24, bottom: 24, width: confProgressMinimized ? 210 : 340, maxHeight: "calc(100vh - 120px)", display: "flex", flexDirection: "column", zIndex: 900, background: "var(--surface-container-lowest)", border: `1px solid ${confSyncProgress.stage === "error" ? "var(--error)" : "var(--outline-variant)"}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.22)", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px 10px" }}>
+             <button type="button" className="icon-button" onClick={() => setConfProgressMinimized((value) => !value)} title={confProgressMinimized ? "Expand progress" : "Minimize progress"} aria-label={confProgressMinimized ? "Expand progress" : "Minimize progress"}><span className="material-symbols" style={{ fontSize: 17 }}>{confProgressMinimized ? "open_in_full" : "remove"}</span></button>
             <span className="material-symbols" style={{ fontSize: 20, color: (syncStageMeta[syncStage]?.color) ?? "var(--primary)", ...(syncStage === "upload_images" || syncStage === "fetch_page" || syncStage === "update_page" ? { animation: "spin 1.2s linear infinite" } : {}) }}>
               {syncStageMeta[syncStage]?.icon ?? "cloud_upload"}
             </span>

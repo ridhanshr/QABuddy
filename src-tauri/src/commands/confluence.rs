@@ -35,11 +35,35 @@ pub async fn sync_to_confluence(
     payload: SyncToConfluencePayload,
 ) -> Result<SyncToConfluenceResult, String> {
     let config = load_config(state.clone()).await?;
+    let mut payload = payload;
+    let key_re = regex::Regex::new(r"^[A-Z][A-Z0-9_]+-\d+$").unwrap();
+    let url_re = regex::Regex::new(r"https?://[^\s]+/browse/([A-Z][A-Z0-9_]+-\d+)").unwrap();
+    let jira_service = state.jira_service.lock().await;
+    let jira_client = jira_service.client(&config.jira).map_err(|e| e.to_string())?;
+    let mut warnings = Vec::new();
+    for entry in &mut payload.entries {
+        let scenario = entry["scenario"].as_str().unwrap_or("").trim().to_string();
+        let key = url_re.captures(&scenario).map(|c| c[1].to_string())
+            .or_else(|| key_re.is_match(&scenario).then(|| scenario.clone()));
+        if let Some(key) = key {
+            if jira_client.get_issue_detail(&key).await.map_err(|e| e.to_string())?.is_none() {
+                entry["scenario"] = serde_json::Value::String(format!("{scenario} (Jira issue tidak ditemukan)"));
+                warnings.push(format!("Jira issue {key} tidak ditemukan. Scenario dikirim sebagai teks biasa."));
+                payload.invalid_jira_keys.push(key.clone());
+                if let Some(object) = entry.as_object_mut() {
+                    object.insert("invalidJiraKeys".into(), serde_json::json!([key]));
+                }
+            }
+        }
+    }
+    drop(jira_service);
     let confluence_service = state.confluence_service.lock().await;
-    confluence_service
+    let mut result = confluence_service
         .sync_to_confluence(Some(&app_handle), &config.confluence, &page_id, &payload)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    result.jira_warnings = warnings;
+    Ok(result)
 }
 
 #[tauri::command]

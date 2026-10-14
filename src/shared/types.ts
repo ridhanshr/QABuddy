@@ -504,6 +504,7 @@ export interface SyncToConfluenceResult {
   entryCount: number;
   imageCount: number;
   attachmentCount: number;
+  jiraWarnings?: string[];
   uploadResults?: SyncUploadRecord[];
 }
 
