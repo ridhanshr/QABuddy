@@ -298,7 +298,7 @@ export default function DocumentationSync() {
             <input placeholder="e.g. Limit Maintenance" value={item.functionName} onChange={(e) => updateConfEntry(item.id, "functionName", e.target.value)} style={{ height: 45, boxSizing: 'border-box' }} />
           </div>
           <div className="field-group">
-            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Kategori</label>
+            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)', display: 'inline-flex', flexDirection: 'row', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', width: 'max-content' }}>Kategori {item.jiraChangedFields?.includes("category") && <span className="material-symbols" title="Akan di-update ke Jira/Xray saat sync" style={{ fontSize: 16, color: 'var(--primary)' }}>edit</span>}</label>
             <select value={item.category} onChange={(e) => updateConfEntry(item.id, "category", e.target.value)} style={{ height: 45, width: '100%', borderRadius: 8, border: '1px solid var(--outline-variant)', background: 'var(--surface-container-low)', color: 'var(--on-surface)', padding: '0 12px', fontSize: 14, boxSizing: 'border-box', outline: 'none' }}>
               <option value="TC_HAPPY">TC_HAPPY</option>
               <option value="TC_UNHAPPY">TC_UNHAPPY</option>
@@ -320,18 +320,18 @@ export default function DocumentationSync() {
             <textarea rows={3} placeholder="e.g. WAY4-240" value={item.scenario} onChange={(e) => updateConfEntry(item.id, "scenario", e.target.value)} style={{ boxSizing: 'border-box', minHeight: 80, resize: 'vertical' }} />
           </div>
           <div className="field-group">
-            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Input Data</label>
+            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)', display: 'inline-flex', flexDirection: 'row', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', width: 'max-content' }}>Input Data {item.jiraChangedFields?.includes("inputData") && <span className="material-symbols" title="Akan di-update ke Jira/Xray saat sync" style={{ fontSize: 16, color: 'var(--primary)' }}>edit</span>}</label>
             <textarea rows={3} placeholder="e.g. Kartu block code N..." value={item.inputData} onChange={(e) => updateConfEntry(item.id, "inputData", e.target.value)} style={{ boxSizing: 'border-box', minHeight: 80, resize: 'vertical' }} />
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 24 }}>
           <div className="field-group">
-            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Steps</label>
+            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)', display: 'inline-flex', flexDirection: 'row', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', width: 'max-content' }}>Steps {item.jiraChangedFields?.includes("steps") && <span className="material-symbols" title="Akan di-update ke Jira/Xray saat sync" style={{ fontSize: 16, color: 'var(--primary)' }}>edit</span>}</label>
             <textarea rows={4} placeholder="Melakukan update credit limit contract..." value={item.steps} onChange={(e) => updateConfEntry(item.id, "steps", e.target.value)} style={{ boxSizing: 'border-box', minHeight: 100, resize: 'vertical' }} />
           </div>
           <div className="field-group">
-            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)' }}>Expected Result</label>
+            <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--on-surface-variant)', display: 'inline-flex', flexDirection: 'row', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', width: 'max-content' }}>Expected Result {item.jiraChangedFields?.includes("expectedResult") && <span className="material-symbols" title="Akan di-update ke Jira/Xray saat sync" style={{ fontSize: 16, color: 'var(--primary)' }}>edit</span>}</label>
             <textarea rows={4} placeholder="Value Cr Limit date pada Workbench/Desktop Client sesuai..." value={item.expectedResult} onChange={(e) => updateConfEntry(item.id, "expectedResult", e.target.value)} style={{ boxSizing: 'border-box', minHeight: 100, resize: 'vertical' }} />
           </div>
         </div>
