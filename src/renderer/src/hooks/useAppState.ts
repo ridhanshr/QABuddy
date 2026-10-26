@@ -2357,12 +2357,14 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       setBanner({ tone: "error", text: "Target Page ID belum diisi. Atur di Sync Settings terlebih dahulu." });
       return;
     }
-    if (confEntries.some(e => !e.testCaseNo.trim())) {
-      setBanner({ tone: "error", text: "Semua entry harus memiliki No. Test Case." });
-      return;
-    }
+    // UI displays fallback TC number, but old state may still hold empty string.
+    const entriesWithTestCaseNo = confEntries.map((entry, index) => ({
+      ...entry,
+      testCaseNo: entry.testCaseNo?.trim() || `TC${String(index + 1).padStart(3, "0")}`,
+    }));
+    setConfEntries(entriesWithTestCaseNo);
 
-    const dirtyEntries = confEntries.filter((entry) => entry.isDirty);
+    const dirtyEntries = entriesWithTestCaseNo.filter((entry) => entry.isDirty);
     if (dirtyEntries.length === 0 && deletedConfTableIndices.length === 0) {
       setBanner({ tone: "info", text: "Tidak ada perubahan pada tabel. Edit atau hapus entry terlebih dahulu sebelum sync." });
       return;
@@ -2499,7 +2501,9 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
       );
 
       // Auto-push ke Jira untuk setiap dirty entry yang punya issueKey
-      const entriesToPush = dirtyEntries.filter(e => e.issueKey?.trim());
+      const entriesToPush = dirtyEntries.filter(
+      (e) => e.issueKey?.trim() && Array.isArray(e.jiraChangedFields) && e.jiraChangedFields.length > 0
+    );
       if (entriesToPush.length > 0) {
         let jiraPushOk = 0, jiraPushFail = 0;
         await Promise.allSettled(
@@ -2507,10 +2511,10 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
             try {
               await window.qaBuddy.pushEntryToJira({
                 issueKey: entry.issueKey!,
-                steps: entry.steps || "",
-                expectedResult: entry.expectedResult || "",
-                inputData: entry.inputData || "",
-                category: entry.category || "",
+                steps: entry.jiraChangedFields.includes("steps") ? entry.steps || "" : "",
+                expectedResult: entry.jiraChangedFields.includes("expectedResult") ? entry.expectedResult || "" : "",
+                inputData: entry.jiraChangedFields.includes("inputData") ? entry.inputData || "" : "",
+                category: entry.jiraChangedFields.includes("category") ? entry.category || "" : "",
               });
               jiraPushOk++;
             } catch {
@@ -2522,7 +2526,12 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
           ? `${jiraPushOk} TC berhasil di-update ke Jira.`
           : `${jiraPushOk} TC berhasil, ${jiraPushFail} gagal di-update ke Jira.`;
         addLog("Sync to Confluence", jiraPushFail === 0 ? "info" : "error", jiraMsg);
-        setBanner({ tone: jiraPushFail === 0 ? "success" : "error", text: jiraMsg });
+        setBanner({
+          tone: jiraPushFail === 0 ? "success" : "info",
+          text: jiraPushFail === 0
+            ? `Confluence berhasil di-sync. ${jiraMsg}`
+            : `Confluence berhasil di-sync. Namun, ${jiraMsg}`,
+        });
       }
     } catch (error: any) {
       setBanner({
@@ -2649,7 +2658,27 @@ export function useAppState(loggedInUser: string = "", jiraToken: string = "", c
   };
 
   const updateConfEntry = (id: string, field: string, value: any) => {
-    setConfEntries((current) => current.map((e) => e.id === id ? { ...e, [field]: value, isDirty: true } : e));
+    const jiraFields = ["steps", "expectedResult", "inputData", "category"];
+    const jiraField = jiraFields.includes(field);
+    setConfEntries((current) => current.map((e) => {
+      if (e.id !== id) return e;
+      if (!jiraField) return { ...e, [field]: value, isDirty: true };
+
+      const original = e.jiraOriginalFields?.[field] ?? e[field] ?? "";
+      const originalFields = { ...(e.jiraOriginalFields || {}), [field]: original };
+      const changedFields = jiraFields.filter((name) => {
+        const baseline = originalFields[name] ?? e[name] ?? "";
+        return String(name === field ? value : e[name] ?? "") !== String(baseline);
+      });
+      return {
+        ...e,
+        [field]: value,
+        isDirty: true,
+        jiraOriginalFields: originalFields,
+        jiraChangedFields: changedFields,
+        jiraFieldsDirty: changedFields.length > 0,
+      };
+    }));
   };
 
   const removeConfEntry = (id: string) => {
